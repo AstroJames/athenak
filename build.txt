@@ -1,0 +1,13 @@
+James Beattie's local install using M3 processor + homebrew clang compilers
+
+CPU build
+cmake ../ \
+  -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ \
+  -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang \
+  -D Kokkos_ARCH_ARMV81=On \
+  -D Athena_ENABLE_MPI=ON \
+  -DCMAKE_CXX_FLAGS="-fopenmp -I/opt/homebrew/include" \
+  -DCMAKE_EXE_LINKER_FLAGS="-L/opt/homebrew/Cellar/libomp/19.1.4/lib -lomp -Wl,-rpath,/opt/homebrew/Cellar/libomp/19.1.4/lib" \
+  -DKokkos_ENABLE_OPENMP=ON
+
+GPU build
