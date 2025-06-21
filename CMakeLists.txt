@@ -114,7 +114,17 @@ add_subdirectory(src)
 add_subdirectory(kokkos)
 include_directories(${Kokkos_INCLUDE_DIRS_RET})
 
-target_link_libraries(athena PUBLIC Kokkos::kokkos)
+# Add kokkos-fft (assumes you have cloned kokkos-fft into <athenaK-root>/kokkos-fft)
+add_subdirectory(kokkos-fft)
+
+# target_link_libraries(athena PUBLIC Kokkos::kokkos)
+# Link in the kokkos-fft library
+target_link_libraries(athena
+  PUBLIC
+    Kokkos::kokkos
+    KokkosFFT::fft
+)
+
 if (ENABLE_MPI)
   target_link_libraries(athena PUBLIC MPI::MPI_CXX)
 endif()
