@@ -16,3 +16,16 @@ build/
 # editor temp files
 *~
 *.swp
+
+# compile files
+*.out
+*.so
+*.cmake
+*.c
+CMake*
+
+# Python cache files
+__pycache__/
+*.pyc
+
+.gitignore
