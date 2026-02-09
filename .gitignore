@@ -28,4 +28,5 @@ CMake*
 __pycache__/
 *.pyc
 
-.gitignore
+*.gitignore
+AGENTS.md
