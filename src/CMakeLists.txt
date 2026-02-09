@@ -98,6 +98,7 @@ add_executable(
         outputs/vtk_mesh.cpp
         outputs/vtk_prtcl.cpp
         outputs/power_spectrum.cpp
+        outputs/power_spectrum_backend.cpp
 
         particles/particles.cpp
         particles/particles_pushers.cpp

@@ -25,6 +25,9 @@
 // use OpenMP parallelization? default=0 (false)
 #define OPENMP_PARALLEL_ENABLED @OPENMP_PARALLEL_ENABLED@
 
+// use heFFTe distributed FFT backend? default=0 (false)
+#define HEFFTE_ENABLED @HEFFTE_ENABLED@
+
 // Kokkos tight loop layout
 //#define @PAR_LOOP_LAYOUT@
 

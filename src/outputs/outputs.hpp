@@ -119,6 +119,7 @@ struct OutputParameters {
   std::string file_type;
   std::string file_id;
   std::string variable;
+  std::string fft_backend;
   bool include_gzs;
   int gid;
   bool slice1, slice2, slice3;
