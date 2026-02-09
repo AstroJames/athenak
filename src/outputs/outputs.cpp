@@ -50,7 +50,9 @@
 #include "athena.hpp"
 #include "parameter_input.hpp"
 #include "mesh/mesh.hpp"
+
 #include "outputs.hpp"
+#include "power_spectrum.hpp"
 
 //----------------------------------------------------------------------------------------
 // Outputs constructor
@@ -93,7 +95,11 @@ Outputs::Outputs(ParameterInput *pin, Mesh *pm) {
           opar.file_type.compare("rst") != 0 &&
           opar.file_type.compare("log") != 0 &&
           opar.file_type.compare("trk") != 0) {
-        opar.variable = pin->GetString(opar.block_name, "variable");
+        if (opar.file_type.compare("power_spectrum") == 0) {
+          opar.variable = pin->GetOrAddString(opar.block_name, "variable", "velocity");
+        } else {
+          opar.variable = pin->GetString(opar.block_name, "variable");
+        }
         opar.file_id = pin->GetOrAddString(opar.block_name,"id",opar.variable);
       }
 
@@ -182,8 +188,13 @@ Outputs::Outputs(ParameterInput *pin, Mesh *pm) {
       // set output variable and optional file id (default is output variable name)
       if (opar.file_type.compare("hst") != 0 &&
           opar.file_type.compare("rst") != 0 &&
-          opar.file_type.compare("log") != 0) {
-        opar.variable = pin->GetString(opar.block_name, "variable");
+          opar.file_type.compare("log") != 0 &&
+          opar.file_type.compare("trk") != 0) {
+        if (opar.file_type.compare("power_spectrum") == 0) {
+          opar.variable = pin->GetOrAddString(opar.block_name, "variable", "velocity");
+        } else {
+          opar.variable = pin->GetString(opar.block_name, "variable");
+        }
         opar.file_id = pin->GetOrAddString(opar.block_name,"id",opar.variable);
       }
 
@@ -272,6 +283,9 @@ Outputs::Outputs(ParameterInput *pin, Mesh *pm) {
       } else if (opar.file_type.compare("bin") == 0) {
         pnode = new MeshBinaryOutput(pin,pm,opar);
         pout_list.insert(pout_list.begin(),pnode);
+      } else if (opar.file_type.compare("power_spectrum") == 0) {
+        pnode = new PowerSpectrumOutput(pin, pm, opar);
+        pout_list.insert(pout_list.begin(), pnode);
       } else if (opar.file_type.compare("rst") == 0) {
       // Add restarts to the tail end of BaseTypeOutput list, so file counters for other
       // output types are up-to-date in restart file

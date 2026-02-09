@@ -97,6 +97,7 @@ add_executable(
         outputs/track_prtcl.cpp
         outputs/vtk_mesh.cpp
         outputs/vtk_prtcl.cpp
+        outputs/power_spectrum.cpp
 
         particles/particles.cpp
         particles/particles_pushers.cpp
@@ -139,6 +140,7 @@ add_executable(
         srcterms/srcterms.cpp
         srcterms/srcterms_newdt.cpp
         srcterms/turb_driver.cpp
+        srcterms/krooks.cpp
 
         tasklist/numerical_relativity.cpp
 
