@@ -237,6 +237,7 @@ TaskStatus Hydro::HydroSrcTerms(Driver *pdrive, int stage) {
   if (psrc->const_accel)  psrc->ConstantAccel(w0, peos->eos_data,  beta_dt, u0);
   if (psrc->ism_cooling)  psrc->ISMCooling(w0, peos->eos_data, beta_dt, u0);
   if (psrc->rel_cooling)  psrc->RelCooling(w0, peos->eos_data, beta_dt, u0);
+  if (psrc->sn_driving)   psrc->SupernovaDriving(w0, peos->eos_data, beta_dt, u0);
   if (psrc->shearing_box) psrc->ShearingBox(w0, peos->eos_data, beta_dt, u0);
 
   // Add coordinate source terms in GR.  Again, must be computed with only primitives.
