@@ -10,14 +10,23 @@
 
 #include "srcterms.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <fstream>
 #include <iostream>
 #include <string> // string
+#include <vector>
+
+#if MPI_PARALLEL_ENABLED
+#include <mpi.h>
+#endif
 
 #include "athena.hpp"
 #include "coordinates/cartesian_ks.hpp"
 #include "coordinates/cell_locations.hpp"
 #include "eos/eos.hpp"
 #include "geodesic-grid/geodesic_grid.hpp"
+#include "globals.hpp"
 #include "hydro/hydro.hpp"
 #include "ismcooling.hpp"
 #include "mesh/mesh.hpp"
@@ -33,7 +42,10 @@
 
 SourceTerms::SourceTerms(std::string block, MeshBlockPack *pp, ParameterInput *pin) :
   pmy_pack(pp),
-  shearing_box_r_phi(false) {
+  shearing_box_r_phi(false),
+  sn_rng_(0),
+  sn_event_count_(0),
+  sn_event_accum_(0.0) {
   // (1) (constant) gravitational acceleration
   const_accel = pin->GetOrAddBoolean(block, "const_accel", false);
   if (const_accel) {
@@ -65,7 +77,59 @@ SourceTerms::SourceTerms(std::string block, MeshBlockPack *pp, ParameterInput *p
     cpower_rel = pin->GetOrAddReal(block, "cpower_rel", 1.);
   }
 
-  // (5) shearing box
+  // (5) stochastic supernova driving
+  sn_driving = pin->GetOrAddBoolean(block, "sn_driving", false);
+  if (sn_driving) {
+    sn_rate = pin->GetReal(block, "sn_rate");
+    sn_seed = pin->GetOrAddInteger(block, "sn_seed", 12345);
+    sn_rng_.seed(static_cast<unsigned long long>(sn_seed));
+
+    if (pin->DoesParameterExist(block, "sn_energy")) {
+      sn_einj = pin->GetReal(block, "sn_energy");
+    } else {
+      Real sn_energy_cgs = pin->GetOrAddReal(block, "sn_energy_cgs", 1.0e51);
+      sn_einj = sn_energy_cgs * pmy_pack->punit->erg();
+    }
+
+    if (pin->DoesParameterExist(block, "sn_rinj")) {
+      sn_rinj = pin->GetReal(block, "sn_rinj");
+    } else {
+      Real sn_radius_pc = pin->GetOrAddReal(block, "sn_radius_pc", 8.0);
+      sn_rinj = sn_radius_pc * pmy_pack->punit->pc();
+    }
+
+    if (pin->DoesParameterExist(block, "sn_zmin")) {
+      sn_zmin = pin->GetReal(block, "sn_zmin");
+    } else if (pin->DoesParameterExist(block, "sn_zmin_pc")) {
+      sn_zmin = pin->GetReal(block, "sn_zmin_pc")*pmy_pack->punit->pc();
+    } else {
+      sn_zmin = pmy_pack->pmesh->mesh_size.x3min;
+    }
+
+    if (pin->DoesParameterExist(block, "sn_zmax")) {
+      sn_zmax = pin->GetReal(block, "sn_zmax");
+    } else if (pin->DoesParameterExist(block, "sn_zmax_pc")) {
+      sn_zmax = pin->GetReal(block, "sn_zmax_pc")*pmy_pack->punit->pc();
+    } else {
+      sn_zmax = pmy_pack->pmesh->mesh_size.x3max;
+    }
+
+    sn_zmin = std::max(sn_zmin, pmy_pack->pmesh->mesh_size.x3min);
+    sn_zmax = std::min(sn_zmax, pmy_pack->pmesh->mesh_size.x3max);
+    if (sn_zmax <= sn_zmin) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
+                << "SN z-band is invalid: require sn_zmax > sn_zmin after clipping."
+                << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+
+    sn_log_events = pin->GetOrAddBoolean(block, "sn_log_events", true);
+    std::string basename = pin->GetOrAddString("job", "basename", "AthenaK");
+    sn_log_file = pin->GetOrAddString(block, "sn_log_file",
+                                      basename + ".sn_events.dat");
+  }
+
+  // (6) shearing box
   if (pin->DoesBlockExist("shearing_box")) {
     shearing_box = true;
     qshear = pin->GetReal("shearing_box","qshear");
@@ -191,6 +255,216 @@ void SourceTerms::RelCooling(const DvceArray5D<Real> &w0, const EOS_Data &eos_da
     u0(m,IM3,k,j,i) -= bdt*w0(m,IDN,k,j,i)*uz*pow((temp*cooling_rate), cooling_power);
   });
 
+  return;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn void SourceTerms::SupernovaDriving()
+//! \brief Add stochastic supernova thermal energy source terms in the energy equation.
+//! NOTE source terms must be computed using primitive (w0) and NOT conserved (u0) vars.
+
+void SourceTerms::SupernovaDriving(const DvceArray5D<Real> &w0, const EOS_Data &eos_data,
+                                   const Real bdt, DvceArray5D<Real> &u0) {
+  if (!eos_data.is_ideal) return;
+  if (bdt <= 0.0 || sn_rate <= 0.0 || sn_rinj <= 0.0 || sn_einj <= 0.0) return;
+
+  auto &indcs = pmy_pack->pmesh->mb_indcs;
+  int is = indcs.is, ie = indcs.ie;
+  int js = indcs.js, je = indcs.je;
+  int ks = indcs.ks, ke = indcs.ke;
+  int nmb = pmy_pack->nmb_thispack;
+  int nmb1 = nmb - 1;
+  int nx1 = indcs.nx1, nx2 = indcs.nx2, nx3 = indcs.nx3;
+  const int nmkji = nmb*nx3*nx2*nx1;
+  const int nkji = nx3*nx2*nx1;
+  const int nji  = nx2*nx1;
+
+  auto &size = pmy_pack->pmb->mb_size;
+  auto &msz = pmy_pack->pmesh->mesh_size;
+
+  Real x1min = msz.x1min, x1max = msz.x1max;
+  Real x2min = msz.x2min, x2max = msz.x2max;
+  Real x3min = msz.x3min, x3max = msz.x3max;
+
+  Real lx1 = x1max - x1min;
+  Real lx2 = x2max - x2min;
+  Real lx3 = x3max - x3min;
+
+  bool x1_periodic = (pmy_pack->pmesh->mesh_bcs[BoundaryFace::inner_x1] ==
+                      BoundaryFlag::periodic ||
+                      pmy_pack->pmesh->mesh_bcs[BoundaryFace::inner_x1] ==
+                      BoundaryFlag::shear_periodic);
+  bool x2_periodic = (pmy_pack->pmesh->mesh_bcs[BoundaryFace::inner_x2] ==
+                      BoundaryFlag::periodic);
+  bool x3_periodic = (pmy_pack->pmesh->mesh_bcs[BoundaryFace::inner_x3] ==
+                      BoundaryFlag::periodic);
+
+  int nevents = 0;
+  if (global_variable::my_rank == 0) {
+    sn_event_accum_ += sn_rate*bdt;
+    nevents = static_cast<int>(sn_event_accum_);
+    sn_event_accum_ -= static_cast<Real>(nevents);
+  }
+
+#if MPI_PARALLEL_ENABLED
+  MPI_Bcast(&nevents, 1, MPI_INT, 0, MPI_COMM_WORLD);
+#endif
+
+  if (nevents <= 0) return;
+
+  std::vector<Real> event_xyz(3*nevents, 0.0);
+
+  if (global_variable::my_rank == 0) {
+    std::uniform_real_distribution<Real> xdist(x1min, x1max);
+    std::uniform_real_distribution<Real> ydist(x2min, x2max);
+    Real zband_min = std::max(sn_zmin, x3min);
+    Real zband_max = std::min(sn_zmax, x3max);
+    std::uniform_real_distribution<Real> zdist(zband_min, zband_max);
+
+    for (int n = 0; n < nevents; ++n) {
+      Real xsn = xdist(sn_rng_);
+      Real ysn = (nx2 > 1) ? ydist(sn_rng_) : 0.5*(x2min + x2max);
+      Real zsn = 0.5*(zband_min + zband_max);
+
+      if (nx3 > 1) {
+        zsn = zdist(sn_rng_);
+      }
+
+      event_xyz[3*n + 0] = xsn;
+      event_xyz[3*n + 1] = ysn;
+      event_xyz[3*n + 2] = zsn;
+    }
+  }
+
+#if MPI_PARALLEL_ENABLED
+  MPI_Bcast(event_xyz.data(), 3*nevents, MPI_ATHENA_REAL, 0, MPI_COMM_WORLD);
+#endif
+
+  Real r2inj = sn_rinj*sn_rinj;
+
+  for (int n = 0; n < nevents; ++n) {
+    Real xsn = event_xyz[3*n + 0];
+    Real ysn = event_xyz[3*n + 1];
+    Real zsn = event_xyz[3*n + 2];
+
+    Real vol_local = 0.0;
+    Kokkos::parallel_reduce("sn_volume", Kokkos::RangePolicy<>(DevExeSpace(), 0, nmkji),
+    KOKKOS_LAMBDA(const int &idx, Real &sum_vol) {
+      int m = (idx)/nkji;
+      int k = (idx - m*nkji)/nji;
+      int j = (idx - m*nkji - k*nji)/nx1;
+      int i = (idx - m*nkji - k*nji - j*nx1) + is;
+      k += ks;
+      j += js;
+
+      Real &x1mbmin = size.d_view(m).x1min;
+      Real &x1mbmax = size.d_view(m).x1max;
+      Real x1v = CellCenterX(i - is, nx1, x1mbmin, x1mbmax);
+
+      Real &x2mbmin = size.d_view(m).x2min;
+      Real &x2mbmax = size.d_view(m).x2max;
+      Real x2v = CellCenterX(j - js, nx2, x2mbmin, x2mbmax);
+
+      Real &x3mbmin = size.d_view(m).x3min;
+      Real &x3mbmax = size.d_view(m).x3max;
+      Real x3v = CellCenterX(k - ks, nx3, x3mbmin, x3mbmax);
+
+      Real dxx = x1v - xsn;
+      if (x1_periodic) {
+        if (dxx > 0.5*lx1) dxx -= lx1;
+        if (dxx < -0.5*lx1) dxx += lx1;
+      }
+
+      Real dyy = x2v - ysn;
+      if (x2_periodic) {
+        if (dyy > 0.5*lx2) dyy -= lx2;
+        if (dyy < -0.5*lx2) dyy += lx2;
+      }
+
+      Real dzz = x3v - zsn;
+      if (x3_periodic) {
+        if (dzz > 0.5*lx3) dzz -= lx3;
+        if (dzz < -0.5*lx3) dzz += lx3;
+      }
+
+      Real r2 = dxx*dxx + dyy*dyy + dzz*dzz;
+      if (r2 < r2inj) {
+        sum_vol += size.d_view(m).dx1*size.d_view(m).dx2*size.d_view(m).dx3;
+      }
+    }, Kokkos::Sum<Real>(vol_local));
+
+    Real vol_global = vol_local;
+#if MPI_PARALLEL_ENABLED
+    MPI_Allreduce(MPI_IN_PLACE, &vol_global, 1, MPI_ATHENA_REAL, MPI_SUM,
+                  MPI_COMM_WORLD);
+#endif
+
+    if (vol_global > 0.0) {
+      Real de = sn_einj/vol_global;
+      par_for("sn_inject", DevExeSpace(), 0, nmb1, ks, ke, js, je, is, ie,
+      KOKKOS_LAMBDA(const int m, const int k, const int j, const int i) {
+        Real &x1mbmin = size.d_view(m).x1min;
+        Real &x1mbmax = size.d_view(m).x1max;
+        Real x1v = CellCenterX(i - is, nx1, x1mbmin, x1mbmax);
+
+        Real &x2mbmin = size.d_view(m).x2min;
+        Real &x2mbmax = size.d_view(m).x2max;
+        Real x2v = CellCenterX(j - js, nx2, x2mbmin, x2mbmax);
+
+        Real &x3mbmin = size.d_view(m).x3min;
+        Real &x3mbmax = size.d_view(m).x3max;
+        Real x3v = CellCenterX(k - ks, nx3, x3mbmin, x3mbmax);
+
+        Real dxx = x1v - xsn;
+        if (x1_periodic) {
+          if (dxx > 0.5*lx1) dxx -= lx1;
+          if (dxx < -0.5*lx1) dxx += lx1;
+        }
+
+        Real dyy = x2v - ysn;
+        if (x2_periodic) {
+          if (dyy > 0.5*lx2) dyy -= lx2;
+          if (dyy < -0.5*lx2) dyy += lx2;
+        }
+
+        Real dzz = x3v - zsn;
+        if (x3_periodic) {
+          if (dzz > 0.5*lx3) dzz -= lx3;
+          if (dzz < -0.5*lx3) dzz += lx3;
+        }
+
+        Real r2 = dxx*dxx + dyy*dyy + dzz*dzz;
+        if (r2 < r2inj) {
+          u0(m, IEN, k, j, i) += de;
+        }
+      });
+    }
+  }
+
+  if (sn_log_events && global_variable::my_rank == 0) {
+    bool write_header = false;
+    if (sn_event_count_ == 0) {
+      std::ifstream ifs(sn_log_file);
+      write_header = !ifs.good();
+    }
+
+    std::ofstream ofs(sn_log_file, std::ios::out | std::ios::app);
+    if (ofs.is_open()) {
+      if (write_header) {
+        ofs << "# event_id time x y z\n";
+      }
+      for (int n = 0; n < nevents; ++n) {
+        ofs << (sn_event_count_ + n + 1) << " " << pmy_pack->pmesh->time << " "
+            << event_xyz[3*n + 0] << " " << event_xyz[3*n + 1] << " "
+            << event_xyz[3*n + 2] << "\n";
+      }
+    } else {
+      std::cout << "### WARNING in " << __FILE__ << " at line " << __LINE__
+                << ": could not open SN log file '" << sn_log_file << "'\n";
+    }
+  }
+
+  sn_event_count_ += nevents;
   return;
 }
 

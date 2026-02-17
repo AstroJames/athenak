@@ -1,0 +1,74 @@
+# AthenaXXX input file for stochastic SN driving in a periodic hydro box
+# Build with: cmake .. -DPROBLEM=sn_drive_box
+
+<comment>
+problem   = supernova driving in a periodic hydro box
+
+<job>
+basename  = SNDriveBox
+
+<mesh>
+nghost    = 2         # Number of ghost cells
+nx1       = 32        # Number of zones in X1-direction
+x1min     = -0.5      # minimum value of X1
+x1max     = 0.5       # maximum value of X1
+ix1_bc    = periodic  # Inner-X1 boundary condition flag
+ox1_bc    = periodic  # Outer-X1 boundary condition flag
+
+nx2       = 32        # Number of zones in X2-direction
+x2min     = -0.5      # minimum value of X2
+x2max     = 0.5       # maximum value of X2
+ix2_bc    = periodic  # Inner-X2 boundary condition flag
+ox2_bc    = periodic  # Outer-X2 boundary condition flag
+
+nx3       = 32        # Number of zones in X3-direction
+x3min     = -0.5      # minimum value of X3
+x3max     = 0.5       # maximum value of X3
+ix3_bc    = periodic  # Inner-X3 boundary condition flag
+ox3_bc    = periodic  # Outer-X3 boundary condition flag
+
+<meshblock>
+nx1       = 32        # Number of cells in each MeshBlock, X1-dir
+nx2       = 32        # Number of cells in each MeshBlock, X2-dir
+nx3       = 32        # Number of cells in each MeshBlock, X3-dir
+
+<time>
+evolution  = dynamic  # dynamic/kinematic/static
+integrator = rk2      # time integration algorithm
+cfl_number = 0.3      # CFL number
+nlim       = -1       # cycle limit
+tlim       = 2.0      # time limit in code units
+ndiag      = 1        # cycles between diagostic output
+
+<hydro>
+eos         = ideal      # EOS type
+reconstruct = plm        # spatial reconstruction method
+rsolver     = hllc       # Riemann-solver
+gamma       = 1.6666667  # gamma = C_p/C_v
+
+# Stochastic SN driving (code units)
+sn_driving  = true
+sn_rate     = 50.0       # target events per unit code time
+sn_energy   = 1.0e-2     # thermal energy per event
+sn_rinj     = 0.03       # injection radius
+sn_zmin     = -0.5       # lower z-edge of driving band
+sn_zmax     = 0.5        # upper z-edge of driving band
+sn_seed     = 314159
+sn_log_events = true
+sn_log_file = SNDriveBox.sn_events.dat
+
+<problem>
+rho0 = 1.0
+pgas0 = 1.0
+vx0 = 0.0
+vy0 = 0.0
+vz0 = 0.0
+
+<output1>
+file_type = hst
+dt        = 0.01
+
+<output2>
+file_type  = vtk
+variable   = hydro_w
+dt         = 0.05
