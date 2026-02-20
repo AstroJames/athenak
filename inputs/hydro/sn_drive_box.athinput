@@ -7,6 +7,13 @@ problem   = supernova driving in a periodic hydro box
 <job>
 basename  = SNDriveBox
 
+<units>
+# Choose units so rho0=1 -> n_H ~ 1 cm^-3 and pgas0/rho0=1 -> T ~ 10^4 K
+length_cgs = 3.085677581e20  # 100 pc
+mass_cgs   = 6.195900775e37
+time_cgs   = 3.813601529e14
+mu         = 1.27
+
 <mesh>
 nghost    = 2         # Number of ghost cells
 nx1       = 32        # Number of zones in X1-direction
@@ -45,21 +52,27 @@ eos         = ideal      # EOS type
 reconstruct = plm        # spatial reconstruction method
 rsolver     = hllc       # Riemann-solver
 gamma       = 1.6666667  # gamma = C_p/C_v
+tfloor      = 1.0e-4     # 1 K physical floor (T_unit ~ 1.0e4 K)
 
 # Stochastic SN driving (code units)
 sn_driving  = true
 sn_rate     = 50.0       # target events per unit code time
-sn_energy   = 1.0e-2     # thermal energy per event
-sn_rinj     = 0.03       # injection radius
+sn_energy   = 8.91e-5    # thermal energy per event
+sn_rinj     = 0.0625     # injection radius (2 cells for this 32^3 setup)
 sn_zmin     = -0.5       # lower z-edge of driving band
 sn_zmax     = 0.5        # upper z-edge of driving band
 sn_seed     = 314159
 sn_log_events = true
 sn_log_file = SNDriveBox.sn_events.dat
 
+# Optional ISM cooling + heating (cgs rates; converted via <units>)
+ism_cooling = true
+hrate       = 2.0e-26    # heating rate per H nucleus [erg s^-1]
+
 <problem>
-rho0 = 1.0
-pgas0 = 1.0
+# For hrate=2e-26 and this cooling curve, T~1e4 K equilibrium is at n_H~4.7e-3 cm^-3
+rho0 = 4.6962305e-3
+pgas0 = 4.6962305e-3  # p/rho=1 -> T~1e4 K with chosen units
 vx0 = 0.0
 vy0 = 0.0
 vz0 = 0.0

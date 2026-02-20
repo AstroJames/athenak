@@ -99,6 +99,7 @@ class SourceTerms {
   std::mt19937_64 sn_rng_;
   long long sn_event_count_;
   Real sn_event_accum_;
+  bool sn_rinj_warned_;
 };
 
 #endif  // SRCTERMS_SRCTERMS_HPP_
