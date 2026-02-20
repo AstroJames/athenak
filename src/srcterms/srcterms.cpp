@@ -14,6 +14,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string> // string
 #include <vector>
 
@@ -45,7 +46,8 @@ SourceTerms::SourceTerms(std::string block, MeshBlockPack *pp, ParameterInput *p
   shearing_box_r_phi(false),
   sn_rng_(0),
   sn_event_count_(0),
-  sn_event_accum_(0.0) {
+  sn_event_accum_(0.0),
+  sn_rinj_warned_(false) {
   // (1) (constant) gravitational acceleration
   const_accel = pin->GetOrAddBoolean(block, "const_accel", false);
   if (const_accel) {
@@ -299,6 +301,27 @@ void SourceTerms::SupernovaDriving(const DvceArray5D<Real> &w0, const EOS_Data &
   bool x3_periodic = (pmy_pack->pmesh->mesh_bcs[BoundaryFace::inner_x3] ==
                       BoundaryFlag::periodic);
 
+  // Enforce a minimum injection radius of two cell widths on the active mesh.
+  Real min_dx_local = std::numeric_limits<Real>::max();
+  for (int m = 0; m < nmb; ++m) {
+    min_dx_local = std::min(min_dx_local, size.h_view(m).dx1);
+    if (nx2 > 1) min_dx_local = std::min(min_dx_local, size.h_view(m).dx2);
+    if (nx3 > 1) min_dx_local = std::min(min_dx_local, size.h_view(m).dx3);
+  }
+
+  Real min_dx = min_dx_local;
+#if MPI_PARALLEL_ENABLED
+  MPI_Allreduce(MPI_IN_PLACE, &min_dx, 1, MPI_ATHENA_REAL, MPI_MIN, MPI_COMM_WORLD);
+#endif
+
+  Real sn_rinj_eff = std::max(sn_rinj, 2.0*min_dx);
+  if (!sn_rinj_warned_ && sn_rinj_eff > sn_rinj && global_variable::my_rank == 0) {
+    std::cout << "### WARNING in " << __FILE__ << " at line " << __LINE__
+              << ": sn_rinj=" << sn_rinj << " is under-resolved on this mesh; using "
+              << "minimum resolved radius sn_rinj=2*dx_min=" << sn_rinj_eff << "\n";
+    sn_rinj_warned_ = true;
+  }
+
   int nevents = 0;
   if (global_variable::my_rank == 0) {
     sn_event_accum_ += sn_rate*bdt;
@@ -340,7 +363,7 @@ void SourceTerms::SupernovaDriving(const DvceArray5D<Real> &w0, const EOS_Data &
   MPI_Bcast(event_xyz.data(), 3*nevents, MPI_ATHENA_REAL, 0, MPI_COMM_WORLD);
 #endif
 
-  Real r2inj = sn_rinj*sn_rinj;
+  Real r2inj = sn_rinj_eff*sn_rinj_eff;
 
   for (int n = 0; n < nevents; ++n) {
     Real xsn = event_xyz[3*n + 0];
