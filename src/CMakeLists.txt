@@ -141,8 +141,6 @@ add_executable(
         srcterms/srcterms.cpp
         srcterms/srcterms_newdt.cpp
         srcterms/turb_driver.cpp
-        srcterms/krooks.cpp
-
         tasklist/numerical_relativity.cpp
 
         units/units.cpp
