@@ -2,6 +2,7 @@
 
 <comment>
 problem   = 2 zone current sheet with resistivity
+special_bcs = iprob=3, diode x1 + periodic x2 before t_switch, IC-matching x1/x2 after t_switch
 
 <job>
 basename  = CS  # problem ID: basename of output filenames
@@ -12,14 +13,14 @@ nghost    = 3 #2         # Number of ghost cells
 nx1       = 1600 #256     # Number of zones in X1-direction
 x1min     = -3.0      # minimum value of X1
 x1max     = 3.0       # maximum value of X1
-ix1_bc    = periodic  # Inner-X1 boundary condition flag (switched to IC-matching after t_switch in pgen)
-ox1_bc    = periodic  # Outer-X1 boundary condition flag (switched to IC-matching after t_switch in pgen)
+ix1_bc    = diode     # Inner-X1 boundary condition flag before t_switch (IC-matching after t_switch in pgen)
+ox1_bc    = diode     # Outer-X1 boundary condition flag before t_switch (IC-matching after t_switch in pgen)
 
 nx2       = 1600 #256       # Number of zones in X2-direction
 x2min     = -3.0      # minimum value of X2
 x2max     = 3.0       # maximum value of X2
-ix2_bc    = periodic  # Inner-X2 boundary condition flag
-ox2_bc    = periodic  # Outer-X2 boundary condition flag
+ix2_bc    = periodic  # Inner-X2 boundary condition flag before t_switch (IC-matching after t_switch in pgen)
+ox2_bc    = periodic  # Outer-X2 boundary condition flag before t_switch (IC-matching after t_switch in pgen)
 
 nx3       = 1         # Number of zones in X3-direction
 x3min     = -0.5      # minimum value of X3
@@ -50,7 +51,7 @@ rsolver     = hlld     # Riemann-solver to be used
 gamma       = 1.6667     # gamma = C_p/C_v
 
 <problem>
-iprob = 3                 # P = rho^(gamma)
+iprob = 3                 # Required for special BCs (switches periodic -> IC-matching at t_switch)
 d0 = 50.0 # not used for iprob ==3                # Amplitude of sheet density (should be b0^2/2)
 ng = 10.0 # not used for iprob ==3                 # background density
 b0 = 10 * 1.291 # alpha * sqrt gamma #10.0                 # Amplitude of reconnecting field #bb0 in the cpp file for some reason
@@ -58,8 +59,8 @@ a0 = 0.05                 # Width of current sheet
 bg = 0.0                  # guide field strength
 kval = 1.0                # wave vector in y direction
 p0 = 1.0/eos.gamma        # pressure far away
-epsp = 0.0 #6.0 #2.0 #0.9 #0.1 #0.02               # pinch perturbation on pressure to start reconnection
-t_switch = 0.2               # switch from periodic to IC-matching x1 boundaries (iprob==3)
+epsp = 0.0 #6.0 #2.0 #0.9 #0.1 #0.02               # pinch perturbation on pressure (not used in IC-matching BC state)
+t_switch = 0.2               # switch time for IC-matching BCs on x1/x2 (iprob==3); set <0 to keep base BCs
 
 <output1>
 file_type   = vtk       # Tabular data dump

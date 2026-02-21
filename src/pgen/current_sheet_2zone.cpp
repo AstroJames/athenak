@@ -66,6 +66,9 @@ void ProblemGenerator::UserProblem(ParameterInput *pin, const bool restart) {
   // equilibrium IC matching at t_switch.
   cs2_bc = {iprob, bb0, a0, bg, p0, t_switch};
   if (iprob == 3) {
+    // Force user BC execution even when mesh faces are physical (e.g., diode/outflow),
+    // so the t_switch IC-matching override can run.
+    user_bcs = true;
     user_bcs_func = CurrentSheet2ZoneBoundary;
   }
 
@@ -183,7 +186,7 @@ void CurrentSheet2ZoneBoundary(Mesh *pm) {
   if (cs2_bc.iprob != 3) return;
   if (!cs2_bc_switch_logged && cs2_bc.t_switch >= 0.0 && pm->time >= cs2_bc.t_switch) {
     if (global_variable::my_rank == 0) {
-      std::cout << "### INFO in " << __FILE__
+      std::cout << "### INFO in current_sheet_2zone.cpp"
                 << ": switching current_sheet_2zone boundaries to IC-matching at t="
                 << pm->time << " (t_switch=" << cs2_bc.t_switch << ")" << std::endl;
     }
