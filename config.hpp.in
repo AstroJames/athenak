@@ -25,6 +25,9 @@
 // use OpenMP parallelization? default=0 (false)
 #define OPENMP_PARALLEL_ENABLED @OPENMP_PARALLEL_ENABLED@
 
+// include FFT support for power_spectrum output? default=1 (true)
+#define FFT_ENABLED @FFT_ENABLED@
+
 // use heFFTe distributed FFT backend? default=0 (false)
 #define HEFFTE_ENABLED @HEFFTE_ENABLED@
 

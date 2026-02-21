@@ -15,8 +15,10 @@
 #include <string>
 #include <vector>
 
+#if FFT_ENABLED
 #include <Kokkos_Complex.hpp>
 #include <KokkosFFT.hpp>
+#endif
 
 #include "hydro/hydro.hpp"
 #include "mhd/mhd.hpp"
@@ -31,6 +33,7 @@
 
 namespace {
 
+#if FFT_ENABLED
 using real_view_t =
     Kokkos::View<Real***, Kokkos::LayoutRight, Kokkos::DefaultExecutionSpace>;
 using complex_view_t =
@@ -318,6 +321,7 @@ class LegacyPowerSpectrumBackend final : public PowerSpectrumBackend {
   complex_view_t fft_out_;
   std::unique_ptr<PlanType> plan_;
 };
+#endif  // FFT_ENABLED
 
 #if HEFFTE_ENABLED
 struct HeffteCellSample {
@@ -572,6 +576,7 @@ class HefftePowerSpectrumBackend final : public PowerSpectrumBackend {
 
 std::unique_ptr<PowerSpectrumBackend> BuildPowerSpectrumBackend(
     Mesh *pm, const OutputParameters &out_params) {
+#if FFT_ENABLED
   if (out_params.fft_backend.compare("legacy") == 0) {
     return std::make_unique<LegacyPowerSpectrumBackend>(pm);
   }
@@ -588,4 +593,10 @@ std::unique_ptr<PowerSpectrumBackend> BuildPowerSpectrumBackend(
   std::cout << "### FATAL ERROR in BuildPowerSpectrumBackend\n"
             << "Unknown fft_backend='" << out_params.fft_backend << "' requested.\n";
   std::exit(EXIT_FAILURE);
+#else
+  std::cout << "### FATAL ERROR in BuildPowerSpectrumBackend\n"
+            << "power_spectrum output requested, but this binary was compiled with "
+            << "Athena_ENABLE_FFT=OFF.\n";
+  std::exit(EXIT_FAILURE);
+#endif
 }
