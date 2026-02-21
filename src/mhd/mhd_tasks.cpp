@@ -475,16 +475,26 @@ TaskStatus MHD::RecvB_Shr(Driver *pdrive, int stage) {
 //! \brief Wrapper task list function to call funtions that set physical and user BCs
 
 TaskStatus MHD::ApplyPhysicalBCs(Driver *pdrive, int stage) {
-  // do not apply BCs if domain is strictly periodic
-  if (pmy_pack->pmesh->strictly_periodic) return TaskStatus::complete;
+  auto *pgen = pmy_pack->pmesh->pgen.get();
+  bool run_user_bcs = pgen->user_bcs;
 
-  // physical BCs
-  pbval_u->HydroBCs((pmy_pack), (pbval_u->u_in), u0);
-  pbval_b->BFieldBCs((pmy_pack), (pbval_b->b_in), b0);
+  // do not apply BCs in strictly periodic domains unless a user BC callback is enrolled
+  if (pmy_pack->pmesh->strictly_periodic && pgen->user_bcs_func == nullptr) {
+    return TaskStatus::complete;
+  }
+
+  // physical BCs are skipped for strictly periodic meshes
+  if (!pmy_pack->pmesh->strictly_periodic) {
+    pbval_u->HydroBCs((pmy_pack), (pbval_u->u_in), u0);
+    pbval_b->BFieldBCs((pmy_pack), (pbval_b->b_in), b0);
+  } else {
+    // allow problems that explicitly enroll a user BC callback to override periodic ghosts
+    run_user_bcs = true;
+  }
 
   // user BCs
-  if (pmy_pack->pmesh->pgen->user_bcs) {
-    (pmy_pack->pmesh->pgen->user_bcs_func)(pmy_pack->pmesh);
+  if (run_user_bcs && pgen->user_bcs_func != nullptr) {
+    (pgen->user_bcs_func)(pmy_pack->pmesh);
   }
 
   return TaskStatus::complete;
