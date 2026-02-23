@@ -12,6 +12,7 @@
 #include <iostream>
 
 #include "athena.hpp"
+#include "globals.hpp"
 #include "parameter_input.hpp"
 #include "coordinates/cell_locations.hpp"
 #include "mesh/mesh.hpp"
@@ -114,6 +115,22 @@ void ProblemGenerator::BiermannGradient(ParameterInput *pin, const bool restart)
     user_srcs_func = BiermannGradientSourceTerms;
     g_biermann_force_x1 = dp_dx1;
     g_biermann_force_x2 = dp_dx2;
+
+    if (global_variable::my_rank == 0) {
+      Real xmin = pmy_mesh_->mesh_size.x1min;
+      Real xmax = pmy_mesh_->mesh_size.x1max;
+      Real rho_min = std::min(rho0 + drho_dx1*xmin, rho0 + drho_dx1*xmax);
+      Real rho_max = std::max(rho0 + drho_dx1*xmin, rho0 + drho_dx1*xmax);
+      Real g1_min = g_biermann_force_x1/rho_max;
+      Real g1_max = g_biermann_force_x1/rho_min;
+      Real g2_min = g_biermann_force_x2/rho_max;
+      Real g2_max = g_biermann_force_x2/rho_min;
+      std::cout << "biermann_gradient: balance_pressure_force enabled with "
+                << "force_density=(" << g_biermann_force_x1 << ", "
+                << g_biermann_force_x2 << "), accel_ranges x1=[" << g1_min
+                << ", " << g1_max << "], x2=[" << g2_min << ", " << g2_max
+                << "]" << std::endl;
+    }
   }
 
   if (restart) return;
