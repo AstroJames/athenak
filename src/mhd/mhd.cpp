@@ -16,6 +16,7 @@
 #include "eos/eos.hpp"
 #include "diffusion/viscosity.hpp"
 #include "diffusion/resistivity.hpp"
+#include "diffusion/biermann.hpp"
 #include "diffusion/conduction.hpp"
 #include "srcterms/srcterms.hpp"
 #include "shearing_box/shearing_box.hpp"
@@ -103,6 +104,14 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
     presist = new Resistivity(ppack, pin);
   } else {
     presist = nullptr;
+  }
+
+  // Biermann battery (only constructed if needed)
+  if (pin->DoesParameterExist("mhd","biermann_coeff") ||
+      pin->DoesParameterExist("mhd","biermann_from_cgs")) {
+    pbier = new BiermannBattery(ppack, pin);
+  } else {
+    pbier = nullptr;
   }
 
   // Thermal conduction (only constructed if needed)
@@ -349,6 +358,7 @@ MHD::~MHD() {
   delete pbval_b;
   if (pvisc != nullptr) {delete pvisc;}
   if (presist!= nullptr) {delete presist;}
+  if (pbier  != nullptr) {delete pbier;}
   if (pcond != nullptr) {delete pcond;}
   if (psrc!= nullptr) {delete psrc;}
 }
