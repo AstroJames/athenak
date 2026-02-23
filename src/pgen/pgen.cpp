@@ -72,6 +72,8 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm) :
     OrszagTang(pin, false);
   } else if (pgen_fun_name.compare("rad_linear_wave") == 0) {
     RadiationLinearWave(pin, false);
+  } else if (pgen_fun_name.compare("biermann_gradient") == 0) {
+    BiermannGradient(pin, false);
   } else if (pgen_fun_name.compare("shock_tube") == 0) {
     ShockTube(pin, false);
   } else if (pgen_fun_name.compare("z4c_linear_wave") == 0) {
@@ -650,6 +652,8 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
     OrszagTang(pin, true);
   } else if (pgen_fun_name.compare("rad_linear_wave") == 0) {
     RadiationLinearWave(pin, true);
+  } else if (pgen_fun_name.compare("biermann_gradient") == 0) {
+    BiermannGradient(pin, true);
   } else if (pgen_fun_name.compare("shock_tube") == 0) {
     ShockTube(pin, true);
   } else if (pgen_fun_name.compare("z4c_linear_wave") == 0) {
