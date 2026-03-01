@@ -184,6 +184,7 @@ namespace {
 
 void CurrentSheet2ZoneBoundary(Mesh *pm) {
   if (cs2_bc.iprob != 3) return;
+  if (pm->pmb_pack->pmhd == nullptr) return;
   if (!cs2_bc_switch_logged && cs2_bc.t_switch >= 0.0 && pm->time >= cs2_bc.t_switch) {
     if (global_variable::my_rank == 0) {
       std::cout << "### INFO in current_sheet_2zone.cpp"
@@ -193,7 +194,6 @@ void CurrentSheet2ZoneBoundary(Mesh *pm) {
     cs2_bc_switch_logged = true;
   }
   if (cs2_bc.t_switch < 0.0 || pm->time < cs2_bc.t_switch) return;
-  if (pm->pmb_pack->pmhd == nullptr) return;
 
   auto &indcs = pm->mb_indcs;
   int &ng = indcs.ng;
