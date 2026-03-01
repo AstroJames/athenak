@@ -2,7 +2,7 @@
 #
 # Verifies that:
 # 1) Before t_switch: x1 uses diode behavior and x2 remains periodic.
-# 2) After t_switch: ghost zones are overwritten by the IC-matching profile.
+# 2) After t_switch: x1 ghost zones are IC-matching, while x2 is diode.
 
 import glob
 import logging
@@ -192,34 +192,47 @@ def _check_post_x1_ic(post_x1u, post_x1b):
     return ok
 
 
-def _check_post_x2_ic(post_x2u, post_x2b):
+def _check_post_x2_diode(post_x2u, post_x2b):
     ok = True
     data_u = _sorted_view(post_x2u, 'j')
     data_b = _sorted_view(post_x2b, 'j')
     j = data_u['j']
+    expected_j = np.arange(_NX2 + 2 * _NG)
+    if not np.array_equal(j, expected_j):
+        logger.warning('Unexpected j-index layout in post x2 line output')
+        return False
 
-    ghost_mask = np.zeros_like(j, dtype=bool)
-    ghost_mask[:_NG] = True
-    ghost_mask[_NG + _NX2:_NG + _NX2 + _NG] = True
+    inner = slice(0, _NG)
+    outer = slice(_NG + _NX2, _NG + _NX2 + _NG)
+    lower = _NG
+    upper = _NG + _NX2 - 1
 
-    dens_eq, by_eq, ener_eq = _analytic_profile(_X1_SLICE)
-    ok &= _allclose_or_warn('post x2 ic dens', data_u['dens'][ghost_mask], dens_eq,
-                            _TOL_STRICT)
-    ok &= _allclose_or_warn('post x2 ic mom1', data_u['mom1'][ghost_mask], 0.0,
-                            _TOL_STRICT)
-    ok &= _allclose_or_warn('post x2 ic mom2', data_u['mom2'][ghost_mask], 0.0,
-                            _TOL_STRICT)
-    ok &= _allclose_or_warn('post x2 ic mom3', data_u['mom3'][ghost_mask], 0.0,
-                            _TOL_STRICT)
-    ok &= _allclose_or_warn('post x2 ic ener', data_u['ener'][ghost_mask], ener_eq,
-                            _TOL_STRICT)
+    for key in ('dens', 'mom1', 'mom3', 'ener'):
+        ok &= _allclose_or_warn('post x2 diode copy inner {}'.format(key),
+                                data_u[key][inner], data_u[key][lower], _TOL_STRICT)
+        ok &= _allclose_or_warn('post x2 diode copy outer {}'.format(key),
+                                data_u[key][outer], data_u[key][upper], _TOL_STRICT)
 
-    ok &= _allclose_or_warn('post x2 ic bcc1', data_b['bcc1'][ghost_mask], 0.0,
-                            _TOL_STRICT)
-    ok &= _allclose_or_warn('post x2 ic bcc3', data_b['bcc3'][ghost_mask], _BG,
-                            _TOL_STRICT)
-    ok &= _allclose_or_warn('post x2 ic bcc2', data_b['bcc2'][ghost_mask], by_eq,
-                            _TOL_BCC2_X2)
+    lower_m2 = data_u['mom2'][lower]
+    upper_m2 = data_u['mom2'][upper]
+    inner_expected = np.minimum(0.0, lower_m2)
+    outer_expected = np.maximum(0.0, upper_m2)
+    ok &= _allclose_or_warn('post x2 diode mom2 inner',
+                            data_u['mom2'][inner], inner_expected, _TOL_STRICT)
+    ok &= _allclose_or_warn('post x2 diode mom2 outer',
+                            data_u['mom2'][outer], outer_expected, _TOL_STRICT)
+
+    for key in ('bcc1', 'bcc3'):
+        ok &= _allclose_or_warn('post x2 diode copy inner {}'.format(key),
+                                data_b[key][inner], data_b[key][lower], _TOL_STRICT)
+        ok &= _allclose_or_warn('post x2 diode copy outer {}'.format(key),
+                                data_b[key][outer], data_b[key][upper], _TOL_STRICT)
+
+    # bcc2 on x2 boundaries is derived from face-centered fields and can differ at O(dx)
+    ok &= _allclose_or_warn('post x2 diode copy inner bcc2',
+                            data_b['bcc2'][inner], data_b['bcc2'][lower], _TOL_BCC2_X2)
+    ok &= _allclose_or_warn('post x2 diode copy outer bcc2',
+                            data_b['bcc2'][outer], data_b['bcc2'][upper], _TOL_BCC2_X2)
     return ok
 
 
@@ -254,6 +267,6 @@ def analyze():
     status &= _check_pre_x1_diode(pre_x1u)
     status &= _check_pre_x2_periodic(pre_x2u, pre_x2b)
     status &= _check_post_x1_ic(post_x1u, post_x1b)
-    status &= _check_post_x2_ic(post_x2u, post_x2b)
+    status &= _check_post_x2_diode(post_x2u, post_x2b)
 
     return status

@@ -188,7 +188,7 @@ void CurrentSheet2ZoneBoundary(Mesh *pm) {
   if (!cs2_bc_switch_logged && cs2_bc.t_switch >= 0.0 && pm->time >= cs2_bc.t_switch) {
     if (global_variable::my_rank == 0) {
       std::cout << "### INFO in current_sheet_2zone.cpp"
-                << ": switching current_sheet_2zone boundaries to IC-matching at t="
+                << ": switching current_sheet_2zone BCs (x1: IC-matching, x2: diode) at t="
                 << pm->time << " (t_switch=" << cs2_bc.t_switch << ")" << std::endl;
     }
     cs2_bc_switch_logged = true;
@@ -267,48 +267,40 @@ void CurrentSheet2ZoneBoundary(Mesh *pm) {
     }
   });
 
-  // x2 (y) boundaries: enforce the same unperturbed equilibrium profile
+  // x2 (y) boundaries: diode after t_switch (allow outflow, forbid inflow)
   par_for("current_sheet_2zone_bc_x2", DevExeSpace(), 0,(nmb-1),0,(n3-1),0,(n1-1),
   KOKKOS_LAMBDA(int m, int k, int i) {
-    int nx1 = indcs.nx1;
-    Real &x1min = size.d_view(m).x1min;
-    Real &x1max = size.d_view(m).x1max;
-    Real x1v = CellCenterX(i-is, nx1, x1min, x1max);
-    Real p_eq = 0.5*SQR(b0_amp)/SQR(cosh(x1v/a0)) + p0;
-    Real d_eq = pow(p_eq, inv_gamma);
-    Real by_eq = b0_amp*tanh(x1v/a0);
-
     // inner x2 boundary
     if (mb_bcs.d_view(m,BoundaryFace::inner_x2) != BoundaryFlag::block) {
       for (int j=0; j<ng; ++j) {
-        u0(m,IDN,k,js-j-1,i) = d_eq;
-        u0(m,IM1,k,js-j-1,i) = 0.0;
-        u0(m,IM2,k,js-j-1,i) = 0.0;
-        u0(m,IM3,k,js-j-1,i) = 0.0;
-        u0(m,IEN,k,js-j-1,i) = p_eq/gm1 + 0.5*SQR(by_eq);
+        u0(m,IDN,k,js-j-1,i) = u0(m,IDN,k,js,i);
+        u0(m,IM1,k,js-j-1,i) = u0(m,IM1,k,js,i);
+        u0(m,IM2,k,js-j-1,i) = fmin(0.0, u0(m,IM2,k,js,i));
+        u0(m,IM3,k,js-j-1,i) = u0(m,IM3,k,js,i);
+        u0(m,IEN,k,js-j-1,i) = u0(m,IEN,k,js,i);
 
-        b0.x1f(m,k,js-j-1,i) = 0.0;
-        if (i == n1-1) {b0.x1f(m,k,js-j-1,i+1) = 0.0;}
-        b0.x2f(m,k,js-j-1,i) = by_eq;
-        b0.x3f(m,k,js-j-1,i) = bg;
-        if (k == n3-1) {b0.x3f(m,k+1,js-j-1,i) = bg;}
+        b0.x1f(m,k,js-j-1,i) = b0.x1f(m,k,js,i);
+        if (i == n1-1) {b0.x1f(m,k,js-j-1,i+1) = b0.x1f(m,k,js,i+1);}
+        b0.x2f(m,k,js-j-1,i) = b0.x2f(m,k,js,i);
+        b0.x3f(m,k,js-j-1,i) = b0.x3f(m,k,js,i);
+        if (k == n3-1) {b0.x3f(m,k+1,js-j-1,i) = b0.x3f(m,k+1,js,i);}
       }
     }
 
     // outer x2 boundary
     if (mb_bcs.d_view(m,BoundaryFace::outer_x2) != BoundaryFlag::block) {
       for (int j=0; j<ng; ++j) {
-        u0(m,IDN,k,je+j+1,i) = d_eq;
-        u0(m,IM1,k,je+j+1,i) = 0.0;
-        u0(m,IM2,k,je+j+1,i) = 0.0;
-        u0(m,IM3,k,je+j+1,i) = 0.0;
-        u0(m,IEN,k,je+j+1,i) = p_eq/gm1 + 0.5*SQR(by_eq);
+        u0(m,IDN,k,je+j+1,i) = u0(m,IDN,k,je,i);
+        u0(m,IM1,k,je+j+1,i) = u0(m,IM1,k,je,i);
+        u0(m,IM2,k,je+j+1,i) = fmax(0.0, u0(m,IM2,k,je,i));
+        u0(m,IM3,k,je+j+1,i) = u0(m,IM3,k,je,i);
+        u0(m,IEN,k,je+j+1,i) = u0(m,IEN,k,je,i);
 
-        b0.x1f(m,k,je+j+1,i) = 0.0;
-        if (i == n1-1) {b0.x1f(m,k,je+j+1,i+1) = 0.0;}
-        b0.x2f(m,k,je+j+2,i) = by_eq;
-        b0.x3f(m,k,je+j+1,i) = bg;
-        if (k == n3-1) {b0.x3f(m,k+1,je+j+1,i) = bg;}
+        b0.x1f(m,k,je+j+1,i) = b0.x1f(m,k,je,i);
+        if (i == n1-1) {b0.x1f(m,k,je+j+1,i+1) = b0.x1f(m,k,je,i+1);}
+        b0.x2f(m,k,je+j+2,i) = b0.x2f(m,k,je+1,i);
+        b0.x3f(m,k,je+j+1,i) = b0.x3f(m,k,je,i);
+        if (k == n3-1) {b0.x3f(m,k+1,je+j+1,i) = b0.x3f(m,k+1,je,i);}
       }
     }
   });
