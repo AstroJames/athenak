@@ -6,7 +6,6 @@
 //! \file turb.cpp
 //  \brief Problem generator for turbulence
 #include <iostream> // cout
-
 #include "athena.hpp"
 #include "parameter_input.hpp"
 #include "coordinates/cell_locations.hpp"
