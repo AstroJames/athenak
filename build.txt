@@ -8,4 +8,21 @@ cmake --preset beattie-cpu
 cmake --preset beattie-cpu -DPROBLEM=current_sheet
 cmake --preset beattie-cpu -DPROBLEM=kh
 
+Trillum
+
+CPU build
+module purge
+module load gcc cmake openmpi fftw (only need fftw if you have Beattie's fork)
+
+# go to ~/athenak and make
+cmake --preset trill-cpu -DPROBLEM=current_sheet
+cmake --preset trill-cpu -DPROBLEM=turb
+
+# then go to ~/athenak/build/src
+make -j 8
+# which creates the athena executable for -DPROBLEM=current_sheet 
+
 GPU build
+
+
+
