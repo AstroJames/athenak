@@ -34,6 +34,8 @@ endif()
 option(Athena_SINGLE_PRECISION "Compile for single precision" OFF)
 option(Athena_ENABLE_MPI "Compile with MPI parallelism enabled" OFF)
 option(Athena_ENABLE_OPENMP "Compile with OpenMP parallelism enabled" OFF)
+option(Athena_ENABLE_FFT "Enable FFT support for power_spectrum output" ON)
+option(Athena_ENABLE_HEFFTE "Enable heFFTe distributed FFT backend" OFF)
 set(PROBLEM built_in_pgens CACHE STRING "Name of problem generator function")
 
 #------ set macros exported to config.hpp ------------------------------------------------
@@ -77,6 +79,60 @@ else()
   set(OPENMP_PARALLEL_ENABLED 0)
 endif()
 
+# set FFT macro (true/false)
+set(ENABLE_FFT OFF)
+if (Athena_ENABLE_FFT)
+  set(ENABLE_FFT ON)
+endif()
+if (ENABLE_FFT)
+  set(FFT_ENABLED 1)
+else()
+  set(FFT_ENABLED 0)
+endif()
+
+# set heFFTe macro (true/false) and resolve dependency
+set(ENABLE_HEFFTE OFF)
+set(HEFFTE_TARGET "")
+if (Athena_ENABLE_HEFFTE)
+  if (NOT ENABLE_FFT)
+    message(FATAL_ERROR "Athena_ENABLE_HEFFTE requires Athena_ENABLE_FFT=ON.")
+  endif()
+  if (NOT ENABLE_MPI)
+    message(FATAL_ERROR "Athena_ENABLE_HEFFTE requires Athena_ENABLE_MPI=ON.")
+  endif()
+
+  # Preferred path: use exported CMake package from heFFTe install.
+  find_package(Heffte CONFIG QUIET)
+  if (TARGET Heffte::Heffte)
+    set(HEFFTE_TARGET Heffte::Heffte)
+  elseif (TARGET heffte::heffte)
+    set(HEFFTE_TARGET heffte::heffte)
+  endif()
+
+  # Fallback path: allow direct include/library overrides.
+  if (NOT HEFFTE_TARGET)
+    find_path(HEFFTE_INCLUDE_DIR NAMES heffte.h
+              HINTS ${HEFFTE_ROOT}
+              PATH_SUFFIXES include)
+    find_library(HEFFTE_LIBRARY NAMES heffte
+                 HINTS ${HEFFTE_ROOT}
+                 PATH_SUFFIXES lib)
+    if ((NOT HEFFTE_INCLUDE_DIR) OR (NOT HEFFTE_LIBRARY))
+      message(FATAL_ERROR
+        "Athena_ENABLE_HEFFTE=ON but heFFTe was not found.\n"
+        "Preferred: set CMAKE_PREFIX_PATH to a heFFTe install that exports HeffteConfig.cmake.\n"
+        "Fallback: set HEFFTE_ROOT, or both HEFFTE_INCLUDE_DIR and HEFFTE_LIBRARY.")
+    endif()
+  endif()
+
+  set(ENABLE_HEFFTE ON)
+endif()
+if (ENABLE_HEFFTE)
+  set(HEFFTE_ENABLED 1)
+else()
+  set(HEFFTE_ENABLED 0)
+endif()
+
 #set user problem generator flag
 if (NOT ${PROBLEM} STREQUAL "built_in_pgens")
   message(STATUS "Including user-specified problem generator file: ${PROBLEM}")
@@ -114,22 +170,26 @@ add_subdirectory(src)
 add_subdirectory(kokkos)
 include_directories(${Kokkos_INCLUDE_DIRS_RET})
 
-# Add kokkos-fft (assumes you have cloned kokkos-fft into <athenaK-root>/kokkos-fft)
-add_subdirectory(kokkos-fft)
-
-# target_link_libraries(athena PUBLIC Kokkos::kokkos)
-# Link in the kokkos-fft library
-target_link_libraries(athena
-  PUBLIC
-    Kokkos::kokkos
-    KokkosFFT::fft
-)
+target_link_libraries(athena PUBLIC Kokkos::kokkos)
+if (ENABLE_FFT)
+  # Add kokkos-fft (assumes you have cloned kokkos-fft into <athenaK-root>/kokkos-fft)
+  add_subdirectory(kokkos-fft)
+  target_link_libraries(athena PUBLIC KokkosFFT::fft)
+endif()
 
 if (ENABLE_MPI)
   target_link_libraries(athena PUBLIC MPI::MPI_CXX)
 endif()
 if (ENABLE_OPENMP)
   target_link_libraries(athena PUBLIC OpenMP::OpenMP_CXX)
+endif()
+if (ENABLE_HEFFTE)
+  if (HEFFTE_TARGET)
+    target_link_libraries(athena PUBLIC ${HEFFTE_TARGET})
+  else()
+    target_include_directories(athena PRIVATE ${HEFFTE_INCLUDE_DIR})
+    target_link_libraries(athena PUBLIC ${HEFFTE_LIBRARY})
+  endif()
 endif()
 if (${PROBLEM} STREQUAL "z4c_two_puncture")
 	target_include_directories(athena PRIVATE ${CMAKE_SOURCE_DIR}/twopuncturesc/include)

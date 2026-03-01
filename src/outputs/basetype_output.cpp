@@ -51,49 +51,121 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
   // initialize vector containing number of output MBs per rank
   noutmbs.assign(global_variable::nranks, 0);
 
+  bool is_power_spectrum = (out_params.file_type.compare("power_spectrum") == 0);
+  bool velocity_alias = (out_params.variable.compare("velocity") == 0 ||
+                         out_params.variable.compare("hydro_w_vx") == 0 ||
+                         out_params.variable.compare("mhd_w_vx") == 0);
+  bool density_alias = (out_params.variable.compare("density") == 0 ||
+                        out_params.variable.compare("hydro_w_d") == 0 ||
+                        out_params.variable.compare("mhd_w_d") == 0);
+  bool magnetic_alias = (out_params.variable.compare("magnetic_field") == 0 ||
+                         out_params.variable.compare("magnetic") == 0 ||
+                         out_params.variable.compare("bfield") == 0 ||
+                         out_params.variable.compare("mhd_bcc1") == 0);
+  bool power_spectrum_alias = (is_power_spectrum &&
+                               (velocity_alias || density_alias || magnetic_alias));
+  if (is_power_spectrum && FFT_ENABLED == 0) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
+       << "Power spectrum output in block '" << out_params.block_name
+       << "' requested, but this binary was compiled with Athena_ENABLE_FFT=OFF."
+       << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  if (is_power_spectrum &&
+      !(out_params.fft_backend.compare("legacy") == 0 ||
+        out_params.fft_backend.compare("heffte") == 0)) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
+       << "Power spectrum output in block '" << out_params.block_name
+       << "' requested unsupported fft_backend='" << out_params.fft_backend
+       << "'. Supported choices are 'legacy' and 'heffte'." << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  if (is_power_spectrum && out_params.fft_backend.compare("heffte") == 0 &&
+      HEFFTE_ENABLED == 0) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
+       << "Power spectrum output in block '" << out_params.block_name
+       << "' requested fft_backend='heffte', but this binary was compiled without "
+       << "Athena_ENABLE_HEFFTE." << std::endl;
+    exit(EXIT_FAILURE);
+  }
+
+  if (is_power_spectrum && !(velocity_alias || density_alias || magnetic_alias)) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
+       << "Power spectrum output in block '" << out_params.block_name << "' uses variable='"
+       << out_params.variable << "' but supported choices are "
+       << "'velocity' (or mhd_w_vx/hydro_w_vx) and "
+       << "'density' (or mhd_w_d/hydro_w_d), and "
+       << "'magnetic_field' (or magnetic/bfield/mhd_bcc1)." << std::endl;
+    exit(EXIT_FAILURE);
+  }
+
+  if (power_spectrum_alias &&
+      pm->pmb_pack->phydro == nullptr && pm->pmb_pack->pmhd == nullptr) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
+       << "Power spectrum output requested in <output> block '" << out_params.block_name
+       << "' with variable='" << out_params.variable
+       << "' but neither Hydro nor MHD object is constructed."
+       << std::endl << "Input file is likely missing a <hydro> or <mhd> block" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+
+  if (is_power_spectrum && magnetic_alias && pm->pmb_pack->pmhd == nullptr) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
+       << "Power spectrum output in block '" << out_params.block_name
+       << "' requested magnetic-field spectrum but no MHD object is constructed."
+       << std::endl << "Input file is likely missing a <mhd> block" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+
   // check for valid choice of variables
   int ivar = -1;
-  for (int i=0; i<(NOUTPUT_CHOICES); ++i) {
-    if (out_params.variable.compare(var_choice[i]) == 0) {ivar = i;}
-  }
-  if (ivar < 0) {
-    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
-       << "Variable '" << out_params.variable << "' in block '" << out_params.block_name
-       << "' in input file is not a valid choice" << std::endl;
-    std::exit(EXIT_FAILURE);
+  if (!power_spectrum_alias) {
+    for (int i=0; i<(NOUTPUT_CHOICES); ++i) {
+      if (out_params.variable.compare(var_choice[i]) == 0) {ivar = i;}
+    }
+    if (ivar < 0) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
+         << "Variable '" << out_params.variable << "' in block '" << out_params.block_name
+         << "' in input file is not a valid choice" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
   }
 
   // check that appropriate physics is defined for requested output variable
   // TODO(@user): Index limits of variable choices below may change if more choices added
-  if ((ivar<16) && (pm->pmb_pack->phydro == nullptr)) {
+  if ((!power_spectrum_alias) && (ivar<16) &&
+      (pm->pmb_pack->phydro == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Output of Hydro variable requested in <output> block '"
        << out_params.block_name << "' but no Hydro object has been constructed."
        << std::endl << "Input file is likely missing a <hydro> block" << std::endl;
     exit(EXIT_FAILURE);
   }
-  if ((ivar>=16) && (ivar<49) && (pm->pmb_pack->pmhd == nullptr)) {
+  if ((!power_spectrum_alias) && (ivar>=16) && (ivar<49) &&
+      (pm->pmb_pack->pmhd == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Output of MHD variable requested in <output> block '"
        << out_params.block_name << "' but no MHD object has been constructed."
        << std::endl << "Input file is likely missing a <mhd> block" << std::endl;
     exit(EXIT_FAILURE);
   }
-  if ((ivar==49) && (pm->pmb_pack->pturb == nullptr)) {
+  if ((!power_spectrum_alias) && (ivar==49) &&
+      (pm->pmb_pack->pturb == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Output of Force variable requested in <output> block '"
        << out_params.block_name << "' but no Force object has been constructed."
        << std::endl << "Input file is likely missing a <forcing> block" << std::endl;
     exit(EXIT_FAILURE);
   }
-  if (ivar==50 && (pm->pmb_pack->prad == nullptr)) {
+  if ((!power_spectrum_alias) && ivar==50 &&
+      (pm->pmb_pack->prad == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Output of Radiation moments requested in <output> block '"
        << out_params.block_name << "' but no Radiation object has been constructed."
        << std::endl << "Input file is likely missing a <radiation> block" << std::endl;
     exit(EXIT_FAILURE);
   }
-  if ((ivar==51 || ivar==52) &&
+  if ((!power_spectrum_alias) && (ivar==51 || ivar==52) &&
       ((pm->pmb_pack->prad == nullptr) ||
        (pm->pmb_pack->phydro == nullptr && pm->pmb_pack->pmhd == nullptr))) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
@@ -102,7 +174,7 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
        << " constructed, or corresponding Hydro or MHD object missing" << std::endl;
     exit(EXIT_FAILURE);
   }
-  if ((ivar>=52) && (ivar<67) &&
+  if ((!power_spectrum_alias) && (ivar>=52) && (ivar<67) &&
       (pm->pmb_pack->prad == nullptr || pm->pmb_pack->phydro == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Output of Radiation Hydro variables requested in <output> block '"
@@ -110,7 +182,7 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
        << std::endl << "Input file is likely missing corresponding block" << std::endl;
     exit(EXIT_FAILURE);
   }
-  if ((ivar>=67) && (ivar<87) &&
+  if ((!power_spectrum_alias) && (ivar>=67) && (ivar<87) &&
       (pm->pmb_pack->prad == nullptr || pm->pmb_pack->pmhd == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Output of Radiation MHD variables requested in <output> block '"
@@ -118,41 +190,47 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
        << std::endl << "Input file is likely missing corresponding block" << std::endl;
     exit(EXIT_FAILURE);
   }
-  if ((ivar>=87) && (ivar<105) && (pm->pmb_pack->padm == nullptr)) {
+  if ((!power_spectrum_alias) && (ivar>=87) && (ivar<105) &&
+      (pm->pmb_pack->padm == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Output of ADM variable requested in <output> block '"
        << out_params.block_name << "' but ADM object not constructed."
        << std::endl << "Input file is likely missing corresponding block" << std::endl;
     exit(EXIT_FAILURE);
   }
-  if ((ivar>=105) && (ivar<128) && (pm->pmb_pack->pz4c == nullptr)) {
+  if ((!power_spectrum_alias) && (ivar>=105) && (ivar<128) &&
+      (pm->pmb_pack->pz4c == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Output of Z4c variable requested in <output> block '"
        << out_params.block_name << "' but Z4c object not constructed."
        << std::endl << "Input file is likely missing corresponding block" << std::endl;
     exit(EXIT_FAILURE);
   }
-  if ((ivar>=128) && (ivar<131) && (pm->pmb_pack->pz4c == nullptr)) {
+  if ((!power_spectrum_alias) && (ivar>=128) && (ivar<131) &&
+      (pm->pmb_pack->pz4c == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Output of weyl variable requested in <output> block '"
        << out_params.block_name << "' but weyl object not constructed."
        << std::endl << "Input file is likely missing corresponding block" << std::endl;
     exit(EXIT_FAILURE);
   }
-  if ((ivar>=131) && (ivar<139) && (pm->pmb_pack->pz4c == nullptr)) {
+  if ((!power_spectrum_alias) && (ivar>=131) && (ivar<139) &&
+      (pm->pmb_pack->pz4c == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Output of constraint variables request in <output> block '"
        << out_params.block_name << "' but Z4c object not constructed."
        << std::endl << "Input file is likely missing corresponding block" << std::endl;
     exit(EXIT_FAILURE);
   }
-  if ((ivar>=139) && (ivar<150) && (pm->pmb_pack->ptmunu == nullptr)) {
+  if ((!power_spectrum_alias) && (ivar>=139) && (ivar<150) &&
+      (pm->pmb_pack->ptmunu == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Output of Tmunu variable requested in <output> block '"
        << out_params.block_name << "' but no Tmunu object has been constructed."
        << std::endl << "Input file is likely missing a <adm> block" << std::endl;
   }
-  if ((ivar>=150) && (ivar<152) && (pm->pmb_pack->ppart == nullptr)) {
+  if ((!power_spectrum_alias) && (ivar>=150) && (ivar<152) &&
+      (pm->pmb_pack->ppart == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Output of particles requested in <output> block '"
        << out_params.block_name << "' but particle object not constructed."

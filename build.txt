@@ -5,8 +5,28 @@ CPU build
 General compile for test problems.
 
 cmake --preset beattie-cpu
+cmake --preset beattie-cpu-heffte
 cmake --preset beattie-cpu -DPROBLEM=current_sheet
 cmake --preset beattie-cpu -DPROBLEM=kh
+
+Equivalent explicit command for heFFTe-enabled build:
+cmake .. -DAthena_ENABLE_MPI=ON -DAthena_ENABLE_HEFFTE=ON -DCMAKE_PREFIX_PATH=/Users/beattijr/.local/heffte-install
+
+Examples with/without FFT support:
+
+With FFT (default):
+mkdir -p build-fft
+cd build-fft
+cmake .. -DPROBLEM=current_sheet_2zone -DAthena_ENABLE_FFT=ON
+cmake --build . -j8
+
+Without FFT:
+mkdir -p build-nofft
+cd build-nofft
+cmake .. -DPROBLEM=current_sheet_2zone -DAthena_ENABLE_FFT=OFF
+cmake --build . -j8
+
+Note: Athena_ENABLE_HEFFTE=ON requires Athena_ENABLE_FFT=ON.
 
 Trillum
 
@@ -23,6 +43,7 @@ make -j 8
 # which creates the athena executable for -DPROBLEM=current_sheet 
 
 GPU build
+
 
 
 
