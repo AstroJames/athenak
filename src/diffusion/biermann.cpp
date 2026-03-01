@@ -207,3 +207,109 @@ void BiermannBattery::BiermannEField(const DvceArray5D<Real> &w0, const EOS_Data
 
   return;
 }
+
+//----------------------------------------------------------------------------------------
+//! \fn BiermannEnergyFlux()
+//! \brief Adds Biermann contribution to total-energy flux:
+//!        F_E += E_batt x B, where E_batt = -C_batt * grad(P)/rho
+
+void BiermannBattery::BiermannEnergyFlux(const DvceArray5D<Real> &w0, const EOS_Data &eos,
+                                         const DvceFaceFld4D<Real> &b,
+                                         DvceFaceFld5D<Real> &flx) {
+  if (!enabled) {
+    return;
+  }
+  if (pmy_pack->pmesh->one_d) {
+    return;
+  }
+
+  auto &indcs = pmy_pack->pmesh->mb_indcs;
+  int is = indcs.is, ie = indcs.ie;
+  int js = indcs.js, je = indcs.je;
+  int ks = indcs.ks, ke = indcs.ke;
+  int nmb1 = pmy_pack->nmb_thispack - 1;
+  bool &multi_d = pmy_pack->pmesh->multi_d;
+  bool &three_d = pmy_pack->pmesh->three_d;
+  auto &mbsize = pmy_pack->pmb->mb_size;
+  auto w0_ = w0;
+  auto b_ = b;
+  auto eos_ = eos;
+  auto flx1 = flx.x1f;
+  auto flx2 = flx.x2f;
+  auto flx3 = flx.x3f;
+  Real coeff_ = coeff;
+
+  //------------------------------
+  // energy fluxes in x1-direction
+  par_for("biermann_heat1", DevExeSpace(), 0, nmb1, ks, ke, js, je, is, ie+1,
+  KOKKOS_LAMBDA(const int m, const int k, const int j, const int i) {
+    Real e1l, e2l, e3l;
+    Real e1r, e2r, e3r;
+    BiermannCellE(w0_, eos_, mbsize.d_view(m), coeff_, multi_d, three_d, m, k, j, i-1,
+                  e1l, e2l, e3l);
+    BiermannCellE(w0_, eos_, mbsize.d_view(m), coeff_, multi_d, three_d, m, k, j, i,
+                  e1r, e2r, e3r);
+    Real e2f = 0.5*(e2l + e2r);
+    Real e3f = 0.5*(e3l + e3r);
+
+    Real b2l = 0.5*(b_.x2f(m,k,j  ,i-1) + b_.x2f(m,k,j+1,i-1));
+    Real b2r = 0.5*(b_.x2f(m,k,j  ,i  ) + b_.x2f(m,k,j+1,i  ));
+    Real b3l = 0.5*(b_.x3f(m,k  ,j,i-1) + b_.x3f(m,k+1,j,i-1));
+    Real b3r = 0.5*(b_.x3f(m,k  ,j,i  ) + b_.x3f(m,k+1,j,i  ));
+    Real b2f = 0.5*(b2l + b2r);
+    Real b3f = 0.5*(b3l + b3r);
+
+    flx1(m,IEN,k,j,i) += (e2f*b3f - e3f*b2f);
+  });
+
+  //------------------------------
+  // energy fluxes in x2-direction
+  par_for("biermann_heat2", DevExeSpace(), 0, nmb1, ks, ke, js, je+1, is, ie,
+  KOKKOS_LAMBDA(const int m, const int k, const int j, const int i) {
+    Real e1l, e2l, e3l;
+    Real e1r, e2r, e3r;
+    BiermannCellE(w0_, eos_, mbsize.d_view(m), coeff_, multi_d, three_d, m, k, j-1, i,
+                  e1l, e2l, e3l);
+    BiermannCellE(w0_, eos_, mbsize.d_view(m), coeff_, multi_d, three_d, m, k, j, i,
+                  e1r, e2r, e3r);
+    Real e1f = 0.5*(e1l + e1r);
+    Real e3f = 0.5*(e3l + e3r);
+
+    Real b1l = 0.5*(b_.x1f(m,k,j-1,i) + b_.x1f(m,k,j-1,i+1));
+    Real b1r = 0.5*(b_.x1f(m,k,j  ,i) + b_.x1f(m,k,j  ,i+1));
+    Real b3l = 0.5*(b_.x3f(m,k  ,j-1,i) + b_.x3f(m,k+1,j-1,i));
+    Real b3r = 0.5*(b_.x3f(m,k  ,j  ,i) + b_.x3f(m,k+1,j  ,i));
+    Real b1f = 0.5*(b1l + b1r);
+    Real b3f = 0.5*(b3l + b3r);
+
+    flx2(m,IEN,k,j,i) += (e3f*b1f - e1f*b3f);
+  });
+  if (pmy_pack->pmesh->two_d) {
+    return;
+  }
+
+  //------------------------------
+  // energy fluxes in x3-direction
+  par_for("biermann_heat3", DevExeSpace(), 0, nmb1, ks, ke+1, js, je, is, ie,
+  KOKKOS_LAMBDA(const int m, const int k, const int j, const int i) {
+    Real e1l, e2l, e3l;
+    Real e1r, e2r, e3r;
+    BiermannCellE(w0_, eos_, mbsize.d_view(m), coeff_, multi_d, three_d, m, k-1, j, i,
+                  e1l, e2l, e3l);
+    BiermannCellE(w0_, eos_, mbsize.d_view(m), coeff_, multi_d, three_d, m, k, j, i,
+                  e1r, e2r, e3r);
+    Real e1f = 0.5*(e1l + e1r);
+    Real e2f = 0.5*(e2l + e2r);
+
+    Real b1l = 0.5*(b_.x1f(m,k-1,j,i  ) + b_.x1f(m,k-1,j,i+1));
+    Real b1r = 0.5*(b_.x1f(m,k  ,j,i  ) + b_.x1f(m,k  ,j,i+1));
+    Real b2l = 0.5*(b_.x2f(m,k-1,j  ,i) + b_.x2f(m,k-1,j+1,i));
+    Real b2r = 0.5*(b_.x2f(m,k  ,j  ,i) + b_.x2f(m,k  ,j+1,i));
+    Real b1f = 0.5*(b1l + b1r);
+    Real b2f = 0.5*(b2l + b2r);
+
+    flx3(m,IEN,k,j,i) += (e1f*b2f - e2f*b1f);
+  });
+
+  return;
+}

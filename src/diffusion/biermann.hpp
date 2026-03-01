@@ -32,6 +32,10 @@ class BiermannBattery {
   void BiermannEField(const DvceArray5D<Real> &w0, const EOS_Data &eos,
                       DvceEdgeFld4D<Real> &efld);
 
+  // function to add Biermann contribution to total-energy flux: F_E += E_batt x B
+  void BiermannEnergyFlux(const DvceArray5D<Real> &w0, const EOS_Data &eos,
+                          const DvceFaceFld4D<Real> &b, DvceFaceFld5D<Real> &flx);
+
  private:
   MeshBlockPack* pmy_pack;
 
