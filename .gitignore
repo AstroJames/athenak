@@ -1,5 +1,9 @@
 # build directories
 build/
+manual_build/
+
+# Claude Code tool directory (worktrees, session state)
+.claude/
 
 # Athena output files
 *.tab
@@ -30,3 +34,4 @@ __pycache__/
 
 *.gitignore
 AGENTS.md
+CLAUDE.md
