@@ -1,0 +1,520 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{enumitem}
+
+\geometry{margin=1.0in}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  stringstyle=\color{red},
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  language=C++
+}
+
+% Shorthand
+\newcommand{\bv}[1]{\boldsymbol{#1}}
+\newcommand{\grad}{\nabla}
+\newcommand{\curl}{\nabla \times}
+\newcommand{\Ebatt}{\bv{E}_\mathrm{batt}}
+\newcommand{\Bbatt}{\bv{B}_\mathrm{batt}}
+\newcommand{\half}{\tfrac{1}{2}}
+
+\title{Biermann Battery Implementation in AthenaK}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\tableofcontents
+\newpage
+
+%==============================================================================
+\section{Physical Background}
+\label{sec:physics}
+%==============================================================================
+
+The Biermann battery~\cite{biermann1950} is a mechanism for generating seed
+magnetic fields from thermoelectric effects in unmagnetized plasmas.  It arises
+from the electron momentum equation when the pressure and density gradients are
+not parallel.  In its most common form the battery enters Ohm's law as an
+additional electromotive force (EMF) source term:
+\begin{equation}
+  \bv{E} = -\bv{v}\times\bv{B}
+          + \frac{c}{e n_e}\grad P_e,
+  \label{eq:ohm_full}
+\end{equation}
+where $c$ is the speed of light, $e$ is the elementary charge,
+$n_e$ is the electron number density, and $P_e$ is the electron pressure.
+Substituting into Faraday's law gives
+\begin{equation}
+  \frac{\partial\bv{B}}{\partial t}
+    = \curl(\bv{v}\times\bv{B})
+    - \frac{c}{e}\curl\!\left(\frac{\grad P_e}{n_e}\right).
+  \label{eq:induction_batt}
+\end{equation}
+The Biermann source term is proportional to
+\begin{equation}
+  \curl\!\left(\frac{\grad P_e}{n_e}\right)
+    = \frac{\grad n_e \times \grad P_e}{n_e^2},
+\end{equation}
+so magnetic field is generated wherever the electron density gradient is
+misaligned with the electron pressure gradient.
+
+\subsection{Simulation-Unit Formulation}
+\label{sec:sim_units}
+
+In the code the electron density is approximated as
+$n_e \approx \rho / (\mu_e m_u)$, where $\mu_e$ is the mean molecular weight
+per electron and $m_u$ is the atomic mass unit.  The electron pressure is
+taken as a fraction $f_e$ of the total gas pressure: $P_e = f_e P$.
+With these approximations Eq.~\eqref{eq:ohm_full} becomes
+\begin{equation}
+  \Ebatt = -C_\mathrm{batt}\,\frac{\grad P}{\rho},
+  \label{eq:ebatt}
+\end{equation}
+where the dimensional coefficient is
+\begin{equation}
+  C_\mathrm{batt} = \frac{c\, f_e\, \mu_e\, m_u}{e}.
+  \label{eq:coeff_cgs}
+\end{equation}
+In simulation units (velocity unit $v_r$, density unit $\rho_r$, length unit
+$L_r$), the electric-field unit is $E_r = v_r B_r$ with
+$B_r = \sqrt{4\pi\rho_r}\,v_r$ (absorbing $4\pi$ into the magnetic field
+definition).  Converting Eq.~\eqref{eq:coeff_cgs} to code units yields
+\begin{equation}
+  C_\mathrm{code}
+    = \frac{C_\mathrm{batt}}{L_r\,\sqrt{4\pi\rho_r}},
+  \label{eq:coeff_code}
+\end{equation}
+which is what the \texttt{biermann\_from\_cgs} pathway computes.
+
+The battery contribution to the induction equation in code units is then
+\begin{equation}
+  \frac{\partial\bv{B}}{\partial t}
+    \supset -\curl\!\left(C_\mathrm{code}\,\frac{\grad P}{\rho}\right),
+  \label{eq:induction_code}
+\end{equation}
+and the corresponding contribution to the total-energy flux is the Poynting
+vector
+\begin{equation}
+  \bv{F}_E \supset \Ebatt\times\bv{B}
+           = -C_\mathrm{code}\,\frac{\grad P}{\rho}\times\bv{B}.
+  \label{eq:poynting}
+\end{equation}
+
+%==============================================================================
+\section{Numerical Implementation}
+\label{sec:implementation}
+%==============================================================================
+
+The implementation lives in \texttt{src/diffusion/biermann.hpp} and
+\texttt{src/diffusion/biermann.cpp}.  It is invoked at two points in the MHD
+task list:
+\begin{enumerate}
+  \item \textbf{\texttt{CornerE} task}: The Biermann EMF is added to the
+        edge-centred electric-field arrays used by the constrained-transport
+        (CT) update.
+  \item \textbf{Flux task}: The Biermann Poynting flux
+        $\Ebatt\times\bv{B}$ is added to the face-centred total-energy
+        flux (ideal EOS only).
+\end{enumerate}
+
+\subsection{Cell-centred Electric Field}
+
+A helper function \texttt{BiermannCellE} computes the Biermann electric field
+at cell centre $(m,k,j,i)$:
+\begin{equation}
+  E_{\alpha}^{(m,k,j,i)}
+    = -C_\mathrm{code}\,
+      \frac{\partial P/\partial x^\alpha}{\rho^{(m,k,j,i)}},
+  \quad \alpha = 1,2,3,
+  \label{eq:cell_e}
+\end{equation}
+where the pressure gradient is approximated by a second-order central
+difference,
+\begin{equation}
+  \left.\frac{\partial P}{\partial x^1}\right|_{(k,j,i)}
+    \approx \frac{P_{k,j,i+1} - P_{k,j,i-1}}{2\,\Delta x^1},
+  \label{eq:grad_p}
+\end{equation}
+and similarly for the $x^2$ and $x^3$ directions.  In 2-D (3-D) the $x^3$
+($x^3$ and $x^2$) gradients are set to zero.  The density denominator uses the
+local cell-centre value, floored at the density floor \texttt{eos.dfloor}:
+\begin{equation}
+  \rho = \max\!\left(\rho^{(m,k,j,i)},\; \rho_\mathrm{floor}\right).
+\end{equation}
+
+For the ideal equation of state the gas pressure is recovered from the
+primitive-variable array through
+\begin{equation}
+  P = (\gamma-1)\,e,
+\end{equation}
+where $e$ is the internal energy density stored in \texttt{w0[IEN]}.
+For an isothermal equation of state, $P = c_s^2\,\rho$.
+
+\subsection{Edge-centred Electric Field (CT Update)}
+\label{sec:edge_e}
+
+The constrained-transport scheme requires electric fields at mesh edges.
+An edge along direction $\alpha$ is located at half-integer positions in the
+two perpendicular directions.  The edge-centred value is obtained by averaging
+the four adjacent cell-centred values.
+
+\subsubsection{Two-dimensional case}
+
+In 2-D the mesh is degenerate in $x^3$; edges along $x^1$ lie at
+$(i_c,\,j+\half,\,k_\pm)$ and edges along $x^2$ at
+$(i+\half,\,j_c,\,k_\pm)$.  The averages are:
+\begin{align}
+  E_1\big|_{(k,j+\frac{1}{2},i)}
+    &= \half\!\left[E_1^{(k,j,i)} + E_1^{(k,j-1,i)}\right],
+  \label{eq:e1_2d}
+  \\[4pt]
+  E_2\big|_{(k,j,i+\frac{1}{2})}
+    &= \half\!\left[E_2^{(k,j,i)} + E_2^{(k,j,i-1)}\right].
+  \label{eq:e2_2d}
+\end{align}
+Each edge value is then added to both the $k=k_s$ and $k=k_e+1$
+edge-field planes (the two degenerate $x^3$-faces in 2-D).
+
+\subsubsection{Three-dimensional case}
+
+In 3-D a bilinear average of the four cells sharing the edge is used:
+\begin{align}
+  E_1\big|_{(k+\frac{1}{2},j+\frac{1}{2},i)}
+    &= \tfrac{1}{4}\!\left[
+       E_1^{(k,j,i)} + E_1^{(k-1,j,i)}
+     + E_1^{(k,j-1,i)} + E_1^{(k-1,j-1,i)}\right],
+  \label{eq:e1_3d}
+  \\[4pt]
+  E_2\big|_{(k+\frac{1}{2},j,i+\frac{1}{2})}
+    &= \tfrac{1}{4}\!\left[
+       E_2^{(k,j,i)} + E_2^{(k-1,j,i)}
+     + E_2^{(k,j,i-1)} + E_2^{(k-1,j,i-1)}\right],
+  \label{eq:e2_3d}
+  \\[4pt]
+  E_3\big|_{(k,j+\frac{1}{2},i+\frac{1}{2})}
+    &= \tfrac{1}{4}\!\left[
+       E_3^{(k,j,i)} + E_3^{(k,j-1,i)}
+     + E_3^{(k,j,i-1)} + E_3^{(k,j-1,i-1)}\right].
+  \label{eq:e3_3d}
+\end{align}
+
+\subsection{Face-centred Energy Flux}
+\label{sec:energy_flux}
+
+The Biermann battery modifies the total-energy flux by the Poynting-like term
+$\Ebatt\times\bv{B}$.  Its components are evaluated at each face by
+averaging the cell-centred $\Ebatt$ values from the two cells adjacent to the
+face, and averaging the face-centred $\bv{B}$ values from the adjacent faces
+perpendicular to the cell face.
+
+For the $x^1$-face at $(k,j,i+\half)$:
+\begin{align}
+  \bar{E}_2 &= \half\!\left(E_2^{(k,j,i-1)} + E_2^{(k,j,i)}\right), \\
+  \bar{E}_3 &= \half\!\left(E_3^{(k,j,i-1)} + E_3^{(k,j,i)}\right), \\
+  \bar{B}_2 &= \tfrac{1}{4}\!\left[
+    B_2^{x_2f}(k,j,i-1) + B_2^{x_2f}(k,j+1,i-1)
+  + B_2^{x_2f}(k,j,i)   + B_2^{x_2f}(k,j+1,i)\right], \\
+  \bar{B}_3 &= \tfrac{1}{4}\!\left[
+    B_3^{x_3f}(k,j,i-1)   + B_3^{x_3f}(k+1,j,i-1)
+  + B_3^{x_3f}(k,j,i)     + B_3^{x_3f}(k+1,j,i)\right], \\
+  \Delta F_E^{x_1} &= \bar{E}_2\bar{B}_3 - \bar{E}_3\bar{B}_2.
+  \label{eq:fe_x1}
+\end{align}
+Analogous formulae hold for the $x^2$- and $x^3$-faces.  For isothermal EOS
+there is no energy equation, so this step is skipped entirely.
+
+\subsection{Initialization and Coefficient}
+
+The class constructor reads from the \texttt{[mhd]} block of the input file.
+There are two ways to specify the coefficient:
+
+\begin{description}[leftmargin=2em]
+  \item[\texttt{biermann\_coeff}]
+        A direct dimensionless code-unit coefficient.
+  \item[\texttt{biermann\_from\_cgs = true}]
+        Compute the coefficient from the CGS closure
+        (Eq.~\ref{eq:coeff_code}) using the units block.
+        Supporting parameters \texttt{biermann\_pe\_fraction} ($f_e$,
+        default 1) and \texttt{biermann\_mu\_e} ($\mu_e$, default 1) may also
+        be provided.
+\end{description}
+
+The battery is disabled (skipped at runtime) when \texttt{coeff} $\leq 0$ or
+when the EOS is not available.  The implementation currently supports
+Newtonian MHD only; enabling it with special- or general-relativistic
+coordinates triggers a fatal error.
+
+%==============================================================================
+\section{Verification Test: Linear Gradient Problem}
+\label{sec:test}
+%==============================================================================
+
+\subsection{Problem Setup}
+\label{sec:setup}
+
+The test initialises a 2-D domain with static, misaligned linear profiles of
+density and pressure and zero velocity and magnetic field:
+\begin{align}
+  \rho(x_1) &= \rho_0 + \left.\frac{\partial\rho}{\partial x_1}\right|_0 x_1,
+  \label{eq:rho_ic}
+  \\
+  P(x_1,x_2) &= P_0
+    + \left.\frac{\partial P}{\partial x_1}\right|_0 x_1
+    + \left.\frac{\partial P}{\partial x_2}\right|_0 x_2,
+  \label{eq:p_ic}
+  \\
+  \bv{v} &= \bv{0}, \quad \bv{B} = \bv{0}.
+  \label{eq:vb_ic}
+\end{align}
+The default parameters are
+$\rho_0 = 1$,
+$\partial\rho/\partial x_1 = 0.5$,
+$P_0 = 1$,
+$\partial P/\partial x_1 = 0$,
+$\partial P/\partial x_2 = 0.25$,
+with a $64\times32$ mesh on $[-0.5,0.5]^2$ and ideal gas $\gamma = 1.4$.
+
+The optional \texttt{use\_theta\_mode} flag replaces the independent
+$\partial\rho/\partial x_1$ and $\partial P/\partial x_2$ values with a
+magnitude and angle:
+\begin{align}
+  \grad\rho &= (\partial\rho/\partial x_1,\;0),  \\
+  \grad P   &= |\grad P|\,(\cos\theta,\;\sin\theta),
+\end{align}
+allowing the relative orientation of the two gradients to be varied
+continuously.
+
+\subsection{Analytic Prediction}
+\label{sec:analytic}
+
+With the default parameters ($\partial P/\partial x_1 = 0$, $\partial P/\partial x_2 = \mathrm{const}$), the cell-centred Biermann electric field
+reduces to
+\begin{equation}
+  E_1^{(j,i)} = 0, \qquad
+  E_2^{(j,i)} = -\frac{C\,(\partial P/\partial x_2)}{\rho(x_{1,i})}.
+  \label{eq:e_analytic}
+\end{equation}
+The edge-centred $E_2$ on the $x_1$-face at index $i$ is (from
+Eq.~\ref{eq:e2_2d}):
+\begin{equation}
+  E_2\big|_{i+\frac{1}{2}}
+    = -\frac{C\,(\partial P/\partial x_2)}{2}
+      \left[\frac{1}{\rho(x_{1,i})} + \frac{1}{\rho(x_{1,i-1})}\right].
+  \label{eq:e2_edge}
+\end{equation}
+The constrained-transport update for $B_3$ after one explicit step of
+size $\Delta t$ is (with $E_1 = 0$):
+\begin{equation}
+  B_3^{n+1}(j,i)
+    = -\frac{\Delta t}{\Delta x_1}
+      \left[E_2\big|_{i+\frac{1}{2}} - E_2\big|_{i-\frac{1}{2}}\right].
+  \label{eq:ct_update}
+\end{equation}
+Substituting Eq.~\eqref{eq:e2_edge}:
+\begin{equation}
+  B_3^{n+1}(j,i)
+    = \frac{C\,(\partial P/\partial x_2)\,\Delta t}{2\Delta x_1}
+      \left[
+        \frac{1}{\rho(x_{1,i+1})} - \frac{1}{\rho(x_{1,i-1})}
+      \right].
+  \label{eq:bz_analytic}
+\end{equation}
+For the linear density profile (Eq.~\ref{eq:rho_ic}) this is
+\begin{equation}
+  B_3^{n+1}(j,i)
+    = \frac{C\,(\partial P/\partial x_2)\,\Delta t}{2\Delta x_1}
+      \cdot\left(-\frac{2\Delta x_1\,(\partial\rho/\partial x_1)}
+                       {\rho(x_{1,i+1})\,\rho(x_{1,i-1})}\right),
+  \label{eq:bz_analytic2}
+\end{equation}
+confirming that $B_3$ is negative for positive $C$, $\partial P/\partial x_2$,
+and $\partial\rho/\partial x_1$.
+
+Because the initial state has $\bv{B}=\bv{0}$, the energy-flux term
+$\Ebatt\times\bv{B}$ vanishes identically on the first step, so the test
+isolates the induction equation update.
+
+\subsection{Optional Body-force Balancing}
+\label{sec:body_force}
+
+By default the pressure gradient drives an acoustic response.  The input flag
+\texttt{balance\_pressure\_force = true} registers a user source function that
+adds a uniform body force
+\begin{equation}
+  \bv{f} = +\grad P
+\end{equation}
+per unit volume to the conservative momentum and energy densities,
+exactly cancelling the $-\grad P$ term from the pressure equation of motion.
+This keeps the velocity close to zero throughout the run and allows Biermann
+B-field growth to be observed for multiple timesteps without pressure-wave
+contamination.
+
+\subsection{Regression Test}
+\label{sec:regression}
+
+The regression script \texttt{tst/scripts/mhd/biermann\_gradient.py}
+performs the following checks after a single RK1 timestep:
+
+\subsubsection*{Stencil accuracy}
+The discrete prediction for $B_3(i)$ is computed from the implemented
+averaging stencil (Eq.~\ref{eq:e2_edge}--\ref{eq:ct_update}) and compared to
+the simulation output.  The maximum absolute error in the interior
+(excluding two ghost-zone-adjacent cells on each side) must satisfy
+\begin{equation}
+  \max_i\bigl|B_3^{\mathrm{sim}}(i) - B_3^{\mathrm{pred}}(i)\bigr|
+  < \varepsilon_\mathrm{abs} = 10^{-11}.
+  \label{eq:err_tol}
+\end{equation}
+This tolerance is set at the level of double-precision round-off for the
+single-step update, and checks that no additional floating-point operations
+have been introduced incorrectly.
+
+\subsubsection*{Linear scaling}
+Two runs are performed with $C_1 = 10^{-3}$ and $C_2 = 2\times10^{-3}$.
+Because the Biermann term is linear in $C$ and the initial $\bv{B}=\bv{0}$,
+the generated field must scale exactly:
+\begin{equation}
+  \max_i\bigl|B_3^{(C_2)}(i) - 2\,B_3^{(C_1)}(i)\bigr|
+  < \varepsilon_\mathrm{scale} = 10^{-10}.
+  \label{eq:scale_tol}
+\end{equation}
+
+\subsubsection*{Sign check}
+For positive $C$, $\partial P/\partial x_2$, and $\partial\rho/\partial x_1$,
+the generated $B_3$ must be strictly negative in the interior, consistent
+with the analytic result (Eq.~\ref{eq:bz_analytic}).
+
+\subsection{Summary of Test Parameters}
+\label{sec:params}
+
+\begin{table}[h]
+  \centering
+  \caption{Default parameters for the Biermann gradient test.}
+  \label{tab:params}
+  \begin{tabular}{llll}
+    \toprule
+    Parameter & Symbol & Default & Notes \\
+    \midrule
+    Grid size (x1, x2) & $N_1\times N_2$ & $64\times32$ & \\
+    Domain & $[x_1^\mathrm{min},x_1^\mathrm{max}]$ & $[-0.5,0.5]^2$ & \\
+    Adiabatic index & $\gamma$ & 1.4 & Ideal EOS \\
+    Base density & $\rho_0$ & 1.0 & \\
+    Density gradient & $\partial\rho/\partial x_1$ & 0.5 & \\
+    Base pressure & $P_0$ & 1.0 & \\
+    Pressure gradient (x2) & $\partial P/\partial x_2$ & 0.25 & \\
+    Pressure gradient (x1) & $\partial P/\partial x_1$ & 0.0 & \\
+    Coefficient (run 1) & $C_1$ & $10^{-3}$ & \\
+    Coefficient (run 2) & $C_2$ & $2\times10^{-3}$ & \\
+    CFL number & --- & $10^{-4}$ & Ensures $\Delta t \ll t_\mathrm{acoustic}$ \\
+    Integrator & --- & RK1 & Single step \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+%==============================================================================
+\section{Proposed Additional Tests}
+\label{sec:future_tests}
+%==============================================================================
+
+The existing test exercises the E-field generation in 2-D with $E_2$ dominant.
+Several additional tests would increase coverage:
+
+\begin{description}[leftmargin=2em]
+  \item[Null test (aligned gradients)]
+    Set $\partial P/\partial x_2 = 0$, $\partial P/\partial x_1 = 0.25$, and
+    $\partial\rho/\partial x_1 = 0.5$.  Now $\grad P\parallel\hat{x}_1$ and
+    $\grad\rho\parallel\hat{x}_1$, giving $\curl(\grad P/\rho)=0$ and hence
+    $B_3 = 0$ identically.
+
+  \item[Angular response]
+    Use \texttt{use\_theta\_mode} to sweep $\theta\in[0^\circ,180^\circ]$.
+    The generated $B_3$ after one step should scale as $\sin\theta$, verifiable
+    analytically.
+
+  \item[Spatial convergence]
+    Run at resolutions $N_1 = 16, 32, 64, 128$ for multiple timesteps and
+    fit the error in $\partial B_3/\partial t$ vs.\ the analytic value.  The
+    central-difference gradient stencil is second-order, so the error should
+    decrease as $N_1^{-2}$.
+
+  \item[Energy flux]
+    Initialise with a uniform $B_3 = B_0 \neq 0$ and run one step.  With
+    $E_2 \neq 0$ and $B_3 = B_0$ the x1-energy flux increment is
+    $\Delta F_E \approx \bar{E}_2 B_0$, which can be computed analytically
+    from the discrete stencil.  This is the only test of the
+    \texttt{BiermannEnergyFlux} code path.
+
+  \item[CGS closure consistency]
+    Run one simulation with \texttt{biermann\_from\_cgs = true} and an
+    appropriate \texttt{<units>} block, and a second with
+    \texttt{biermann\_coeff} set to the equivalent dimensionless value from
+    Eq.~\eqref{eq:coeff_code}.  The $B_3$ outputs should match to
+    machine precision.
+
+  \item[Long-time linearity with body force]
+    With \texttt{balance\_pressure\_force = true}, run for $O(100)$ steps
+    and verify that $B_3$ grows linearly in time at the analytic rate
+    $\dot{B}_3 = -\partial E_2/\partial x_1$.
+\end{description}
+
+%==============================================================================
+\section{Implementation Notes and Caveats}
+\label{sec:caveats}
+%==============================================================================
+
+\begin{itemize}
+  \item The current implementation supports \textbf{Newtonian MHD only}.
+        Enabling the battery in SR or GR MHD triggers a runtime fatal error.
+
+  \item The energy-flux contribution $\Ebatt\times\bv{B}$ is \textbf{skipped
+        for isothermal EOS} because there is no energy equation; the electric
+        field contribution to the induction equation is still applied.
+
+  \item The Biermann term uses the \textbf{total gas pressure}, not the
+        electron pressure directly.  The parameter \texttt{biermann\_pe\_fraction}
+        ($f_e$) captures the electron-pressure fraction and is included in the
+        coefficient via the CGS closure, but it must be manually incorporated
+        when using the direct \texttt{biermann\_coeff} input.
+
+  \item The \textbf{energy-flux code path is not exercised} by the regression
+        test (which starts from $\bv{B}=\bv{0}$).  The test described in
+        Section~\ref{sec:future_tests} (energy flux test) would remedy this.
+
+  \item On Cartesian grids, \texttt{mbsize.dx1} is the uniform cell width
+        within a MeshBlock and is used directly in the gradient stencil.
+        For non-uniform (stretched) grids a cell-by-cell width would be
+        required for full second-order accuracy.
+\end{itemize}
+
+%==============================================================================
+\begin{thebibliography}{9}
+\bibitem{biermann1950}
+  L.~Biermann,
+  \textit{\"Uber den Ursprung der Magnetfelder auf Sternen und im
+  interstellaren Raum},
+  Z.\ Naturforsch.\ \textbf{5a}, 65 (1950).
+\end{thebibliography}
+
+\end{document}

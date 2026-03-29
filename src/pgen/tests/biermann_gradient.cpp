@@ -71,7 +71,8 @@ void ProblemGenerator::BiermannGradient(ParameterInput *pin, const bool restart)
   }
   if (pmy_mesh_->one_d || pmy_mesh_->three_d) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
-              << "biermann_gradient requires a 2D mesh (nx2 > 1 and nx3 = 1)." << std::endl;
+              << "biermann_gradient requires a 2D mesh"
+              << " (nx2 > 1 and nx3 = 1)." << std::endl;
     std::exit(EXIT_FAILURE);
   }
 
@@ -81,6 +82,8 @@ void ProblemGenerator::BiermannGradient(ParameterInput *pin, const bool restart)
               << "biermann_gradient requires ideal EOS." << std::endl;
     std::exit(EXIT_FAILURE);
   }
+
+  Real bz0 = pin->GetOrAddReal("problem", "bz0", 0.0);
 
   Real rho0 = pin->GetOrAddReal("problem", "rho0", 1.0);
   Real drho_dx1 = pin->GetOrAddReal("problem", "drho_dx1", 0.5);
@@ -171,8 +174,9 @@ void ProblemGenerator::BiermannGradient(ParameterInput *pin, const bool restart)
 
   Kokkos::deep_copy(b0.x1f, 0.0);
   Kokkos::deep_copy(b0.x2f, 0.0);
-  Kokkos::deep_copy(b0.x3f, 0.0);
+  Kokkos::deep_copy(b0.x3f, bz0);
 
+  Real bz0_ = bz0;
   par_for("pgen_biermann_gradient", DevExeSpace(), 0, (pmbp->nmb_thispack-1),
           ks, ke, js, je, is, ie,
   KOKKOS_LAMBDA(const int m, const int k, const int j, const int i) {
@@ -193,7 +197,7 @@ void ProblemGenerator::BiermannGradient(ParameterInput *pin, const bool restart)
 
     bcc0(m,IBX,k,j,i) = 0.0;
     bcc0(m,IBY,k,j,i) = 0.0;
-    bcc0(m,IBZ,k,j,i) = 0.0;
+    bcc0(m,IBZ,k,j,i) = bz0_;
   });
 
   pmbp->pmhd->peos->PrimToCons(w0, bcc0, u0, is, ie, js, je, ks, ke);

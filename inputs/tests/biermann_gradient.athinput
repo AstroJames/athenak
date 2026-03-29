@@ -27,7 +27,7 @@ ix3_bc    = periodic
 ox3_bc    = periodic
 
 <meshblock>
-nx1       = 64
+nx1       = 8
 nx2       = 32
 nx3       = 1
 
@@ -58,11 +58,21 @@ theta_deg      = 90.0
 drho_mag       = 0.5
 dp_mag         = 0.25
 balance_pressure_force = false
+bz0                    = 0.0
 
 <output1>
 file_type   = tab
 variable    = mhd_bcc
 id          = bz
+data_format = %24.16e
+dt          = 1.0e-8
+slice_x2    = 0.0
+slice_x3    = 0.0
+
+<output2>
+file_type   = tab
+variable    = mhd_u
+id          = en
 data_format = %24.16e
 dt          = 1.0e-8
 slice_x2    = 0.0
