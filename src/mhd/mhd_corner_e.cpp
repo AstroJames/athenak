@@ -12,6 +12,8 @@
 #include "mesh/mesh.hpp"
 #include "driver/driver.hpp"
 #include "diffusion/resistivity.hpp"
+#include "diffusion/biermann.hpp"
+#include "eos/eos.hpp"
 #include "mhd.hpp"
 
 #include "coordinates/coordinates.hpp"
@@ -420,6 +422,13 @@ TaskStatus MHD::CornerE(Driver *pdriver, int stage) {
       presist->OhmicEField(b0, efld);
     }
     // TODO(@user): Add more resistive effects here
+  }
+
+  // Add Biermann battery electric field (if needed)
+  if (pbier != nullptr) {
+    if (pbier->enabled) {
+      pbier->BiermannEField(w0, peos->eos_data, efld);
+    }
   }
 
   return TaskStatus::complete;

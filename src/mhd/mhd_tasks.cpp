@@ -20,6 +20,7 @@
 #include "eos/eos.hpp"
 #include "diffusion/viscosity.hpp"
 #include "diffusion/resistivity.hpp"
+#include "diffusion/biermann.hpp"
 #include "diffusion/conduction.hpp"
 #include "srcterms/srcterms.hpp"
 #include "bvals/bvals.hpp"
@@ -197,6 +198,9 @@ TaskStatus MHD::Fluxes(Driver *pdrive, int stage) {
   }
   if ((presist != nullptr) && (peos->eos_data.is_ideal)) {
     presist->OhmicEnergyFlux(b0, uflx);
+  }
+  if ((pbier != nullptr) && (peos->eos_data.is_ideal)) {
+    pbier->BiermannEnergyFlux(w0, peos->eos_data, b0, uflx);
   }
   if (pcond != nullptr) {
     pcond->AddHeatFlux(w0, peos->eos_data, uflx);

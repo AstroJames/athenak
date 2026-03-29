@@ -22,6 +22,7 @@ class EquationOfState;
 class Coordinates;
 class Viscosity;
 class Resistivity;
+class BiermannBattery;
 class Conduction;
 class SourceTerms;
 class OrbitalAdvectionCC;
@@ -117,9 +118,10 @@ class MHD {
   ShearingBoxBoundaryCC *psbox_u = nullptr;
   ShearingBoxBoundaryFC *psbox_b = nullptr;
 
-  // Object(s) for extra physics (viscosity, resistivity, thermal conduction, srcterms)
+  // Object(s) for extra physics (viscosity, resistivity, Biermann, conduction, srcterms)
   Viscosity *pvisc = nullptr;
   Resistivity *presist = nullptr;
+  BiermannBattery *pbier = nullptr;
   Conduction *pcond = nullptr;
   SourceTerms *psrc = nullptr;
 

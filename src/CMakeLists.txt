@@ -32,6 +32,7 @@ add_executable(
         coordinates/excision.cpp
 
         diffusion/conduction.cpp
+        diffusion/biermann.cpp
         diffusion/resistivity.cpp
         diffusion/viscosity.cpp
 
@@ -107,6 +108,7 @@ add_executable(
 
         pgen/pgen.cpp
         pgen/tests/advection.cpp
+        pgen/tests/biermann_gradient.cpp
         pgen/tests/collapse.cpp
         pgen/tests/cpaw.cpp
         pgen/tests/diffusion.cpp
