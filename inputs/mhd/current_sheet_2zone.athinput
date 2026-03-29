@@ -61,7 +61,7 @@ kval = 1.0                # wave vector in y direction
 p0 = 1.0/eos.gamma        # pressure far away
 epsp = 0.0 #6.0 #2.0 #0.9 #0.1 #0.02               # pinch perturbation on pressure (not used in IC-matching BC state)
 t_switch = 0.2               # switch time for special BCs (x2 periodic -> IC for iprob==3)
-x2_hydro_after = ic          # x2 hydro BC after switch: ic or ic_diode_vy
+bc_mode  = 2                 # BC mode after t_switch: 1=all-diode, 2=all-IC-matching, 3=mixed(IC x1/diode x2)
 
 <output1>
 file_type   = vtk       # Tabular data dump
