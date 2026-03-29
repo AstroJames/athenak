@@ -64,22 +64,19 @@ t_switch = 0.2               # switch time for special BCs (x2 periodic -> IC fo
 bc_mode  = 2                 # BC mode after t_switch: 1=all-diode, 2=all-IC-matching, 3=mixed(IC x1/diode x2)
 
 <output1>
-file_type   = vtk       # Tabular data dump
+file_type   = bin       # Binary data dump
 variable    = mhd_w     # variables to be output
-data_format = %12.5e    # Optional data format string
-dt          = 0.1         # time increment between outputs
+dt          = 0.1       # time increment between outputs
 
 <output2>
-file_type   = vtk       # Tabular data dump
+file_type   = bin       # Binary data dump
 variable    = mhd_bcc   # variables to be output
-data_format = %12.5e    # Optional data format string
-dt          = 0.1         # time increment between outputs
+dt          = 0.1       # time increment between outputs
 
 <output3>
-file_type   = vtk       # Tabular data dump
+file_type   = bin       # Binary data dump
 variable    = mhd_jz    # variables to be output
-data_format = %12.5e    # Optional data format string
-dt          = 0.1 #0.0001     # time increment between outputs
+dt          = 0.1       # time increment between outputs
 
 <output4>
 file_type  = hst       # History data dump
