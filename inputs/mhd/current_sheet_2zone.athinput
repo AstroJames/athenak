@@ -13,14 +13,14 @@ nghost    = 3 #2         # Number of ghost cells
 nx1       = 1600 #256     # Number of zones in X1-direction
 x1min     = -3.0      # minimum value of X1
 x1max     = 3.0       # maximum value of X1
-ix1_bc    = user      # Inner-X1 boundary condition flag (always IC-matching in pgen for iprob==3)
-ox1_bc    = user      # Outer-X1 boundary condition flag (always IC-matching in pgen for iprob==3)
+ix1_bc    = diode      # Inner-X1 boundary condition flag (always IC-matching in pgen for iprob==3)
+ox1_bc    = diode      # Outer-X1 boundary condition flag (always IC-matching in pgen for iprob==3)
 
 nx2       = 1600 #256       # Number of zones in X2-direction
 x2min     = -3.0      # minimum value of X2
 x2max     = 3.0       # maximum value of X2
-ix2_bc    = user      # Inner-X2 boundary condition flag (periodic before t_switch, IC-matching after t_switch in pgen)
-ox2_bc    = user      # Outer-X2 boundary condition flag (periodic before t_switch, IC-matching after t_switch in pgen)
+ix2_bc    = periodic      # Inner-X2 boundary condition flag (periodic before t_switch, IC-matching after t_switch in pgen)
+ox2_bc    = periodic      # Outer-X2 boundary condition flag (periodic before t_switch, IC-matching after t_switch in pgen)
 
 nx3       = 1         # Number of zones in X3-direction
 x3min     = -0.5      # minimum value of X3
