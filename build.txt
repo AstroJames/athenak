@@ -35,7 +35,7 @@ module purge
 module load gcc cmake openmpi fftw (only need fftw if you have Beattie's fork)
 
 # go to ~/athenak and make
-cmake --preset trill-cpu -DPROBLEM=current_sheet
+cmake --preset trill-cpu -DPROBLEM=current_sheet_2zone
 cmake --preset trill-cpu -DPROBLEM=turb
 
 # then go to ~/athenak/build/src
