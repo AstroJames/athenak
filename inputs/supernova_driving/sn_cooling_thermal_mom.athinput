@@ -1,0 +1,90 @@
+# AthenaXXX input file: SN driving -- ISM cooling box, thermal + momentum injection
+# Build with: cmake .. -DPROBLEM=sn_drive_box
+
+<comment>
+problem = supernova driving with ISM cooling, thermal energy + radial momentum injection
+
+<job>
+basename = SN_Cooling_ThermalMom
+
+<units>
+length_cgs = 3.085677581e20
+mass_cgs   = 6.195900775e37
+time_cgs   = 3.813601529e14
+mu         = 1.27
+
+<mesh>
+nghost    = 3
+nx1       = 32
+x1min     = -0.5
+x1max     = 0.5
+ix1_bc    = periodic
+ox1_bc    = periodic
+
+nx2       = 32
+x2min     = -0.5
+x2max     = 0.5
+ix2_bc    = periodic
+ox2_bc    = periodic
+
+nx3       = 32
+x3min     = -0.5
+x3max     = 0.5
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1 = 32
+nx2 = 32
+nx3 = 32
+
+<time>
+evolution  = dynamic
+integrator = rk2
+cfl_number = 0.3
+nlim       = -1
+tlim       = 4.0
+ndiag      = 1
+
+<hydro>
+eos         = ideal
+reconstruct = plm
+rsolver     = hllc
+gamma       = 1.6666667
+fofc        = true
+tfloor      = 1.0e-3
+dfloor      = 4.6962305e-9
+pfloor      = 4.6962305e-9
+
+# Stochastic SN driving
+sn_driving    = true
+sn_rate       = 100.0
+sn_energy     = 1.0e-3      # thermal energy per event [code units]
+sn_momentum   = 5.0e-8      # radial momentum per event [code units]
+                             # vri ~ 5e-8 / (rho * V_inj) ~ 0.1 cs at rho0
+sn_rinj       = 0.0625
+sn_zmin       = -0.5
+sn_zmax       = 0.5
+sn_seed       = 314159
+sn_log_events = true
+sn_log_file   = SN_Cooling_ThermalMom.sn_events.dat
+
+# ISM cooling + photoelectric heating
+ism_cooling = true
+hrate       = 2.0e-26
+
+<problem>
+rho0  = 4.6962305e-3
+pgas0 = 4.6962305e-3
+vx0   = 0.0
+vy0   = 0.0
+vz0   = 0.0
+
+<output1>
+file_type = hst
+dt        = 0.01
+
+<output2>
+file_type = vtk
+variable  = hydro_w
+dt        = 0.05
