@@ -140,20 +140,35 @@ SourceTerms::SourceTerms(std::string block, MeshBlockPack *pp, ParameterInput *p
     sn_log_file = pin->GetOrAddString(block, "sn_log_file",
                                       basename + ".sn_events.dat");
 
-    // Subgrid SN remnant model (Martizzi, Faucher-Giguere & Quataert 2015)
+    // Subgrid SN remnant model
     sn_subgrid = pin->GetOrAddBoolean(block, "sn_subgrid", false);
     if (sn_subgrid) {
-      sn_subgrid_type = pin->GetOrAddInteger(block, "sn_subgrid_type", 0);
+      sn_subgrid_recipe = pin->GetOrAddString(block, "sn_subgrid_recipe", "MFQ15");
       sn_esn_cgs = pin->GetOrAddReal(block, "sn_esn_cgs", 1.0e51);
       sn_mej_msun = pin->GetOrAddReal(block, "sn_mej_msun", 3.0);
-      sn_metallicity = pin->GetOrAddReal(block, "sn_metallicity", 1.0);
-      if (global_variable::my_rank == 0) {
-        std::cout << "### SN SUBGRID MODEL enabled (type="
-                  << sn_subgrid_type << ", E_SN=" << sn_esn_cgs
-                  << " erg, M_ej=" << sn_mej_msun << " Msun, Z="
-                  << sn_metallicity << " Zsun)\n";
+      if (sn_subgrid_recipe == "MFQ15") {
+        sn_subgrid_type = pin->GetOrAddInteger(block, "sn_subgrid_type", 0);
+        sn_metallicity = pin->GetOrAddReal(block, "sn_metallicity", 1.0);
+        if (global_variable::my_rank == 0) {
+          std::cout << "### SN SUBGRID MODEL: MFQ15 (type=" << sn_subgrid_type
+                    << ", E_SN=" << sn_esn_cgs << " erg, M_ej=" << sn_mej_msun
+                    << " Msun, Z=" << sn_metallicity << " Zsun)\n";
+        }
+      } else if (sn_subgrid_recipe == "KO15") {
+        sn_subgrid_type = 0;
+        sn_metallicity = 1.0;
+        if (global_variable::my_rank == 0) {
+          std::cout << "### SN SUBGRID MODEL: KO15 (E_SN=" << sn_esn_cgs
+                    << " erg, M_ej=" << sn_mej_msun << " Msun)\n";
+        }
+      } else {
+        std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                  << std::endl << "Unknown sn_subgrid_recipe '" << sn_subgrid_recipe
+                  << "'. Valid options: MFQ15, KO15" << std::endl;
+        std::exit(EXIT_FAILURE);
       }
     } else {
+      sn_subgrid_recipe = "MFQ15";
       sn_subgrid_type = 0;
       sn_esn_cgs = 1.0e51;
       sn_mej_msun = 3.0;
@@ -526,52 +541,88 @@ void SourceTerms::SupernovaDriving(const DvceArray5D<Real> &w0, const EOS_Data &
       Real n_H = rho_cgs / (pmy_pack->punit->mu() *
                              units::Units::atomic_mass_unit_cgs);
 
-      // Metallicity with floor at 0.01 Z_sun
-      Real Z = std::max(sn_metallicity, 0.01);
+      Real Eth_cgs, Prad_cgs;
 
-      // Injection radius in pc
-      Real R_pc = sn_rinj_eff * pmy_pack->punit->length_cgs() /
-                  units::Units::pc_cgs;
+      if (sn_subgrid_recipe == "MFQ15") {
+        // Martizzi, Faucher-Giguere & Quataert (2015) resolution-dependent model
 
-      // Fitting coefficients: Martizzi, Faucher-Giguere & Quataert (2015)
-      Real n100 = n_H / 100.0;
-      Real alpha, Rc, Rr, R0, Rb;
-      if (sn_subgrid_type == 1) {
-        // Inhomogeneous medium (Mach = 30), Eq. 12
-        alpha = -11.0  * std::pow(n100, 0.070) * std::pow(Z, 0.114);
-        Rc    =   6.3  * std::pow(n100, -0.42) * std::pow(Z, -0.050);
-        Rr    =   9.2  * std::pow(n100, -0.44) * std::pow(Z, -0.067);
-        R0    =   2.4  * std::pow(n100, -0.35) * std::pow(Z, 0.021);
-        Rb    =   8.0  * std::pow(n100, -0.46) * std::pow(Z, -0.058);
-      } else {
-        // Homogeneous medium (default), Eq. 11
-        alpha = -7.8  * std::pow(n100, 0.050) * std::pow(Z, 0.030);
-        Rc    =  3.0  * std::pow(n100, -0.42) * std::pow(Z, -0.082);
-        Rr    =  5.5  * std::pow(n100, -0.40) * std::pow(Z, -0.074);
-        R0    =  0.97 * std::pow(n100, -0.33) * std::pow(Z, 0.046);
-        Rb    =  4.0  * std::pow(n100, -0.43) * std::pow(Z, -0.077);
-      }
+        // Metallicity with floor at 0.01 Z_sun
+        Real Z = std::max(sn_metallicity, 0.01);
 
-      // Thermal energy E_th(R): Eq. 9
-      Real Eth0_cgs = 0.717 * sn_esn_cgs;  // Sedov-Taylor thermal fraction
-      Real Eth_cgs;
-      if (R_pc <= Rc) {
-        Eth_cgs = Eth0_cgs;                                  // Sedov-Taylor regime
-      } else if (R_pc <= Rr) {
-        Eth_cgs = Eth0_cgs * std::pow(R_pc / Rc, alpha);     // cooling regime
-      } else {
-        Eth_cgs = Eth0_cgs * std::pow(Rr / Rc, alpha);       // floor
-      }
+        // Injection radius in pc
+        Real R_pc = sn_rinj_eff * pmy_pack->punit->length_cgs() /
+                    units::Units::pc_cgs;
 
-      // Radial momentum P_rad(R): Eq. 10
-      // P_0 = sqrt(2 * M_ej * E_SN)
-      Real Mej_cgs = sn_mej_msun * units::Units::msun_cgs;
-      Real P0_cgs = std::sqrt(2.0 * Mej_cgs * sn_esn_cgs);
-      Real Prad_cgs;
-      if (R_pc <= Rb) {
-        Prad_cgs = P0_cgs * std::pow(R_pc / R0, 1.5);       // growing phase
-      } else {
-        Prad_cgs = P0_cgs * std::pow(Rb / R0, 1.5);         // terminal momentum
+        // Fitting coefficients: Eqs. 11-12
+        Real n100 = n_H / 100.0;
+        Real alpha, Rc, Rr, R0, Rb;
+        if (sn_subgrid_type == 1) {
+          // Inhomogeneous medium (Mach = 30), Eq. 12
+          alpha = -11.0  * std::pow(n100, 0.070) * std::pow(Z, 0.114);
+          Rc    =   6.3  * std::pow(n100, -0.42) * std::pow(Z, -0.050);
+          Rr    =   9.2  * std::pow(n100, -0.44) * std::pow(Z, -0.067);
+          R0    =   2.4  * std::pow(n100, -0.35) * std::pow(Z, 0.021);
+          Rb    =   8.0  * std::pow(n100, -0.46) * std::pow(Z, -0.058);
+        } else {
+          // Homogeneous medium (default), Eq. 11
+          alpha = -7.8  * std::pow(n100, 0.050) * std::pow(Z, 0.030);
+          Rc    =  3.0  * std::pow(n100, -0.42) * std::pow(Z, -0.082);
+          Rr    =  5.5  * std::pow(n100, -0.40) * std::pow(Z, -0.074);
+          R0    =  0.97 * std::pow(n100, -0.33) * std::pow(Z, 0.046);
+          Rb    =  4.0  * std::pow(n100, -0.43) * std::pow(Z, -0.077);
+        }
+
+        // Thermal energy E_th(R): Eq. 9
+        Real Eth0_cgs = 0.717 * sn_esn_cgs;  // Sedov-Taylor thermal fraction
+        if (R_pc <= Rc) {
+          Eth_cgs = Eth0_cgs;                                  // Sedov-Taylor regime
+        } else if (R_pc <= Rr) {
+          Eth_cgs = Eth0_cgs * std::pow(R_pc / Rc, alpha);     // cooling regime
+        } else {
+          Eth_cgs = Eth0_cgs * std::pow(Rr / Rc, alpha);       // floor
+        }
+
+        // Radial momentum P_rad(R): Eq. 10
+        Real Mej_cgs = sn_mej_msun * units::Units::msun_cgs;
+        Real P0_cgs = std::sqrt(2.0 * Mej_cgs * sn_esn_cgs);
+        if (R_pc <= Rb) {
+          Prad_cgs = P0_cgs * std::pow(R_pc / R0, 1.5);       // growing phase
+        } else {
+          Prad_cgs = P0_cgs * std::pow(Rb / R0, 1.5);         // terminal momentum
+        }
+
+      } else {  // KO15
+        // Kim & Ostriker (2015) three-regime prescription
+
+        // Total mass in kernel (gas + ejecta) [g]
+        Real Mej_cgs = sn_mej_msun * units::Units::msun_cgs;
+        Real Msnr_cgs = rho_avg * vol_global * pmy_pack->punit->mass_cgs() + Mej_cgs;
+
+        // Shell-formation mass: Kim & Ostriker (2015) Eq. 7
+        Real Msf_cgs = 1679.0 * std::pow(n_H, -0.26) * units::Units::msun_cgs;
+
+        // Regime ratio
+        Real R_M = Msnr_cgs / Msf_cgs;
+
+        // Terminal momentum: Kim & Ostriker (2015) Eq. 8 [g cm/s]
+        Real Pterm_cgs = 2.8e5 * std::pow(n_H, -0.17) *
+                         units::Units::msun_cgs * 1.0e5;  // M_sun km/s -> g cm/s
+
+        static constexpr Real eps_K = 0.28;  // kinetic fraction in ST phase
+
+        if (R_M > 1.0) {
+          // MC (momentum-conserving) regime: remnant has reached snowplow phase
+          Prad_cgs = Pterm_cgs;
+          Eth_cgs  = std::max(0.0, sn_esn_cgs - Pterm_cgs*Pterm_cgs / (2.0*Msnr_cgs));
+        } else if (R_M > 0.027) {
+          // ST (Sedov-Taylor) regime: partially resolved
+          Prad_cgs = std::sqrt(2.0 * Mej_cgs * eps_K * sn_esn_cgs);
+          Eth_cgs  = (1.0 - eps_K) * sn_esn_cgs;
+        } else {
+          // EJ (ejecta) regime: free expansion resolved, inject only thermal energy
+          Prad_cgs = 0.0;
+          Eth_cgs  = sn_esn_cgs;
+        }
       }
 
       // Convert to code units

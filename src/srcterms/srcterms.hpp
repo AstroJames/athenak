@@ -70,12 +70,13 @@ class SourceTerms {
   bool sn_log_events;  // write event list to file
   std::string sn_log_file;
 
-  // subgrid SN remnant model (Martizzi, Faucher-Giguere & Quataert 2015)
-  bool sn_subgrid;          // enable subgrid E_th/P_rad model
-  int sn_subgrid_type;      // 0 = homogeneous, 1 = inhomogeneous (M=30)
-  Real sn_esn_cgs;          // total SN energy [erg]
-  Real sn_mej_msun;         // ejecta mass [Msun]
-  Real sn_metallicity;      // metallicity [Z/Z_sun]
+  // subgrid SN remnant model
+  bool sn_subgrid;               // enable subgrid E_th/P_rad model
+  std::string sn_subgrid_recipe; // "MFQ15" or "KO15"
+  int sn_subgrid_type;           // MFQ15 only: 0 = homogeneous, 1 = inhomogeneous (M=30)
+  Real sn_esn_cgs;               // total SN energy [erg]
+  Real sn_mej_msun;              // ejecta mass [Msun]
+  Real sn_metallicity;           // metallicity [Z/Z_sun] (MFQ15 only)
 
   // beam source
   Real dii_dt;

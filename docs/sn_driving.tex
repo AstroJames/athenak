@@ -152,8 +152,12 @@ $\hat{\boldsymbol{r}} = \boldsymbol{\delta}/r$:
 \end{align}
 with corresponding kinetic energy:
 \begin{equation}
-  u_0(\texttt{IEN})_c \mathrel{+}= \tfrac{1}{2}\,\bar{\rho}\,v_r^2\,.
+  u_0(\texttt{IEN})_c \mathrel{+}= \frac{(\bar{\rho}\,v_r)^2}{2\,\rho_c}\,.
 \end{equation}
+Using the per-cell density $\rho_c$ rather than $\bar{\rho}$ gives the correct
+kinetic energy change $\Delta p^2 / (2\rho_c)$ for the injected momentum
+$\Delta p = \bar{\rho}\,v_r$ in each cell, and avoids over- or under-estimating
+the kinetic energy in an inhomogeneous kernel.
 
 \paragraph{Centre cell handling ($r = 0$):}
 When the event centre coincides exactly with a cell centre, $r = 0$ and the
@@ -229,10 +233,21 @@ source term.
 When \texttt{sn\_subgrid = true}, the per-event thermal energy and radial
 momentum are no longer taken from the fixed input parameters
 \texttt{sn\_energy}/\texttt{sn\_momentum}.  Instead, they are computed from
-the fitting formulae of Martizzi, Faucher-Gigu\`ere \& Quataert (2015,
-hereafter MFQ15) for the evolution of an SN remnant in a uniform or turbulent
-ambient medium.  The independent-injection mode
-(\texttt{sn\_subgrid = false}) remains the default and is unaffected.
+a subgrid prescription selected by the string parameter
+\texttt{sn\_subgrid\_recipe}.  Two recipes are currently available:
+
+\begin{description}
+  \item[\texttt{MFQ15}] (default) Resolution-dependent fitting formulae from
+    Martizzi, Faucher-Gigu\`ere \& Quataert (2015) for the thermal energy and
+    radial momentum of an SN remnant as a function of injection radius and
+    ambient density.
+  \item[\texttt{KO15}] Three-regime prescription from Kim \& Ostriker (2015)
+    based on whether the injection region resolves the ejecta free-expansion,
+    Sedov--Taylor, or momentum-conserving snowplow phase.
+\end{description}
+
+The independent-injection mode (\texttt{sn\_subgrid = false}) remains the
+default and is unaffected.
 
 \subsection{Physical Scales}
 
@@ -331,6 +346,62 @@ The density-averaging pass is always executed when \texttt{sn\_subgrid} is
 active (it is needed to compute $n_\mathrm{H}$), even if the independent
 \texttt{sn\_momentum} parameter is zero.
 
+\subsection{Recipe: Kim \& Ostriker (2015)}
+\label{sec:ko15}
+
+The KO15 recipe selects between three regimes based on the ratio
+\begin{equation}
+  \mathcal{R} \equiv \frac{M_\mathrm{snr}}{M_\mathrm{sf}}\,,
+\end{equation}
+where $M_\mathrm{snr} = \bar{\rho}\,V + M_\mathrm{ej}$ is the total mass
+within the injection kernel (swept-up gas plus ejecta) and $M_\mathrm{sf}$ is
+the shell-formation mass at which the interior transitions from adiabatic to
+radiative (Kim \& Ostriker 2015, Eq.~7):
+\begin{equation}
+  M_\mathrm{sf} = 1679\,\left(\frac{n_\mathrm{H}}{\mathrm{cm}^{-3}}\right)^{-0.26}
+                  M_\odot\,.
+\end{equation}
+
+\paragraph{Regimes.}
+\begin{description}
+  \item[EJ --- ejecta ($\mathcal{R} \leq 0.027$):]
+    The injection sphere is small enough to capture the free-expansion phase.
+    The hydro solver handles momentum redistribution; only thermal energy is
+    injected:
+    \begin{equation}
+      P_\mathrm{rad} = 0\,, \qquad E_\mathrm{th} = E_\mathrm{SN}\,.
+    \end{equation}
+  \item[ST --- Sedov--Taylor ($0.027 < \mathcal{R} \leq 1$):]
+    The adiabatic blast-wave phase is resolved.  The kinetic and thermal
+    fractions follow the Sedov--Taylor solution with kinetic fraction
+    $\varepsilon_K = 0.28$:
+    \begin{equation}
+      P_\mathrm{rad} = \sqrt{2\,M_\mathrm{ej}\,\varepsilon_K\,E_\mathrm{SN}}\,,
+      \qquad
+      E_\mathrm{th} = (1 - \varepsilon_K)\,E_\mathrm{SN} = 0.72\,E_\mathrm{SN}\,.
+    \end{equation}
+  \item[MC --- momentum-conserving ($\mathcal{R} > 1$):]
+    The remnant has already reached the snowplow phase.  The terminal momentum
+    (Kim \& Ostriker 2015, Eq.~8) is injected:
+    \begin{equation}
+      P_\mathrm{term} = 2.8 \times 10^5\,
+        \left(\frac{n_\mathrm{H}}{\mathrm{cm}^{-3}}\right)^{-0.17}
+        M_\odot\,\mathrm{km\,s}^{-1}\,,
+    \end{equation}
+    \begin{equation}
+      P_\mathrm{rad} = P_\mathrm{term}\,, \qquad
+      E_\mathrm{th} = \max\!\left(0,\; E_\mathrm{SN}
+        - \frac{P_\mathrm{term}^2}{2\,M_\mathrm{snr}}\right)\,.
+    \end{equation}
+    The thermal energy is the remainder after accounting for the kinetic energy
+    of the injected shell, ensuring total energy conservation at $E_\mathrm{SN}$
+    per event.
+\end{description}
+
+\paragraph{Parameters.}  KO15 uses \texttt{sn\_esn\_cgs} and
+\texttt{sn\_mej\_msun}.  The metallicity parameter \texttt{sn\_metallicity}
+and the fit-set selector \texttt{sn\_subgrid\_type} are not used.
+
 \subsection{Note on the RAMSES Implementation}
 
 The RAMSES \texttt{blast\_wave\_feedback} routine (Beattie et al., in prep.)
@@ -370,11 +441,12 @@ Parameter & Type & Default & Description \\
 \texttt{sn\_log\_file}     & string & \texttt{<basename>.sn\_events.dat} & Event log filename \\
 \midrule
 \multicolumn{4}{@{}l}{\emph{Subgrid model parameters (Section~\ref{sec:subgrid})}} \\
-\texttt{sn\_subgrid}       & bool   & \texttt{false}  & Enable subgrid $E_\mathrm{th}$/$P_\mathrm{rad}$ model \\
-\texttt{sn\_subgrid\_type} & int    & 0               & Fit set: 0 = homogeneous, 1 = inhomogeneous \\
-\texttt{sn\_esn\_cgs}      & Real   & $10^{51}$       & Total SN energy [erg] \\
-\texttt{sn\_mej\_msun}     & Real   & 3.0             & Ejecta mass [$M_\odot$] \\
-\texttt{sn\_metallicity}   & Real   & 1.0             & Metallicity [$Z/Z_\odot$] \\
+\texttt{sn\_subgrid}         & bool   & \texttt{false}  & Enable subgrid $E_\mathrm{th}$/$P_\mathrm{rad}$ model \\
+\texttt{sn\_subgrid\_recipe} & string & \texttt{MFQ15}  & Recipe: \texttt{MFQ15} or \texttt{KO15} \\
+\texttt{sn\_esn\_cgs}        & Real   & $10^{51}$       & Total SN energy [erg] \\
+\texttt{sn\_mej\_msun}       & Real   & 3.0             & Ejecta mass [$M_\odot$] \\
+\texttt{sn\_subgrid\_type}   & int    & 0               & \emph{MFQ15 only}: 0 = homogeneous, 1 = inhomogeneous \\
+\texttt{sn\_metallicity}     & Real   & 1.0             & \emph{MFQ15 only}: metallicity [$Z/Z_\odot$] \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -417,15 +489,148 @@ The radial velocity in RAMSES is:
 which reduces to equation~\eqref{eq:vri} in the limit $\rho_\mathrm{ej} \to 0$
 and $V \to \frac{4}{3}\pi\,r_\mathrm{inj}^3$ (continuous sphere).
 
+\section{Summary of Source Terms}
+\label{sec:source_terms}
+
+This section collects the exact right-hand-side source terms added to the
+compressible Euler (or MHD) equations by a single SN event located at
+$\mathbf{x}_\mathrm{sn}$ at time $t_\mathrm{ev}$.  The notation follows the
+conservative form
+\begin{equation}
+  \frac{\partial \mathbf{U}}{\partial t} + \nabla\cdot\mathbf{F}(\mathbf{U})
+  = \mathbf{S}(\mathbf{x},t)\,,
+\end{equation}
+with conserved state $\mathbf{U} = (\rho,\,\rho\mathbf{v},\,E)^\top$.
+
+\subsection*{Definitions}
+
+\begin{align}
+  \mathbf{r} &= \mathbf{x} - \mathbf{x}_\mathrm{sn}\,, & r &= |\mathbf{r}|\,, &
+  \hat{\mathbf{r}} &= \mathbf{r}/r\,, \\[4pt]
+  V &= \sum_{c\,\in\,\mathcal{S}} \Delta V_c\,, &
+  \bar{\rho} &= \frac{1}{V}\sum_{c\,\in\,\mathcal{S}} \rho_c\,\Delta V_c\,, \\[4pt]
+  v_r &= \frac{P_\mathrm{inj}}{\bar{\rho}\,V}\,, &
+  \Theta_\mathrm{inj}(\mathbf{x}) &=
+    \begin{cases} 1 & r < r_\mathrm{inj} \\ 0 & \text{otherwise} \end{cases}\,.
+\end{align}
+Here $P_\mathrm{inj}$ and $E_\mathrm{inj}$ are the per-event radial momentum
+and thermal energy supplied by either the fixed input parameters or the chosen
+subgrid recipe (Section~\ref{sec:subgrid}).
+
+\subsection*{Momentum source}
+
+The radial momentum source for each vector component $i$ is:
+\begin{equation}
+  \boxed{
+  S_{\rho v_i}(\mathbf{x}, t) =
+    \frac{P_\mathrm{inj}}{V}\,\frac{r_i}{r}\,
+    \Theta_\mathrm{inj}(\mathbf{x})\;
+    \delta(t - t_\mathrm{ev})
+  }
+\end{equation}
+The source is isotropic about $\mathbf{x}_\mathrm{sn}$, so the net injected
+linear momentum integrates to zero: $\int S_{\rho\mathbf{v}}\,\mathrm{d}V = \mathbf{0}$.
+
+\subsection*{Energy source}
+
+The total-energy source has two contributions: a uniform thermal term and a
+kinetic term that depends on the local cell density $\rho(\mathbf{x})$:
+\begin{equation}
+  \boxed{
+  S_E(\mathbf{x}, t) =
+    \left[
+      \frac{E_\mathrm{inj}}{V}
+      + \frac{P_\mathrm{inj}^2}{2\,\rho(\mathbf{x})\,V^2}
+    \right]
+    \Theta_\mathrm{inj}(\mathbf{x})\;
+    \delta(t - t_\mathrm{ev})
+  }
+\end{equation}
+The first term deposits thermal energy uniformly across the injection sphere.
+The second term is the kinetic energy $\Delta p^2/(2\rho)$ associated with the
+radial momentum $\Delta p = P_\mathrm{inj}/V$ injected into each unit volume.
+Note that $\rho(\mathbf{x})$ in the denominator is the \emph{local} (per-cell)
+density, not the mean $\bar{\rho}$.
+
+\subsection*{Total injected energy}
+
+Integrating $S_E$ over the injection sphere gives the total energy per event:
+\begin{equation}
+  \Delta E_\mathrm{tot} = E_\mathrm{inj}
+    + \frac{P_\mathrm{inj}^2}{2\,V}
+      \left\langle \frac{1}{\rho} \right\rangle_V\,,
+\end{equation}
+where $\langle 1/\rho \rangle_V = V^{-1}\sum_c \Delta V_c / \rho_c$ is the
+volume-weighted harmonic mean of the density.  In a uniform medium this
+reduces to $\Delta E_\mathrm{tot} = E_\mathrm{inj} + P_\mathrm{inj}^2 /
+(2\bar{\rho}\,V)$.
+
+\subsection*{Subgrid prescriptions for $E_\mathrm{inj}$ and $P_\mathrm{inj}$}
+
+When \texttt{sn\_subgrid = false}, $E_\mathrm{inj}$ and $P_\mathrm{inj}$ are
+fixed input parameters.  When \texttt{sn\_subgrid = true}, they are computed
+per-event as summarised in Table~\ref{tab:recipes}.
+
+\begin{table}[h]
+\centering
+\caption{Per-event injection values for the two subgrid recipes.
+  $E_\mathrm{SN}$: total SN energy;
+  $M_\mathrm{ej}$: ejecta mass;
+  $\varepsilon_K = 0.28$: Sedov--Taylor kinetic fraction;
+  $\mathcal{R} = M_\mathrm{snr}/M_\mathrm{sf}$: regime ratio.}
+\label{tab:recipes}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Recipe & Regime / condition & $P_\mathrm{inj}$ & $E_\mathrm{inj}$ \\
+\midrule
+\multirow{3}{*}{MFQ15}
+  & $R \leq R_b$ (growing)
+    & $P_0\,(R/R_0)^{3/2}$
+    & $E_\mathrm{th,0}\,f(R)$ \\
+  & $R > R_b$ (terminal)
+    & $P_0\,(R_b/R_0)^{3/2}$
+    & $E_\mathrm{th,0}\,f(R)$ \\
+  & \multicolumn{3}{l}{$P_0 = \sqrt{2M_\mathrm{ej}E_\mathrm{SN}}$,\;
+    $E_\mathrm{th,0} = 0.717\,E_\mathrm{SN}$,\;
+    $f(R)$ from Eq.~\eqref{eq:Eth}} \\[6pt]
+\multirow{3}{*}{KO15}
+  & EJ\;($\mathcal{R} \leq 0.027$)
+    & $0$
+    & $E_\mathrm{SN}$ \\
+  & ST\;($0.027 < \mathcal{R} \leq 1$)
+    & $\sqrt{2\,M_\mathrm{ej}\,\varepsilon_K\,E_\mathrm{SN}}$
+    & $(1-\varepsilon_K)\,E_\mathrm{SN}$ \\
+  & MC\;($\mathcal{R} > 1$)
+    & $P_\mathrm{term}$
+    & $\max(0,\,E_\mathrm{SN} - P_\mathrm{term}^2/2M_\mathrm{snr})$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+For reference, the KO15 terminal momentum and shell-formation mass are:
+\begin{align}
+  P_\mathrm{term} &= 2.8\times10^5
+    \left(\frac{n_\mathrm{H}}{\mathrm{cm}^{-3}}\right)^{-0.17}
+    M_\odot\,\mathrm{km\,s}^{-1}\,, \\
+  M_\mathrm{sf}   &= 1679
+    \left(\frac{n_\mathrm{H}}{\mathrm{cm}^{-3}}\right)^{-0.26}
+    M_\odot\,, \\
+  M_\mathrm{snr}  &= \bar{\rho}\,V + M_\mathrm{ej}\,.
+\end{align}
+
 \section{Implementation Files}
 
 \begin{description}
-  \item[\texttt{src/srcterms/srcterms.hpp}] Class declaration; \texttt{sn\_pinj}
-    data member.
+  \item[\texttt{src/srcterms/srcterms.hpp}] Class declaration;
+    \texttt{sn\_pinj}, \texttt{sn\_subgrid\_recipe}, and related data members.
   \item[\texttt{src/srcterms/srcterms.cpp}] Constructor (parameter parsing) and
-    \texttt{SupernovaDriving()} (three-pass injection algorithm).
+    \texttt{SupernovaDriving()} (three-pass injection algorithm, including
+    MFQ15 and KO15 subgrid branches).
   \item[\texttt{inputs/hydro/sn\_drive\_box.athinput}] Example input file for a
     periodic box with stochastic SN driving.
+  \item[\texttt{inputs/supernova\_driving/}] Canonical input templates covering
+    adiabatic/cooling $\times$ thermal/momentum/subgrid combinations.
 \end{description}
 
 \end{document}
