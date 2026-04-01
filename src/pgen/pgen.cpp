@@ -82,6 +82,8 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm) :
     SphericalCollapse(pin, false);
   } else if (pgen_fun_name.compare("diffusion") == 0) {
     Diffusion(pin, false);
+  } else if (pgen_fun_name.compare("spectrum_modes") == 0) {
+    SpectrumModes(pin, false);
   // else, name not set on command line or input file, print warning and quit
   } else {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl

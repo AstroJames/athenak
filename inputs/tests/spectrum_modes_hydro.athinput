@@ -1,0 +1,55 @@
+# AthenaK input file for multi-mode power spectrum regression test
+
+<comment>
+problem   = multi-mode velocity spectrum test
+
+<job>
+basename  = SpecModes
+
+<mesh>
+nghost    = 2
+nx1       = 32
+x1min     = 0.0
+x1max     = 1.0
+ix1_bc    = periodic
+ox1_bc    = periodic
+
+nx2       = 32
+x2min     = 0.0
+x2max     = 1.0
+ix2_bc    = periodic
+ox2_bc    = periodic
+
+nx3       = 32
+x3min     = 0.0
+x3max     = 1.0
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1       = 32
+nx2       = 32
+nx3       = 32
+
+<time>
+evolution  = dynamic
+integrator = rk1
+cfl_number = 0.3
+nlim       = 1
+tlim       = 1.0
+ndiag      = 1
+
+<hydro>
+eos         = ideal
+reconstruct = plm
+rsolver     = llf
+gamma       = 1.66666666667
+
+<problem>
+pgen_name = spectrum_modes
+nmode     = 4
+
+<output1>
+file_type   = power_spectrum
+variable    = velocity
+dt          = 100.0
