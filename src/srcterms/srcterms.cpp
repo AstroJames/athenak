@@ -10,14 +10,24 @@
 
 #include "srcterms.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <fstream>
 #include <iostream>
+#include <limits>
 #include <string> // string
+#include <vector>
+
+#if MPI_PARALLEL_ENABLED
+#include <mpi.h>
+#endif
 
 #include "athena.hpp"
 #include "coordinates/cartesian_ks.hpp"
 #include "coordinates/cell_locations.hpp"
 #include "eos/eos.hpp"
 #include "geodesic-grid/geodesic_grid.hpp"
+#include "globals.hpp"
 #include "hydro/hydro.hpp"
 #include "ismcooling.hpp"
 #include "mesh/mesh.hpp"
@@ -33,7 +43,11 @@
 
 SourceTerms::SourceTerms(std::string block, MeshBlockPack *pp, ParameterInput *pin) :
   pmy_pack(pp),
-  shearing_box_r_phi(false) {
+  shearing_box_r_phi(false),
+  sn_rng_(0),
+  sn_event_count_(0),
+  sn_event_accum_(0.0),
+  sn_rinj_warned_(false) {
   // (1) (constant) gravitational acceleration
   const_accel = pin->GetOrAddBoolean(block, "const_accel", false);
   if (const_accel) {
@@ -65,7 +79,89 @@ SourceTerms::SourceTerms(std::string block, MeshBlockPack *pp, ParameterInput *p
     cpower_rel = pin->GetOrAddReal(block, "cpower_rel", 1.);
   }
 
-  // (5) shearing box
+  // (5) stochastic supernova driving
+  sn_driving = pin->GetOrAddBoolean(block, "sn_driving", false);
+  if (sn_driving) {
+    sn_rate = pin->GetReal(block, "sn_rate");
+    sn_seed = pin->GetOrAddInteger(block, "sn_seed", 12345);
+    sn_rng_.seed(static_cast<unsigned long long>(sn_seed));
+
+    if (pin->DoesParameterExist(block, "sn_energy")) {
+      sn_einj = pin->GetReal(block, "sn_energy");
+    } else {
+      Real sn_energy_cgs = pin->GetOrAddReal(block, "sn_energy_cgs", 1.0e51);
+      sn_einj = sn_energy_cgs * pmy_pack->punit->erg();
+    }
+
+    if (pin->DoesParameterExist(block, "sn_momentum")) {
+      sn_pinj = pin->GetReal(block, "sn_momentum");
+    } else if (pin->DoesParameterExist(block, "sn_momentum_cgs")) {
+      Real sn_momentum_cgs = pin->GetReal(block, "sn_momentum_cgs");
+      sn_pinj = sn_momentum_cgs /
+                (pmy_pack->punit->mass_cgs() * pmy_pack->punit->velocity_cgs());
+    } else {
+      sn_pinj = 0.0;  // no momentum injection by default
+    }
+
+    if (pin->DoesParameterExist(block, "sn_rinj")) {
+      sn_rinj = pin->GetReal(block, "sn_rinj");
+    } else {
+      Real sn_radius_pc = pin->GetOrAddReal(block, "sn_radius_pc", 8.0);
+      sn_rinj = sn_radius_pc * pmy_pack->punit->pc();
+    }
+
+    if (pin->DoesParameterExist(block, "sn_zmin")) {
+      sn_zmin = pin->GetReal(block, "sn_zmin");
+    } else if (pin->DoesParameterExist(block, "sn_zmin_pc")) {
+      sn_zmin = pin->GetReal(block, "sn_zmin_pc")*pmy_pack->punit->pc();
+    } else {
+      sn_zmin = pmy_pack->pmesh->mesh_size.x3min;
+    }
+
+    if (pin->DoesParameterExist(block, "sn_zmax")) {
+      sn_zmax = pin->GetReal(block, "sn_zmax");
+    } else if (pin->DoesParameterExist(block, "sn_zmax_pc")) {
+      sn_zmax = pin->GetReal(block, "sn_zmax_pc")*pmy_pack->punit->pc();
+    } else {
+      sn_zmax = pmy_pack->pmesh->mesh_size.x3max;
+    }
+
+    sn_zmin = std::max(sn_zmin, pmy_pack->pmesh->mesh_size.x3min);
+    sn_zmax = std::min(sn_zmax, pmy_pack->pmesh->mesh_size.x3max);
+    if (sn_zmax <= sn_zmin) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
+                << "SN z-band is invalid: require sn_zmax > sn_zmin after clipping."
+                << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+
+    sn_log_events = pin->GetOrAddBoolean(block, "sn_log_events", true);
+    std::string basename = pin->GetOrAddString("job", "basename", "AthenaK");
+    sn_log_file = pin->GetOrAddString(block, "sn_log_file",
+                                      basename + ".sn_events.dat");
+
+    // Subgrid SN remnant model (Martizzi, Faucher-Giguere & Quataert 2015)
+    sn_subgrid = pin->GetOrAddBoolean(block, "sn_subgrid", false);
+    if (sn_subgrid) {
+      sn_subgrid_type = pin->GetOrAddInteger(block, "sn_subgrid_type", 0);
+      sn_esn_cgs = pin->GetOrAddReal(block, "sn_esn_cgs", 1.0e51);
+      sn_mej_msun = pin->GetOrAddReal(block, "sn_mej_msun", 3.0);
+      sn_metallicity = pin->GetOrAddReal(block, "sn_metallicity", 1.0);
+      if (global_variable::my_rank == 0) {
+        std::cout << "### SN SUBGRID MODEL enabled (type="
+                  << sn_subgrid_type << ", E_SN=" << sn_esn_cgs
+                  << " erg, M_ej=" << sn_mej_msun << " Msun, Z="
+                  << sn_metallicity << " Zsun)\n";
+      }
+    } else {
+      sn_subgrid_type = 0;
+      sn_esn_cgs = 1.0e51;
+      sn_mej_msun = 3.0;
+      sn_metallicity = 1.0;
+    }
+  }
+
+  // (6) shearing box
   if (pin->DoesBlockExist("shearing_box")) {
     shearing_box = true;
     qshear = pin->GetReal("shearing_box","qshear");
@@ -191,6 +287,384 @@ void SourceTerms::RelCooling(const DvceArray5D<Real> &w0, const EOS_Data &eos_da
     u0(m,IM3,k,j,i) -= bdt*w0(m,IDN,k,j,i)*uz*pow((temp*cooling_rate), cooling_power);
   });
 
+  return;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn void SourceTerms::SupernovaDriving()
+//! \brief Add stochastic supernova thermal energy source terms in the energy equation.
+//! NOTE source terms must be computed using primitive (w0) and NOT conserved (u0) vars.
+
+void SourceTerms::SupernovaDriving(const DvceArray5D<Real> &w0, const EOS_Data &eos_data,
+                                   const Real bdt, DvceArray5D<Real> &u0) {
+  if (!eos_data.is_ideal) return;
+  if (bdt <= 0.0 || sn_rate <= 0.0 || sn_rinj <= 0.0) return;
+  if (!sn_subgrid && sn_einj <= 0.0 && sn_pinj <= 0.0) return;
+
+  auto &indcs = pmy_pack->pmesh->mb_indcs;
+  int is = indcs.is, ie = indcs.ie;
+  int js = indcs.js, je = indcs.je;
+  int ks = indcs.ks, ke = indcs.ke;
+  int nmb = pmy_pack->nmb_thispack;
+  int nmb1 = nmb - 1;
+  int nx1 = indcs.nx1, nx2 = indcs.nx2, nx3 = indcs.nx3;
+  const int nmkji = nmb*nx3*nx2*nx1;
+  const int nkji = nx3*nx2*nx1;
+  const int nji  = nx2*nx1;
+
+  auto &size = pmy_pack->pmb->mb_size;
+  auto &msz = pmy_pack->pmesh->mesh_size;
+
+  Real x1min = msz.x1min, x1max = msz.x1max;
+  Real x2min = msz.x2min, x2max = msz.x2max;
+  Real x3min = msz.x3min, x3max = msz.x3max;
+
+  Real lx1 = x1max - x1min;
+  Real lx2 = x2max - x2min;
+  Real lx3 = x3max - x3min;
+
+  bool x1_periodic = (pmy_pack->pmesh->mesh_bcs[BoundaryFace::inner_x1] ==
+                      BoundaryFlag::periodic ||
+                      pmy_pack->pmesh->mesh_bcs[BoundaryFace::inner_x1] ==
+                      BoundaryFlag::shear_periodic);
+  bool x2_periodic = (pmy_pack->pmesh->mesh_bcs[BoundaryFace::inner_x2] ==
+                      BoundaryFlag::periodic);
+  bool x3_periodic = (pmy_pack->pmesh->mesh_bcs[BoundaryFace::inner_x3] ==
+                      BoundaryFlag::periodic);
+
+  // Enforce a minimum injection radius of two cell widths on the active mesh.
+  Real min_dx_local = std::numeric_limits<Real>::max();
+  for (int m = 0; m < nmb; ++m) {
+    min_dx_local = std::min(min_dx_local, size.h_view(m).dx1);
+    if (nx2 > 1) min_dx_local = std::min(min_dx_local, size.h_view(m).dx2);
+    if (nx3 > 1) min_dx_local = std::min(min_dx_local, size.h_view(m).dx3);
+  }
+
+  Real min_dx = min_dx_local;
+#if MPI_PARALLEL_ENABLED
+  MPI_Allreduce(MPI_IN_PLACE, &min_dx, 1, MPI_ATHENA_REAL, MPI_MIN, MPI_COMM_WORLD);
+#endif
+
+  Real sn_rinj_eff = std::max(sn_rinj, 2.0*min_dx);
+  if (!sn_rinj_warned_ && sn_rinj_eff > sn_rinj && global_variable::my_rank == 0) {
+    std::cout << "### WARNING in " << __FILE__ << " at line " << __LINE__
+              << ": sn_rinj=" << sn_rinj << " is under-resolved on this mesh; using "
+              << "minimum resolved radius sn_rinj=2*dx_min=" << sn_rinj_eff << "\n";
+    sn_rinj_warned_ = true;
+  }
+
+  int nevents = 0;
+  if (global_variable::my_rank == 0) {
+    sn_event_accum_ += sn_rate*bdt;
+    nevents = static_cast<int>(sn_event_accum_);
+    sn_event_accum_ -= static_cast<Real>(nevents);
+  }
+
+#if MPI_PARALLEL_ENABLED
+  MPI_Bcast(&nevents, 1, MPI_INT, 0, MPI_COMM_WORLD);
+#endif
+
+  if (nevents <= 0) return;
+
+  std::vector<Real> event_xyz(3*nevents, 0.0);
+
+  if (global_variable::my_rank == 0) {
+    std::uniform_real_distribution<Real> xdist(x1min, x1max);
+    std::uniform_real_distribution<Real> ydist(x2min, x2max);
+    Real zband_min = std::max(sn_zmin, x3min);
+    Real zband_max = std::min(sn_zmax, x3max);
+    std::uniform_real_distribution<Real> zdist(zband_min, zband_max);
+
+    for (int n = 0; n < nevents; ++n) {
+      Real xsn = xdist(sn_rng_);
+      Real ysn = (nx2 > 1) ? ydist(sn_rng_) : 0.5*(x2min + x2max);
+      Real zsn = 0.5*(zband_min + zband_max);
+
+      if (nx3 > 1) {
+        zsn = zdist(sn_rng_);
+      }
+
+      event_xyz[3*n + 0] = xsn;
+      event_xyz[3*n + 1] = ysn;
+      event_xyz[3*n + 2] = zsn;
+    }
+  }
+
+#if MPI_PARALLEL_ENABLED
+  MPI_Bcast(event_xyz.data(), 3*nevents, MPI_ATHENA_REAL, 0, MPI_COMM_WORLD);
+#endif
+
+  std::vector<Real> event_einj_vals(nevents);
+  std::vector<Real> event_pinj_vals(nevents);
+
+  Real r2inj = sn_rinj_eff*sn_rinj_eff;
+
+  for (int n = 0; n < nevents; ++n) {
+    Real xsn = event_xyz[3*n + 0];
+    Real ysn = event_xyz[3*n + 1];
+    Real zsn = event_xyz[3*n + 2];
+
+    Real vol_local = 0.0;
+    Kokkos::parallel_reduce("sn_volume", Kokkos::RangePolicy<>(DevExeSpace(), 0, nmkji),
+    KOKKOS_LAMBDA(const int &idx, Real &sum_vol) {
+      int m = (idx)/nkji;
+      int k = (idx - m*nkji)/nji;
+      int j = (idx - m*nkji - k*nji)/nx1;
+      int i = (idx - m*nkji - k*nji - j*nx1) + is;
+      k += ks;
+      j += js;
+
+      Real &x1mbmin = size.d_view(m).x1min;
+      Real &x1mbmax = size.d_view(m).x1max;
+      Real x1v = CellCenterX(i - is, nx1, x1mbmin, x1mbmax);
+
+      Real &x2mbmin = size.d_view(m).x2min;
+      Real &x2mbmax = size.d_view(m).x2max;
+      Real x2v = CellCenterX(j - js, nx2, x2mbmin, x2mbmax);
+
+      Real &x3mbmin = size.d_view(m).x3min;
+      Real &x3mbmax = size.d_view(m).x3max;
+      Real x3v = CellCenterX(k - ks, nx3, x3mbmin, x3mbmax);
+
+      Real dxx = x1v - xsn;
+      if (x1_periodic) {
+        if (dxx > 0.5*lx1) dxx -= lx1;
+        if (dxx < -0.5*lx1) dxx += lx1;
+      }
+
+      Real dyy = x2v - ysn;
+      if (x2_periodic) {
+        if (dyy > 0.5*lx2) dyy -= lx2;
+        if (dyy < -0.5*lx2) dyy += lx2;
+      }
+
+      Real dzz = x3v - zsn;
+      if (x3_periodic) {
+        if (dzz > 0.5*lx3) dzz -= lx3;
+        if (dzz < -0.5*lx3) dzz += lx3;
+      }
+
+      Real r2 = dxx*dxx + dyy*dyy + dzz*dzz;
+      if (r2 < r2inj) {
+        sum_vol += size.d_view(m).dx1*size.d_view(m).dx2*size.d_view(m).dx3;
+      }
+    }, Kokkos::Sum<Real>(vol_local));
+
+    Real vol_global = vol_local;
+#if MPI_PARALLEL_ENABLED
+    MPI_Allreduce(MPI_IN_PLACE, &vol_global, 1, MPI_ATHENA_REAL, MPI_SUM,
+                  MPI_COMM_WORLD);
+#endif
+
+    // Density-averaging pass: compute volume-weighted mean density in sphere
+    Real rho_avg = 0.0;
+    Real vri = 0.0;
+    if ((sn_subgrid || sn_pinj > 0.0) && vol_global > 0.0) {
+      Real rho_vol_local = 0.0;
+      Kokkos::parallel_reduce("sn_density",
+      Kokkos::RangePolicy<>(DevExeSpace(), 0, nmkji),
+      KOKKOS_LAMBDA(const int &idx, Real &sum_rho) {
+        int m = (idx)/nkji;
+        int k = (idx - m*nkji)/nji;
+        int j = (idx - m*nkji - k*nji)/nx1;
+        int i = (idx - m*nkji - k*nji - j*nx1) + is;
+        k += ks;
+        j += js;
+
+        Real &x1mbmin = size.d_view(m).x1min;
+        Real &x1mbmax = size.d_view(m).x1max;
+        Real x1v = CellCenterX(i - is, nx1, x1mbmin, x1mbmax);
+
+        Real &x2mbmin = size.d_view(m).x2min;
+        Real &x2mbmax = size.d_view(m).x2max;
+        Real x2v = CellCenterX(j - js, nx2, x2mbmin, x2mbmax);
+
+        Real &x3mbmin = size.d_view(m).x3min;
+        Real &x3mbmax = size.d_view(m).x3max;
+        Real x3v = CellCenterX(k - ks, nx3, x3mbmin, x3mbmax);
+
+        Real dxx = x1v - xsn;
+        if (x1_periodic) {
+          if (dxx > 0.5*lx1) dxx -= lx1;
+          if (dxx < -0.5*lx1) dxx += lx1;
+        }
+
+        Real dyy = x2v - ysn;
+        if (x2_periodic) {
+          if (dyy > 0.5*lx2) dyy -= lx2;
+          if (dyy < -0.5*lx2) dyy += lx2;
+        }
+
+        Real dzz = x3v - zsn;
+        if (x3_periodic) {
+          if (dzz > 0.5*lx3) dzz -= lx3;
+          if (dzz < -0.5*lx3) dzz += lx3;
+        }
+
+        Real r2 = dxx*dxx + dyy*dyy + dzz*dzz;
+        if (r2 < r2inj) {
+          sum_rho += w0(m,IDN,k,j,i) *
+                     size.d_view(m).dx1*size.d_view(m).dx2*size.d_view(m).dx3;
+        }
+      }, Kokkos::Sum<Real>(rho_vol_local));
+
+      Real rho_vol_global = rho_vol_local;
+#if MPI_PARALLEL_ENABLED
+      MPI_Allreduce(MPI_IN_PLACE, &rho_vol_global, 1, MPI_ATHENA_REAL, MPI_SUM,
+                    MPI_COMM_WORLD);
+#endif
+      rho_avg = rho_vol_global / vol_global;
+    }
+
+    // Determine per-event injection values
+    Real event_einj = sn_einj;
+    Real event_pinj = sn_pinj;
+
+    if (sn_subgrid && vol_global > 0.0 && rho_avg > 0.0) {
+      // Convert volume-averaged density to n_H [cm^-3]
+      Real rho_cgs = rho_avg * pmy_pack->punit->density_cgs();
+      Real n_H = rho_cgs / (pmy_pack->punit->mu() *
+                             units::Units::atomic_mass_unit_cgs);
+
+      // Metallicity with floor at 0.01 Z_sun
+      Real Z = std::max(sn_metallicity, 0.01);
+
+      // Injection radius in pc
+      Real R_pc = sn_rinj_eff * pmy_pack->punit->length_cgs() /
+                  units::Units::pc_cgs;
+
+      // Fitting coefficients: Martizzi, Faucher-Giguere & Quataert (2015)
+      Real n100 = n_H / 100.0;
+      Real alpha, Rc, Rr, R0, Rb;
+      if (sn_subgrid_type == 1) {
+        // Inhomogeneous medium (Mach = 30), Eq. 12
+        alpha = -11.0  * std::pow(n100, 0.070) * std::pow(Z, 0.114);
+        Rc    =   6.3  * std::pow(n100, -0.42) * std::pow(Z, -0.050);
+        Rr    =   9.2  * std::pow(n100, -0.44) * std::pow(Z, -0.067);
+        R0    =   2.4  * std::pow(n100, -0.35) * std::pow(Z, 0.021);
+        Rb    =   8.0  * std::pow(n100, -0.46) * std::pow(Z, -0.058);
+      } else {
+        // Homogeneous medium (default), Eq. 11
+        alpha = -7.8  * std::pow(n100, 0.050) * std::pow(Z, 0.030);
+        Rc    =  3.0  * std::pow(n100, -0.42) * std::pow(Z, -0.082);
+        Rr    =  5.5  * std::pow(n100, -0.40) * std::pow(Z, -0.074);
+        R0    =  0.97 * std::pow(n100, -0.33) * std::pow(Z, 0.046);
+        Rb    =  4.0  * std::pow(n100, -0.43) * std::pow(Z, -0.077);
+      }
+
+      // Thermal energy E_th(R): Eq. 9
+      Real Eth0_cgs = 0.717 * sn_esn_cgs;  // Sedov-Taylor thermal fraction
+      Real Eth_cgs;
+      if (R_pc <= Rc) {
+        Eth_cgs = Eth0_cgs;                                  // Sedov-Taylor regime
+      } else if (R_pc <= Rr) {
+        Eth_cgs = Eth0_cgs * std::pow(R_pc / Rc, alpha);     // cooling regime
+      } else {
+        Eth_cgs = Eth0_cgs * std::pow(Rr / Rc, alpha);       // floor
+      }
+
+      // Radial momentum P_rad(R): Eq. 10
+      // P_0 = sqrt(2 * M_ej * E_SN)
+      Real Mej_cgs = sn_mej_msun * units::Units::msun_cgs;
+      Real P0_cgs = std::sqrt(2.0 * Mej_cgs * sn_esn_cgs);
+      Real Prad_cgs;
+      if (R_pc <= Rb) {
+        Prad_cgs = P0_cgs * std::pow(R_pc / R0, 1.5);       // growing phase
+      } else {
+        Prad_cgs = P0_cgs * std::pow(Rb / R0, 1.5);         // terminal momentum
+      }
+
+      // Convert to code units
+      event_einj = Eth_cgs * pmy_pack->punit->erg();
+      event_pinj = Prad_cgs /
+                   (pmy_pack->punit->mass_cgs() * pmy_pack->punit->velocity_cgs());
+    }
+
+    // Compute radial velocity from momentum
+    if (event_pinj > 0.0 && rho_avg > 0.0 && vol_global > 0.0) {
+      vri = event_pinj / (rho_avg * vol_global);
+    }
+
+    event_einj_vals[n] = event_einj;
+    event_pinj_vals[n] = event_pinj;
+
+    // Injection pass: thermal energy and radial momentum
+    if (vol_global > 0.0) {
+      Real de = event_einj/vol_global;
+      Real rho_avg_k = rho_avg;
+      Real vri_k = vri;
+      par_for("sn_inject", DevExeSpace(), 0, nmb1, ks, ke, js, je, is, ie,
+      KOKKOS_LAMBDA(const int m, const int k, const int j, const int i) {
+        Real &x1mbmin = size.d_view(m).x1min;
+        Real &x1mbmax = size.d_view(m).x1max;
+        Real x1v = CellCenterX(i - is, nx1, x1mbmin, x1mbmax);
+
+        Real &x2mbmin = size.d_view(m).x2min;
+        Real &x2mbmax = size.d_view(m).x2max;
+        Real x2v = CellCenterX(j - js, nx2, x2mbmin, x2mbmax);
+
+        Real &x3mbmin = size.d_view(m).x3min;
+        Real &x3mbmax = size.d_view(m).x3max;
+        Real x3v = CellCenterX(k - ks, nx3, x3mbmin, x3mbmax);
+
+        Real dxx = x1v - xsn;
+        if (x1_periodic) {
+          if (dxx > 0.5*lx1) dxx -= lx1;
+          if (dxx < -0.5*lx1) dxx += lx1;
+        }
+
+        Real dyy = x2v - ysn;
+        if (x2_periodic) {
+          if (dyy > 0.5*lx2) dyy -= lx2;
+          if (dyy < -0.5*lx2) dyy += lx2;
+        }
+
+        Real dzz = x3v - zsn;
+        if (x3_periodic) {
+          if (dzz > 0.5*lx3) dzz -= lx3;
+          if (dzz < -0.5*lx3) dzz += lx3;
+        }
+
+        Real r2 = dxx*dxx + dyy*dyy + dzz*dzz;
+        if (r2 < r2inj) {
+          u0(m, IEN, k, j, i) += de;
+          if (vri_k > 0.0 && r2 > 0.0) {
+            Real r = sqrt(r2);
+            u0(m, IM1, k, j, i) += rho_avg_k * vri_k * dxx / r;
+            u0(m, IM2, k, j, i) += rho_avg_k * vri_k * dyy / r;
+            u0(m, IM3, k, j, i) += rho_avg_k * vri_k * dzz / r;
+            u0(m, IEN, k, j, i) += 0.5 * rho_avg_k * vri_k * vri_k;
+          }
+        }
+      });
+    }
+  }
+
+  if (sn_log_events && global_variable::my_rank == 0) {
+    bool write_header = false;
+    if (sn_event_count_ == 0) {
+      std::ifstream ifs(sn_log_file);
+      write_header = !ifs.good();
+    }
+
+    std::ofstream ofs(sn_log_file, std::ios::out | std::ios::app);
+    if (ofs.is_open()) {
+      if (write_header) {
+        ofs << "# event_id time x y z einj pinj\n";
+      }
+      for (int n = 0; n < nevents; ++n) {
+        ofs << (sn_event_count_ + n + 1) << " " << pmy_pack->pmesh->time << " "
+            << event_xyz[3*n + 0] << " " << event_xyz[3*n + 1] << " "
+            << event_xyz[3*n + 2] << " " << event_einj_vals[n] << " "
+            << event_pinj_vals[n] << "\n";
+      }
+    } else {
+      std::cout << "### WARNING in " << __FILE__ << " at line " << __LINE__
+                << ": could not open SN log file '" << sn_log_file << "'\n";
+    }
+  }
+
+  sn_event_count_ += nevents;
   return;
 }
 
