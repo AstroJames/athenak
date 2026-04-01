@@ -630,10 +630,11 @@ void SourceTerms::SupernovaDriving(const DvceArray5D<Real> &w0, const EOS_Data &
           u0(m, IEN, k, j, i) += de;
           if (vri_k > 0.0 && r2 > 0.0) {
             Real r = sqrt(r2);
-            u0(m, IM1, k, j, i) += rho_avg_k * vri_k * dxx / r;
-            u0(m, IM2, k, j, i) += rho_avg_k * vri_k * dyy / r;
-            u0(m, IM3, k, j, i) += rho_avg_k * vri_k * dzz / r;
-            u0(m, IEN, k, j, i) += 0.5 * rho_avg_k * vri_k * vri_k;
+            Real dp = rho_avg_k * vri_k;
+            u0(m, IM1, k, j, i) += dp * dxx / r;
+            u0(m, IM2, k, j, i) += dp * dyy / r;
+            u0(m, IM3, k, j, i) += dp * dzz / r;
+            u0(m, IEN, k, j, i) += 0.5 * dp * dp / w0(m, IDN, k, j, i);
           }
         }
       });
