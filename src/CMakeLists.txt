@@ -123,6 +123,7 @@ add_executable(
         pgen/tests/rad_linear_wave.cpp
         pgen/tests/z4c_linear_wave.cpp
         pgen/tests/spectrum_modes.cpp
+        pgen/spectral_b_ic.cpp
 
         radiation/radiation.cpp
         radiation/radiation_fluxes.cpp
@@ -148,6 +149,7 @@ add_executable(
 
         units/units.cpp
         utils/change_rundir.cpp
+        utils/spectral_ic_gen.cpp
         utils/show_config.cpp
         utils/lagrange_interpolator.cpp
         utils/tr_table.cpp

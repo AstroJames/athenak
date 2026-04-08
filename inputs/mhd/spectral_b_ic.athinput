@@ -1,0 +1,78 @@
+# AthenaK input file for spectral magnetic-field initial conditions
+# Initialises a turbulent B field with a Kolmogorov-like power spectrum.
+# Verify the spectrum with:  output1 (power_spectrum output at t=0).
+
+<comment>
+problem   = spectral magnetic-field ICs
+
+<job>
+basename  = spectral_b    # basename for output files
+
+<mesh>
+nghost    = 2             # number of ghost cells
+nx1       = 64            # cells in X1
+x1min     = 0.0
+x1max     = 1.0
+ix1_bc    = periodic
+ox1_bc    = periodic
+
+nx2       = 64            # cells in X2
+x2min     = 0.0
+x2max     = 1.0
+ix2_bc    = periodic
+ox2_bc    = periodic
+
+nx3       = 64            # cells in X3
+x3min     = 0.0
+x3max     = 1.0
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1       = 32
+nx2       = 32
+nx3       = 32
+
+<time>
+evolution  = dynamic
+integrator = rk2
+cfl_number = 0.3
+nlim       = 0            # run 0 steps: just check ICs
+tlim       = 1.0
+ndiag      = 1
+
+<mhd>
+eos         = ideal
+reconstruct = plm
+rsolver     = hlld
+gamma       = 1.6666666667
+
+<problem>
+pgen_name   = spectral_b_ic
+rho0        = 1.0         # background density
+pres0       = 0.6         # background pressure (sets plasma beta via B)
+vx0         = 0.0
+vy0         = 0.0
+vz0         = 0.0
+
+<spectral_ic>
+nlow          = 2         # minimum mode index  (k_phys = n * 2π/L)
+nhigh         = 4         # maximum mode index
+spectrum      = power_law # band | parabolic | power_law
+spectral_index = 1.6667   # E_B(k) ∝ k^{-spectral_index}  (Kolmogorov ≈ 5/3)
+rms_b         = 1.0       # target RMS |B| after normalisation
+b_mean_x      = 0.0       # optional uniform background B_x
+b_mean_y      = 0.0       # optional uniform background B_y
+b_mean_z      = 0.0       # optional uniform background B_z
+iseed         = -1234     # RNG seed (negative → initialise)
+
+<output1>
+file_type   = power_spectrum   # measure B-field power spectrum at t=0
+variable    = magnetic_field
+fft_backend = legacy           # legacy (KokkosFFT) or heffte
+dcycle      = 1                # write every cycle (fires at init + every step)
+
+<output2>
+file_type   = vtk
+variable    = mhd_w_bcc
+dt          = 1.0
