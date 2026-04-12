@@ -1,5 +1,7 @@
 # build directories
 build/
+kokkos
+kokkos-*
 
 # Athena output files
 *.tab
