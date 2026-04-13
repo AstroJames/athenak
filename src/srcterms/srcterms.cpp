@@ -93,6 +93,16 @@ SourceTerms::SourceTerms(std::string block, MeshBlockPack *pp, ParameterInput *p
       sn_einj = sn_energy_cgs * pmy_pack->punit->erg();
     }
 
+    if (pin->DoesParameterExist(block, "sn_momentum")) {
+      sn_pinj = pin->GetReal(block, "sn_momentum");
+    } else if (pin->DoesParameterExist(block, "sn_momentum_cgs")) {
+      Real sn_momentum_cgs = pin->GetReal(block, "sn_momentum_cgs");
+      sn_pinj = sn_momentum_cgs /
+                (pmy_pack->punit->mass_cgs() * pmy_pack->punit->velocity_cgs());
+    } else {
+      sn_pinj = 0.0;  // no momentum injection by default
+    }
+
     if (pin->DoesParameterExist(block, "sn_rinj")) {
       sn_rinj = pin->GetReal(block, "sn_rinj");
     } else {
@@ -129,6 +139,41 @@ SourceTerms::SourceTerms(std::string block, MeshBlockPack *pp, ParameterInput *p
     std::string basename = pin->GetOrAddString("job", "basename", "AthenaK");
     sn_log_file = pin->GetOrAddString(block, "sn_log_file",
                                       basename + ".sn_events.dat");
+
+    // Subgrid SN remnant model
+    sn_subgrid = pin->GetOrAddBoolean(block, "sn_subgrid", false);
+    if (sn_subgrid) {
+      sn_subgrid_recipe = pin->GetOrAddString(block, "sn_subgrid_recipe", "MFQ15");
+      sn_esn_cgs = pin->GetOrAddReal(block, "sn_esn_cgs", 1.0e51);
+      sn_mej_msun = pin->GetOrAddReal(block, "sn_mej_msun", 3.0);
+      if (sn_subgrid_recipe == "MFQ15") {
+        sn_subgrid_type = pin->GetOrAddInteger(block, "sn_subgrid_type", 0);
+        sn_metallicity = pin->GetOrAddReal(block, "sn_metallicity", 1.0);
+        if (global_variable::my_rank == 0) {
+          std::cout << "### SN SUBGRID MODEL: MFQ15 (type=" << sn_subgrid_type
+                    << ", E_SN=" << sn_esn_cgs << " erg, M_ej=" << sn_mej_msun
+                    << " Msun, Z=" << sn_metallicity << " Zsun)\n";
+        }
+      } else if (sn_subgrid_recipe == "KO15") {
+        sn_subgrid_type = 0;
+        sn_metallicity = 1.0;
+        if (global_variable::my_rank == 0) {
+          std::cout << "### SN SUBGRID MODEL: KO15 (E_SN=" << sn_esn_cgs
+                    << " erg, M_ej=" << sn_mej_msun << " Msun)\n";
+        }
+      } else {
+        std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                  << std::endl << "Unknown sn_subgrid_recipe '" << sn_subgrid_recipe
+                  << "'. Valid options: MFQ15, KO15" << std::endl;
+        std::exit(EXIT_FAILURE);
+      }
+    } else {
+      sn_subgrid_recipe = "MFQ15";
+      sn_subgrid_type = 0;
+      sn_esn_cgs = 1.0e51;
+      sn_mej_msun = 3.0;
+      sn_metallicity = 1.0;
+    }
   }
 
   // (6) shearing box
@@ -268,7 +313,8 @@ void SourceTerms::RelCooling(const DvceArray5D<Real> &w0, const EOS_Data &eos_da
 void SourceTerms::SupernovaDriving(const DvceArray5D<Real> &w0, const EOS_Data &eos_data,
                                    const Real bdt, DvceArray5D<Real> &u0) {
   if (!eos_data.is_ideal) return;
-  if (bdt <= 0.0 || sn_rate <= 0.0 || sn_rinj <= 0.0 || sn_einj <= 0.0) return;
+  if (bdt <= 0.0 || sn_rate <= 0.0 || sn_rinj <= 0.0) return;
+  if (!sn_subgrid && sn_einj <= 0.0 && sn_pinj <= 0.0) return;
 
   auto &indcs = pmy_pack->pmesh->mb_indcs;
   int is = indcs.is, ie = indcs.ie;
@@ -363,6 +409,9 @@ void SourceTerms::SupernovaDriving(const DvceArray5D<Real> &w0, const EOS_Data &
   MPI_Bcast(event_xyz.data(), 3*nevents, MPI_ATHENA_REAL, 0, MPI_COMM_WORLD);
 #endif
 
+  std::vector<Real> event_einj_vals(nevents);
+  std::vector<Real> event_pinj_vals(nevents);
+
   Real r2inj = sn_rinj_eff*sn_rinj_eff;
 
   for (int n = 0; n < nevents; ++n) {
@@ -422,8 +471,179 @@ void SourceTerms::SupernovaDriving(const DvceArray5D<Real> &w0, const EOS_Data &
                   MPI_COMM_WORLD);
 #endif
 
+    // Density-averaging pass: compute volume-weighted mean density in sphere
+    Real rho_avg = 0.0;
+    Real vri = 0.0;
+    if ((sn_subgrid || sn_pinj > 0.0) && vol_global > 0.0) {
+      Real rho_vol_local = 0.0;
+      Kokkos::parallel_reduce("sn_density",
+      Kokkos::RangePolicy<>(DevExeSpace(), 0, nmkji),
+      KOKKOS_LAMBDA(const int &idx, Real &sum_rho) {
+        int m = (idx)/nkji;
+        int k = (idx - m*nkji)/nji;
+        int j = (idx - m*nkji - k*nji)/nx1;
+        int i = (idx - m*nkji - k*nji - j*nx1) + is;
+        k += ks;
+        j += js;
+
+        Real &x1mbmin = size.d_view(m).x1min;
+        Real &x1mbmax = size.d_view(m).x1max;
+        Real x1v = CellCenterX(i - is, nx1, x1mbmin, x1mbmax);
+
+        Real &x2mbmin = size.d_view(m).x2min;
+        Real &x2mbmax = size.d_view(m).x2max;
+        Real x2v = CellCenterX(j - js, nx2, x2mbmin, x2mbmax);
+
+        Real &x3mbmin = size.d_view(m).x3min;
+        Real &x3mbmax = size.d_view(m).x3max;
+        Real x3v = CellCenterX(k - ks, nx3, x3mbmin, x3mbmax);
+
+        Real dxx = x1v - xsn;
+        if (x1_periodic) {
+          if (dxx > 0.5*lx1) dxx -= lx1;
+          if (dxx < -0.5*lx1) dxx += lx1;
+        }
+
+        Real dyy = x2v - ysn;
+        if (x2_periodic) {
+          if (dyy > 0.5*lx2) dyy -= lx2;
+          if (dyy < -0.5*lx2) dyy += lx2;
+        }
+
+        Real dzz = x3v - zsn;
+        if (x3_periodic) {
+          if (dzz > 0.5*lx3) dzz -= lx3;
+          if (dzz < -0.5*lx3) dzz += lx3;
+        }
+
+        Real r2 = dxx*dxx + dyy*dyy + dzz*dzz;
+        if (r2 < r2inj) {
+          sum_rho += w0(m,IDN,k,j,i) *
+                     size.d_view(m).dx1*size.d_view(m).dx2*size.d_view(m).dx3;
+        }
+      }, Kokkos::Sum<Real>(rho_vol_local));
+
+      Real rho_vol_global = rho_vol_local;
+#if MPI_PARALLEL_ENABLED
+      MPI_Allreduce(MPI_IN_PLACE, &rho_vol_global, 1, MPI_ATHENA_REAL, MPI_SUM,
+                    MPI_COMM_WORLD);
+#endif
+      rho_avg = rho_vol_global / vol_global;
+    }
+
+    // Determine per-event injection values
+    Real event_einj = sn_einj;
+    Real event_pinj = sn_pinj;
+
+    if (sn_subgrid && vol_global > 0.0 && rho_avg > 0.0) {
+      // Convert volume-averaged density to n_H [cm^-3]
+      Real rho_cgs = rho_avg * pmy_pack->punit->density_cgs();
+      Real n_H = rho_cgs / (pmy_pack->punit->mu() *
+                             units::Units::atomic_mass_unit_cgs);
+
+      Real Eth_cgs, Prad_cgs;
+
+      if (sn_subgrid_recipe == "MFQ15") {
+        // Martizzi, Faucher-Giguere & Quataert (2015) resolution-dependent model
+
+        // Metallicity with floor at 0.01 Z_sun
+        Real Z = std::max(sn_metallicity, 0.01);
+
+        // Injection radius in pc
+        Real R_pc = sn_rinj_eff * pmy_pack->punit->length_cgs() /
+                    units::Units::pc_cgs;
+
+        // Fitting coefficients: Eqs. 11-12
+        Real n100 = n_H / 100.0;
+        Real alpha, Rc, Rr, R0, Rb;
+        if (sn_subgrid_type == 1) {
+          // Inhomogeneous medium (Mach = 30), Eq. 12
+          alpha = -11.0  * std::pow(n100, 0.070) * std::pow(Z, 0.114);
+          Rc    =   6.3  * std::pow(n100, -0.42) * std::pow(Z, -0.050);
+          Rr    =   9.2  * std::pow(n100, -0.44) * std::pow(Z, -0.067);
+          R0    =   2.4  * std::pow(n100, -0.35) * std::pow(Z, 0.021);
+          Rb    =   8.0  * std::pow(n100, -0.46) * std::pow(Z, -0.058);
+        } else {
+          // Homogeneous medium (default), Eq. 11
+          alpha = -7.8  * std::pow(n100, 0.050) * std::pow(Z, 0.030);
+          Rc    =  3.0  * std::pow(n100, -0.42) * std::pow(Z, -0.082);
+          Rr    =  5.5  * std::pow(n100, -0.40) * std::pow(Z, -0.074);
+          R0    =  0.97 * std::pow(n100, -0.33) * std::pow(Z, 0.046);
+          Rb    =  4.0  * std::pow(n100, -0.43) * std::pow(Z, -0.077);
+        }
+
+        // Thermal energy E_th(R): Eq. 9
+        Real Eth0_cgs = 0.717 * sn_esn_cgs;  // Sedov-Taylor thermal fraction
+        if (R_pc <= Rc) {
+          Eth_cgs = Eth0_cgs;                                  // Sedov-Taylor regime
+        } else if (R_pc <= Rr) {
+          Eth_cgs = Eth0_cgs * std::pow(R_pc / Rc, alpha);     // cooling regime
+        } else {
+          Eth_cgs = Eth0_cgs * std::pow(Rr / Rc, alpha);       // floor
+        }
+
+        // Radial momentum P_rad(R): Eq. 10
+        Real Mej_cgs = sn_mej_msun * units::Units::msun_cgs;
+        Real P0_cgs = std::sqrt(2.0 * Mej_cgs * sn_esn_cgs);
+        if (R_pc <= Rb) {
+          Prad_cgs = P0_cgs * std::pow(R_pc / R0, 1.5);       // growing phase
+        } else {
+          Prad_cgs = P0_cgs * std::pow(Rb / R0, 1.5);         // terminal momentum
+        }
+
+      } else {  // KO15
+        // Kim & Ostriker (2015) three-regime prescription
+
+        // Total mass in kernel (gas + ejecta) [g]
+        Real Mej_cgs = sn_mej_msun * units::Units::msun_cgs;
+        Real Msnr_cgs = rho_avg * vol_global * pmy_pack->punit->mass_cgs() + Mej_cgs;
+
+        // Shell-formation mass: Kim & Ostriker (2015) Eq. 7
+        Real Msf_cgs = 1679.0 * std::pow(n_H, -0.26) * units::Units::msun_cgs;
+
+        // Regime ratio
+        Real R_M = Msnr_cgs / Msf_cgs;
+
+        // Terminal momentum: Kim & Ostriker (2015) Eq. 8 [g cm/s]
+        Real Pterm_cgs = 2.8e5 * std::pow(n_H, -0.17) *
+                         units::Units::msun_cgs * 1.0e5;  // M_sun km/s -> g cm/s
+
+        static constexpr Real eps_K = 0.28;  // kinetic fraction in ST phase
+
+        if (R_M > 1.0) {
+          // MC (momentum-conserving) regime: remnant has reached snowplow phase
+          Prad_cgs = Pterm_cgs;
+          Eth_cgs  = std::max(0.0, sn_esn_cgs - Pterm_cgs*Pterm_cgs / (2.0*Msnr_cgs));
+        } else if (R_M > 0.027) {
+          // ST (Sedov-Taylor) regime: partially resolved
+          Prad_cgs = std::sqrt(2.0 * Mej_cgs * eps_K * sn_esn_cgs);
+          Eth_cgs  = (1.0 - eps_K) * sn_esn_cgs;
+        } else {
+          // EJ (ejecta) regime: free expansion resolved, inject only thermal energy
+          Prad_cgs = 0.0;
+          Eth_cgs  = sn_esn_cgs;
+        }
+      }
+
+      // Convert to code units
+      event_einj = Eth_cgs * pmy_pack->punit->erg();
+      event_pinj = Prad_cgs /
+                   (pmy_pack->punit->mass_cgs() * pmy_pack->punit->velocity_cgs());
+    }
+
+    // Compute radial velocity from momentum
+    if (event_pinj > 0.0 && rho_avg > 0.0 && vol_global > 0.0) {
+      vri = event_pinj / (rho_avg * vol_global);
+    }
+
+    event_einj_vals[n] = event_einj;
+    event_pinj_vals[n] = event_pinj;
+
+    // Injection pass: thermal energy and radial momentum
     if (vol_global > 0.0) {
-      Real de = sn_einj/vol_global;
+      Real de = event_einj/vol_global;
+      Real rho_avg_k = rho_avg;
+      Real vri_k = vri;
       par_for("sn_inject", DevExeSpace(), 0, nmb1, ks, ke, js, je, is, ie,
       KOKKOS_LAMBDA(const int m, const int k, const int j, const int i) {
         Real &x1mbmin = size.d_view(m).x1min;
@@ -459,6 +679,14 @@ void SourceTerms::SupernovaDriving(const DvceArray5D<Real> &w0, const EOS_Data &
         Real r2 = dxx*dxx + dyy*dyy + dzz*dzz;
         if (r2 < r2inj) {
           u0(m, IEN, k, j, i) += de;
+          if (vri_k > 0.0 && r2 > 0.0) {
+            Real r = sqrt(r2);
+            Real dp = rho_avg_k * vri_k;
+            u0(m, IM1, k, j, i) += dp * dxx / r;
+            u0(m, IM2, k, j, i) += dp * dyy / r;
+            u0(m, IM3, k, j, i) += dp * dzz / r;
+            u0(m, IEN, k, j, i) += 0.5 * dp * dp / w0(m, IDN, k, j, i);
+          }
         }
       });
     }
@@ -474,12 +702,13 @@ void SourceTerms::SupernovaDriving(const DvceArray5D<Real> &w0, const EOS_Data &
     std::ofstream ofs(sn_log_file, std::ios::out | std::ios::app);
     if (ofs.is_open()) {
       if (write_header) {
-        ofs << "# event_id time x y z\n";
+        ofs << "# event_id time x y z einj pinj\n";
       }
       for (int n = 0; n < nevents; ++n) {
         ofs << (sn_event_count_ + n + 1) << " " << pmy_pack->pmesh->time << " "
             << event_xyz[3*n + 0] << " " << event_xyz[3*n + 1] << " "
-            << event_xyz[3*n + 2] << "\n";
+            << event_xyz[3*n + 2] << " " << event_einj_vals[n] << " "
+            << event_pinj_vals[n] << "\n";
       }
     } else {
       std::cout << "### WARNING in " << __FILE__ << " at line " << __LINE__

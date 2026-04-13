@@ -72,6 +72,8 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm) :
     OrszagTang(pin, false);
   } else if (pgen_fun_name.compare("rad_linear_wave") == 0) {
     RadiationLinearWave(pin, false);
+  } else if (pgen_fun_name.compare("biermann_gradient") == 0) {
+    BiermannGradient(pin, false);
   } else if (pgen_fun_name.compare("shock_tube") == 0) {
     ShockTube(pin, false);
   } else if (pgen_fun_name.compare("z4c_linear_wave") == 0) {
@@ -80,6 +82,8 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm) :
     SphericalCollapse(pin, false);
   } else if (pgen_fun_name.compare("diffusion") == 0) {
     Diffusion(pin, false);
+  } else if (pgen_fun_name.compare("spectrum_modes") == 0) {
+    SpectrumModes(pin, false);
   // else, name not set on command line or input file, print warning and quit
   } else {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
@@ -650,6 +654,8 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
     OrszagTang(pin, true);
   } else if (pgen_fun_name.compare("rad_linear_wave") == 0) {
     RadiationLinearWave(pin, true);
+  } else if (pgen_fun_name.compare("biermann_gradient") == 0) {
+    BiermannGradient(pin, true);
   } else if (pgen_fun_name.compare("shock_tube") == 0) {
     ShockTube(pin, true);
   } else if (pgen_fun_name.compare("z4c_linear_wave") == 0) {

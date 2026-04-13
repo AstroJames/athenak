@@ -1,5 +1,10 @@
 # build directories
 build/
+build-*/
+manual_build/
+
+# Claude Code tool directory (worktrees, session state)
+.claude/
 kokkos
 kokkos-*
 
@@ -32,3 +37,4 @@ __pycache__/
 
 *.gitignore
 AGENTS.md
+CLAUDE.md

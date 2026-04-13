@@ -15,8 +15,10 @@
 #include <string>
 #include <vector>
 
+#if FFT_ENABLED
 #include <Kokkos_Complex.hpp>
 #include <KokkosFFT.hpp>
+#endif
 
 #include "hydro/hydro.hpp"
 #include "mhd/mhd.hpp"
@@ -31,6 +33,7 @@
 
 namespace {
 
+#if FFT_ENABLED
 using real_view_t =
     Kokkos::View<Real***, Kokkos::LayoutRight, Kokkos::DefaultExecutionSpace>;
 using complex_view_t =
@@ -136,7 +139,8 @@ class LegacyPowerSpectrumBackend final : public PowerSpectrumBackend {
     const int is = indcs.is;
     const int js = indcs.js;
     const int ks = indcs.ks;
-    const Real inv_ntot = 1.0/static_cast<Real>(nx_*ny_*nz_);
+    const Real inv_ntot = 1.0/static_cast<Real>(
+        static_cast<int64_t>(nx_)*ny_*nz_);
     const Real inv_ntot_sq = inv_ntot*inv_ntot;
     const SpectrumFieldType field_type = ResolveSpectrumFieldType(out_params.variable);
     ValidateFieldAvailability(field_type, pm);
@@ -237,7 +241,8 @@ class LegacyPowerSpectrumBackend final : public PowerSpectrumBackend {
 
       do_fft_and_bin = (rank == 0);
       if (rank == 0) {
-        Kokkos::deep_copy(fft_in_, Real(0));
+        auto fft_in_host = Kokkos::create_mirror_view(fft_in_);
+        Kokkos::deep_copy(fft_in_host, Real(0));
         for (int r = 0; r < nranks; ++r) {
           for (int bm = 0; bm < nmb_eachrank[r]; ++bm) {
             const int gid = recv_gids[mb_displs[r] + bm];
@@ -250,30 +255,35 @@ class LegacyPowerSpectrumBackend final : public PowerSpectrumBackend {
               for (int jB = 0; jB < nyB; ++jB) {
                 for (int iB = 0; iB < nxB; ++iB) {
                   const int64_t loc = off + (static_cast<int64_t>(kB) * nyB + jB) * nxB + iB;
-                  fft_in_(x0 + iB, y0 + jB, z0 + kB) = recv_field[loc];
+                  fft_in_host(x0 + iB, y0 + jB, z0 + kB) = recv_field[loc];
                 }
               }
             }
           }
         }
+        Kokkos::deep_copy(fft_in_, fft_in_host);
       }
 #else
-      Kokkos::deep_copy(fft_in_, Real(0));
-      for (int m = 0; m < nmb; ++m) {
-        const int gid = local_gids[m];
-        const auto &lloc = pm->lloc_eachmb[gid];
-        const int x0 = static_cast<int>(lloc.lx1) * nxB;
-        const int y0 = static_cast<int>(lloc.lx2) * nyB;
-        const int z0 = static_cast<int>(lloc.lx3) * nzB;
-        const int64_t off = static_cast<int64_t>(m) * ncell_mb;
-        for (int kB = 0; kB < nzB; ++kB) {
-          for (int jB = 0; jB < nyB; ++jB) {
-            for (int iB = 0; iB < nxB; ++iB) {
-              const int64_t loc = off + (static_cast<int64_t>(kB) * nyB + jB) * nxB + iB;
-              fft_in_(x0 + iB, y0 + jB, z0 + kB) = local_field[loc];
+      {
+        auto fft_in_host = Kokkos::create_mirror_view(fft_in_);
+        Kokkos::deep_copy(fft_in_host, Real(0));
+        for (int m = 0; m < nmb; ++m) {
+          const int gid = local_gids[m];
+          const auto &lloc = pm->lloc_eachmb[gid];
+          const int x0 = static_cast<int>(lloc.lx1) * nxB;
+          const int y0 = static_cast<int>(lloc.lx2) * nyB;
+          const int z0 = static_cast<int>(lloc.lx3) * nzB;
+          const int64_t off = static_cast<int64_t>(m) * ncell_mb;
+          for (int kB = 0; kB < nzB; ++kB) {
+            for (int jB = 0; jB < nyB; ++jB) {
+              for (int iB = 0; iB < nxB; ++iB) {
+                const int64_t loc = off + (static_cast<int64_t>(kB) * nyB + jB) * nxB + iB;
+                fft_in_host(x0 + iB, y0 + jB, z0 + kB) = local_field[loc];
+              }
             }
           }
         }
+        Kokkos::deep_copy(fft_in_, fft_in_host);
       }
 #endif
 
@@ -318,6 +328,7 @@ class LegacyPowerSpectrumBackend final : public PowerSpectrumBackend {
   complex_view_t fft_out_;
   std::unique_ptr<PlanType> plan_;
 };
+#endif  // FFT_ENABLED
 
 #if HEFFTE_ENABLED
 struct HeffteCellSample {
@@ -349,6 +360,16 @@ class HefftePowerSpectrumBackend final : public PowerSpectrumBackend {
       std::cout << "PowerSpectrum(heffte): using " << fft_nranks_
                 << " MPI rank(s) for FFT out of " << world_nranks_
                 << " total rank(s), capped by nx=" << nx_ << ".\n";
+    }
+
+    // Precompute gx-to-owner lookup table consistent with slab boundaries
+    gx_to_owner_.resize(nx_);
+    for (int r = 0; r < fft_nranks_; ++r) {
+      const int x0 = (r * nx_) / fft_nranks_;
+      const int x1 = ((r + 1) * nx_) / fft_nranks_ - 1;
+      for (int gx = x0; gx <= x1; ++gx) {
+        gx_to_owner_[gx] = r;
+      }
     }
 
     int color = (participates_fft_ ? 0 : MPI_UNDEFINED);
@@ -389,7 +410,8 @@ class HefftePowerSpectrumBackend final : public PowerSpectrumBackend {
     const int is = indcs.is;
     const int js = indcs.js;
     const int ks = indcs.ks;
-    const Real inv_ntot = 1.0/static_cast<Real>(nx_*ny_*nz_);
+    const Real inv_ntot = 1.0/static_cast<Real>(
+        static_cast<int64_t>(nx_)*ny_*nz_);
     const Real inv_ntot_sq = inv_ntot*inv_ntot;
     const SpectrumFieldType field_type = ResolveSpectrumFieldType(out_params.variable);
     ValidateFieldAvailability(field_type, pm);
@@ -450,9 +472,7 @@ class HefftePowerSpectrumBackend final : public PowerSpectrumBackend {
               const int gx = x0 + iB;
               const int gy = y0 + jB;
               const int gz = z0 + kB;
-              int owner = (gx * fft_nranks_) / nx_;
-              if (owner < 0) owner = 0;
-              if (owner >= fft_nranks_) owner = fft_nranks_ - 1;
+              const int owner = gx_to_owner_[gx];
               const int64_t loc =
                   off + (static_cast<int64_t>(kB) * nyB + jB) * nxB + iB;
               send_lists[owner].push_back({gx, gy, gz, send_host(loc)});
@@ -564,6 +584,7 @@ class HefftePowerSpectrumBackend final : public PowerSpectrumBackend {
   int slab_x0_ = 0;
   int slab_x1_ = -1;
   int local_nx_ = 0;
+  std::vector<int> gx_to_owner_;
   std::unique_ptr<heffte::fft3d_r2c<heffte::backend::stock>> plan_;
 };
 #endif  // HEFFTE_ENABLED
@@ -572,6 +593,7 @@ class HefftePowerSpectrumBackend final : public PowerSpectrumBackend {
 
 std::unique_ptr<PowerSpectrumBackend> BuildPowerSpectrumBackend(
     Mesh *pm, const OutputParameters &out_params) {
+#if FFT_ENABLED
   if (out_params.fft_backend.compare("legacy") == 0) {
     return std::make_unique<LegacyPowerSpectrumBackend>(pm);
   }
@@ -588,4 +610,10 @@ std::unique_ptr<PowerSpectrumBackend> BuildPowerSpectrumBackend(
   std::cout << "### FATAL ERROR in BuildPowerSpectrumBackend\n"
             << "Unknown fft_backend='" << out_params.fft_backend << "' requested.\n";
   std::exit(EXIT_FAILURE);
+#else
+  std::cout << "### FATAL ERROR in BuildPowerSpectrumBackend\n"
+            << "power_spectrum output requested, but this binary was compiled with "
+            << "Athena_ENABLE_FFT=OFF.\n";
+  std::exit(EXIT_FAILURE);
+#endif
 }

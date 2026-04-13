@@ -34,6 +34,7 @@ endif()
 option(Athena_SINGLE_PRECISION "Compile for single precision" OFF)
 option(Athena_ENABLE_MPI "Compile with MPI parallelism enabled" OFF)
 option(Athena_ENABLE_OPENMP "Compile with OpenMP parallelism enabled" OFF)
+option(Athena_ENABLE_FFT "Enable FFT support for power_spectrum output" ON)
 option(Athena_ENABLE_HEFFTE "Enable heFFTe distributed FFT backend" OFF)
 set(PROBLEM built_in_pgens CACHE STRING "Name of problem generator function")
 
@@ -78,10 +79,24 @@ else()
   set(OPENMP_PARALLEL_ENABLED 0)
 endif()
 
+# set FFT macro (true/false)
+set(ENABLE_FFT OFF)
+if (Athena_ENABLE_FFT)
+  set(ENABLE_FFT ON)
+endif()
+if (ENABLE_FFT)
+  set(FFT_ENABLED 1)
+else()
+  set(FFT_ENABLED 0)
+endif()
+
 # set heFFTe macro (true/false) and resolve dependency
 set(ENABLE_HEFFTE OFF)
 set(HEFFTE_TARGET "")
 if (Athena_ENABLE_HEFFTE)
+  if (NOT ENABLE_FFT)
+    message(FATAL_ERROR "Athena_ENABLE_HEFFTE requires Athena_ENABLE_FFT=ON.")
+  endif()
   if (NOT ENABLE_MPI)
     message(FATAL_ERROR "Athena_ENABLE_HEFFTE requires Athena_ENABLE_MPI=ON.")
   endif()
@@ -155,16 +170,12 @@ add_subdirectory(src)
 add_subdirectory(kokkos)
 include_directories(${Kokkos_INCLUDE_DIRS_RET})
 
-# Add kokkos-fft (assumes you have cloned kokkos-fft into <athenaK-root>/kokkos-fft)
-add_subdirectory(kokkos-fft)
-
-# target_link_libraries(athena PUBLIC Kokkos::kokkos)
-# Link in the kokkos-fft library
-target_link_libraries(athena
-  PUBLIC
-    Kokkos::kokkos
-    KokkosFFT::fft
-)
+target_link_libraries(athena PUBLIC Kokkos::kokkos)
+if (ENABLE_FFT)
+  # Add kokkos-fft (assumes you have cloned kokkos-fft into <athenaK-root>/kokkos-fft)
+  add_subdirectory(kokkos-fft)
+  target_link_libraries(athena PUBLIC KokkosFFT::fft)
+endif()
 
 if (ENABLE_MPI)
   target_link_libraries(athena PUBLIC MPI::MPI_CXX)

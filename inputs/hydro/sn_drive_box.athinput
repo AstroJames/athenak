@@ -15,7 +15,7 @@ time_cgs   = 3.813601529e14
 mu         = 1.27
 
 <mesh>
-nghost    = 2         # Number of ghost cells
+nghost    = 3         # Number of ghost cells (3 required for fofc)
 nx1       = 32        # Number of zones in X1-direction
 x1min     = -0.5      # minimum value of X1
 x1max     = 0.5       # maximum value of X1
@@ -52,18 +52,29 @@ eos         = ideal      # EOS type
 reconstruct = plm        # spatial reconstruction method
 rsolver     = hllc       # Riemann-solver
 gamma       = 1.6666667  # gamma = C_p/C_v
+fofc        = true       # first-order flux correction for troubled cells
 tfloor      = 1.0e-4     # 1 K physical floor (T_unit ~ 1.0e4 K)
 
 # Stochastic SN driving (code units)
 sn_driving  = true
 sn_rate     = 50.0       # target events per unit code time
 sn_energy   = 8.91e-5    # thermal energy per event
+sn_momentum = 0.0        # radial momentum per event (0 = thermal only)
 sn_rinj     = 0.0625     # injection radius (2 cells for this 32^3 setup)
 sn_zmin     = -0.5       # lower z-edge of driving band
 sn_zmax     = 0.5        # upper z-edge of driving band
 sn_seed     = 314159
 sn_log_events = true
 sn_log_file = SNDriveBox.sn_events.dat
+
+# Subgrid SN remnant model (Martizzi, Faucher-Giguere & Quataert 2015)
+# When enabled, E_th and P_rad are computed per-event from local density
+# and the fitting formulae, overriding sn_energy and sn_momentum.
+sn_subgrid      = false      # enable subgrid E_th/P_rad model
+sn_subgrid_type = 0          # 0 = homogeneous, 1 = inhomogeneous (Mach=30)
+sn_esn_cgs      = 1.0e51     # total SN energy [erg]
+sn_mej_msun     = 3.0        # ejecta mass [Msun]
+sn_metallicity  = 1.0        # metallicity [Z/Z_sun]
 
 # Optional ISM cooling + heating (cgs rates; converted via <units>)
 ism_cooling = true

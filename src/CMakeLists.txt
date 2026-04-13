@@ -32,6 +32,7 @@ add_executable(
         coordinates/excision.cpp
 
         diffusion/conduction.cpp
+        diffusion/biermann.cpp
         diffusion/resistivity.cpp
         diffusion/viscosity.cpp
 
@@ -107,6 +108,7 @@ add_executable(
 
         pgen/pgen.cpp
         pgen/tests/advection.cpp
+        pgen/tests/biermann_gradient.cpp
         pgen/tests/collapse.cpp
         pgen/tests/cpaw.cpp
         pgen/tests/diffusion.cpp
@@ -120,6 +122,7 @@ add_executable(
         pgen/tests/rad_hohlraum.cpp
         pgen/tests/rad_linear_wave.cpp
         pgen/tests/z4c_linear_wave.cpp
+        pgen/tests/spectrum_modes.cpp
 
         radiation/radiation.cpp
         radiation/radiation_fluxes.cpp
@@ -141,7 +144,6 @@ add_executable(
         srcterms/srcterms.cpp
         srcterms/srcterms_newdt.cpp
         srcterms/turb_driver.cpp
-
         tasklist/numerical_relativity.cpp
 
         units/units.cpp

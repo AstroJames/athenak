@@ -64,6 +64,13 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
                          out_params.variable.compare("mhd_bcc1") == 0);
   bool power_spectrum_alias = (is_power_spectrum &&
                                (velocity_alias || density_alias || magnetic_alias));
+  if (is_power_spectrum && FFT_ENABLED == 0) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
+       << "Power spectrum output in block '" << out_params.block_name
+       << "' requested, but this binary was compiled with Athena_ENABLE_FFT=OFF."
+       << std::endl;
+    exit(EXIT_FAILURE);
+  }
   if (is_power_spectrum &&
       !(out_params.fft_backend.compare("legacy") == 0 ||
         out_params.fft_backend.compare("heffte") == 0)) {

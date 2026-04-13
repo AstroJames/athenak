@@ -1,0 +1,113 @@
+# AthenaXXX input file: SN driving -- ISM cooling, subgrid MFQ15 model, E_th + P_rad
+# Build with: cmake .. -DPROBLEM=sn_drive_box
+#
+# Full MFQ15 subgrid model: both E_th(R) and P_rad(R) computed per-event
+# from fitting formulae as a function of the local mean density and metallicity.
+#
+# At n_H ~ 1 cm^-3 and R_inj = 6.25 pc (homogeneous fits):
+#   E_th = 0.717 * 1e51 erg  (Sedov-Taylor regime, R_inj < R_c ~ 21.7 pc)
+#   P_rad = P_0 * (R_inj/R_0)^1.5 ~ 5.8e42 g cm/s  (growing phase)
+# with P_0 = sqrt(2 * M_ej * E_SN) = 3.45e42 g cm/s.
+#
+# In code units (for the chosen unit system):
+#   E_th   ~ 176  code energy units per event
+#   P_rad  ~ 0.12 code momentum units per event
+#   vri    ~ 0.12 / (rho_avg * V_inj) per event
+#
+# Physical SN rate: tune sn_rate to match your target SFR surface density.
+# For Sigma_SFR ~ 1e-3 Msun/yr/kpc^2 and a (100 pc)^3 box:
+#   sn_rate ~ 1 per code time unit (1 code time ~ 12.1 Myr)
+
+<comment>
+problem = supernova driving with ISM cooling and full MFQ15 subgrid model
+
+<job>
+basename = SN_Cooling_Subgrid
+
+<units>
+# rho=1 -> n_H ~ 1 cm^-3;  p/rho=1 -> T ~ 1e4 K
+length_cgs = 3.085677581e20
+mass_cgs   = 6.195900775e37
+time_cgs   = 3.813601529e14
+mu         = 1.27
+
+<mesh>
+nghost    = 3
+nx1       = 32
+x1min     = -0.5
+x1max     = 0.5
+ix1_bc    = periodic
+ox1_bc    = periodic
+
+nx2       = 32
+x2min     = -0.5
+x2max     = 0.5
+ix2_bc    = periodic
+ox2_bc    = periodic
+
+nx3       = 32
+x3min     = -0.5
+x3max     = 0.5
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1 = 32
+nx2 = 32
+nx3 = 32
+
+<time>
+evolution  = dynamic
+integrator = rk2
+cfl_number = 0.3
+nlim       = -1
+tlim       = 4.0
+ndiag      = 1
+
+<hydro>
+eos         = ideal
+reconstruct = plm
+rsolver     = hllc
+gamma       = 1.6666667
+fofc        = true
+tfloor      = 1.0e-3
+dfloor      = 1.0e-6
+pfloor      = 1.0e-6
+
+# Stochastic SN driving with MFQ15 subgrid model
+sn_driving    = true
+sn_rate       = 1.0         # events per code time (~1/12 Myr for this box)
+sn_rinj       = 0.0625      # injection radius [code] = 6.25 pc (2 cells at 32^3)
+sn_zmin       = -0.5
+sn_zmax       = 0.5
+sn_seed       = 314159
+sn_log_events = true
+sn_log_file   = SN_Cooling_Subgrid.sn_events.dat
+
+# MFQ15 subgrid model: E_th and P_rad both computed per-event from local density
+sn_subgrid      = true
+sn_subgrid_type = 0          # 0 = homogeneous; 1 = inhomogeneous (Mach=30)
+sn_esn_cgs      = 1.0e51     # total SN energy [erg]
+sn_mej_msun     = 3.0        # ejecta mass [Msun] (sets P_0 = sqrt(2*M_ej*E_SN))
+sn_metallicity  = 1.0        # metallicity [Z/Z_sun]; floored at 0.01
+
+# ISM cooling + photoelectric heating
+ism_cooling = true
+hrate       = 2.0e-26
+
+<problem>
+# Start near warm neutral medium: n_H ~ 1 cm^-3, T ~ 1e4 K
+rho0  = 1.0
+pgas0 = 1.0
+vx0   = 0.0
+vy0   = 0.0
+vz0   = 0.0
+
+<output1>
+file_type = hst
+dt        = 0.01
+
+<output2>
+file_type = vtk
+variable  = hydro_w
+dt        = 0.05
