@@ -145,6 +145,10 @@ class MHD {
   DvceArray4D<bool> fofc;  // flag for each cell to indicate if FOFC is needed
   bool use_fofc = false;   // flag to enable FOFC
 
+  // following used for h-correction (Sanders, Morano & Druguet 1998)
+  DvceArray4D<Real> eta1, eta2, eta3;  // max |eigenvalue| in x1, x2, x3 per cell
+  bool use_hcorr = false;              // flag to enable h-correction
+
   // container to hold names of TaskIDs
   MHDTaskIDs id;
 

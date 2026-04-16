@@ -58,6 +58,48 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
   auto &coord_ = pmy_pack->pcoord->coord_data;
   auto &w0_ = w0;
   auto &b0_ = bcc0;
+  auto &eta1_ = eta1;
+  auto &eta2_ = eta2;
+  auto &eta3_ = eta3;
+  bool use_hcorr_ = use_hcorr;
+
+  //--------------------------------------------------------------------------------------
+  // Pre-compute cell-centered max eigenvalues for h-correction (if enabled).
+  // eta_d[m,k,j,i] = |v_d| + cf_d, where cf_d is the fast magnetosonic speed with
+  // B_d as the normal component. Only meaningful for 2D/3D problems.
+  if constexpr (rsolver_method_ == MHD_RSolver::hlld) {
+    if (use_hcorr_) {
+      auto &eos_hc = peos->eos_data;
+      int kl_hc = (pmy_pack->pmesh->one_d || pmy_pack->pmesh->two_d) ? ks : ks-1;
+      int ku_hc = (pmy_pack->pmesh->one_d || pmy_pack->pmesh->two_d) ? ke : ke+1;
+      int jl_hc = pmy_pack->pmesh->one_d ? js : js-1;
+      int ju_hc = pmy_pack->pmesh->one_d ? je : je+1;
+      par_for("hcorr_eta", DevExeSpace(), 0, nmb1, kl_hc, ku_hc, jl_hc, ju_hc, is-1, ie+1,
+      KOKKOS_LAMBDA(const int m, const int k, const int j, const int i) {
+        Real d  = w0_(m,IDN,k,j,i);
+        Real vx = w0_(m,IVX,k,j,i);
+        Real vy = w0_(m,IVY,k,j,i);
+        Real vz = w0_(m,IVZ,k,j,i);
+        Real bx = b0_(m,IBX,k,j,i);
+        Real by = b0_(m,IBY,k,j,i);
+        Real bz = b0_(m,IBZ,k,j,i);
+        Real cf1, cf2, cf3;
+        if (eos_hc.is_ideal) {
+          Real p = eos_hc.IdealGasPressure(w0_(m,IEN,k,j,i));
+          cf1 = eos_hc.IdealMHDFastSpeed(d, p, bx, by, bz);
+          cf2 = eos_hc.IdealMHDFastSpeed(d, p, by, bz, bx);
+          cf3 = eos_hc.IdealMHDFastSpeed(d, p, bz, bx, by);
+        } else {
+          cf1 = eos_hc.IdealMHDFastSpeed(d, bx, by, bz);
+          cf2 = eos_hc.IdealMHDFastSpeed(d, by, bz, bx);
+          cf3 = eos_hc.IdealMHDFastSpeed(d, bz, bx, by);
+        }
+        eta1_(m,k,j,i) = fabs(vx) + cf1;
+        eta2_(m,k,j,i) = fabs(vy) + cf2;
+        eta3_(m,k,j,i) = fabs(vz) + cf3;
+      });
+    }
+  }
 
   //--------------------------------------------------------------------------------------
   // i-direction
@@ -126,6 +168,10 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
     auto flx1 = flx1_;
     auto e31 = e31_;
     auto e21 = e21_;
+    auto use_hcorr = use_hcorr_;
+    auto eta1 = eta1_;
+    auto eta2 = eta2_;
+    auto eta3 = eta3_;
     if constexpr (rsolver_method_ == MHD_RSolver::advect) {
       Advect(member,eos,indcs,size,coord,m,k,j,il,iu,IVX,wl,wr,bl,br,bx,flx1,e31,e21);
     } else if constexpr (rsolver_method_ == MHD_RSolver::llf) {
@@ -133,7 +179,8 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
     } else if constexpr (rsolver_method_ == MHD_RSolver::hlle) {
       HLLE(member,eos,indcs,size,coord,m,k,j,il,iu,IVX,wl,wr,bl,br,bx,flx1,e31,e21);
     } else if constexpr (rsolver_method_ == MHD_RSolver::hlld) {
-      HLLD(member,eos,indcs,size,coord,m,k,j,il,iu,IVX,wl,wr,bl,br,bx,flx1,e31,e21);
+      HLLD(member,eos,indcs,size,coord,m,k,j,il,iu,IVX,wl,wr,bl,br,bx,flx1,e31,e21,
+           use_hcorr,eta2,eta3);
     } else if constexpr (rsolver_method_ == MHD_RSolver::llf_sr) {
       LLF_SR(member,eos,indcs,size,coord,m,k,j,il,iu,IVX,wl,wr,bl,br,bx,flx1,e31,e21);
     } else if constexpr (rsolver_method_ == MHD_RSolver::hlle_sr) {
@@ -240,6 +287,10 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
           auto flx2 = flx2_;
           auto e12 = e12_;
           auto e32 = e32_;
+          auto use_hcorr = use_hcorr_;
+          auto eta1 = eta1_;
+          auto eta2 = eta2_;
+          auto eta3 = eta3_;
           if constexpr (rsolver_method_ == MHD_RSolver::advect) {
             Advect(member,eos,indcs,size,coord,
                     m,k,j,is-1,ie+1,IVY,wl,wr,bl,br,by,flx2,e12,e32);
@@ -251,7 +302,8 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
                     m,k,j,is-1,ie+1,IVY,wl,wr,bl,br,by,flx2,e12,e32);
           } else if constexpr (rsolver_method_ == MHD_RSolver::hlld) {
             HLLD(member,eos,indcs,size,coord,
-                    m,k,j,is-1,ie+1,IVY,wl,wr,bl,br,by,flx2,e12,e32);
+                    m,k,j,is-1,ie+1,IVY,wl,wr,bl,br,by,flx2,e12,e32,
+                    use_hcorr,eta3,eta1);
           } else if constexpr (rsolver_method_ == MHD_RSolver::llf_sr) {
             LLF_SR(member,eos,indcs,size,coord,
                     m,k,j,is-1,ie+1,IVY,wl,wr,bl,br,by,flx2,e12,e32);
@@ -360,6 +412,10 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
           auto flx3 = flx3_;
           auto e23 = e23_;
           auto e13 = e13_;
+          auto use_hcorr = use_hcorr_;
+          auto eta1 = eta1_;
+          auto eta2 = eta2_;
+          auto eta3 = eta3_;
           if constexpr (rsolver_method_ == MHD_RSolver::advect) {
             Advect(member,eos,indcs,size,coord,
                     m,k,j,is-1,ie+1,IVZ,wl,wr,bl,br,bz,flx3,e23,e13);
@@ -371,7 +427,8 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
                     m,k,j,is-1,ie+1,IVZ,wl,wr,bl,br,bz,flx3,e23,e13);
           } else if constexpr (rsolver_method_ == MHD_RSolver::hlld) {
             HLLD(member,eos,indcs,size,coord,
-                    m,k,j,is-1,ie+1,IVZ,wl,wr,bl,br,bz,flx3,e23,e13);
+                    m,k,j,is-1,ie+1,IVZ,wl,wr,bl,br,bz,flx3,e23,e13,
+                    use_hcorr,eta1,eta2);
           } else if constexpr (rsolver_method_ == MHD_RSolver::llf_sr) {
             LLF_SR(member,eos,indcs,size,coord,
                     m,k,j,is-1,ie+1,IVZ,wl,wr,bl,br,bz,flx3,e23,e13);
