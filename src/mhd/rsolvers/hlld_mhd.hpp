@@ -25,7 +25,10 @@ void HLLD(TeamMember_t const &member, const EOS_Data &eos,
      const int m, const int k, const int j, const int il, const int iu, const int ivx,
      const ScrArray2D<Real> &wl, const ScrArray2D<Real> &wr,
      const ScrArray2D<Real> &bl, const ScrArray2D<Real> &br, const DvceArray4D<Real> &bx,
-     DvceArray5D<Real> flx, DvceArray4D<Real> ey, DvceArray4D<Real> ez) {
+     DvceArray5D<Real> flx, DvceArray4D<Real> ey, DvceArray4D<Real> ez,
+     const bool use_hcorr = false,
+     const DvceArray4D<Real> eta_t1 = DvceArray4D<Real>(),
+     const DvceArray4D<Real> eta_t2 = DvceArray4D<Real>()) {
   int ivy = IVX + ((ivx-IVX)+1)%3;
   int ivz = IVX + ((ivx-IVX)+2)%3;
   int iby = ((ivx-IVX) + 1)%3;
@@ -91,6 +94,30 @@ void HLLD(TeamMember_t const &member, const EOS_Data &eos,
 
       spd[0] = fmin( wl_ivx-cfl, wr_ivx-cfr );
       spd[4] = fmax( wl_ivx+cfl, wr_ivx+cfr );
+
+      //--- h-correction: widen wave speed estimates using transverse max eigenvalues
+      // (Sanders, Morano & Druguet 1998)
+      if (use_hcorr) {
+        Real eta;
+        if (ivx == IVX) {
+          eta = fmax(eta_t1(m,k,j,i-1), eta_t1(m,k,j,i));
+          if (eta_t2.extent(0) > 0) {
+            eta = fmax(eta, fmax(eta_t2(m,k,j,i-1), eta_t2(m,k,j,i)));
+          }
+        } else if (ivx == IVY) {
+          eta = fmax(eta_t1(m,k,j-1,i), eta_t1(m,k,j,i));
+          if (eta_t2.extent(0) > 0) {
+            eta = fmax(eta, fmax(eta_t2(m,k,j-1,i), eta_t2(m,k,j,i)));
+          }
+        } else {
+          eta = fmax(eta_t1(m,k-1,j,i), eta_t1(m,k,j,i));
+          if (eta_t2.extent(0) > 0) {
+            eta = fmax(eta, fmax(eta_t2(m,k-1,j,i), eta_t2(m,k,j,i)));
+          }
+        }
+        spd[0] = fmin(spd[0], -eta);
+        spd[4] = fmax(spd[4],  eta);
+      }
 
       // Real cfmax = std::max(cfl,cfr);
       // if (wl_ivx <= wr_ivx) {
@@ -400,6 +427,30 @@ void HLLD(TeamMember_t const &member, const EOS_Data &eos,
 
       spd[0] = fmin( wl_ivx-cfl, wr_ivx-cfr );
       spd[4] = fmax( wl_ivx+cfl, wr_ivx+cfr );
+
+      //--- h-correction: widen wave speed estimates using transverse max eigenvalues
+      // (Sanders, Morano & Druguet 1998)
+      if (use_hcorr) {
+        Real eta;
+        if (ivx == IVX) {
+          eta = fmax(eta_t1(m,k,j,i-1), eta_t1(m,k,j,i));
+          if (eta_t2.extent(0) > 0) {
+            eta = fmax(eta, fmax(eta_t2(m,k,j,i-1), eta_t2(m,k,j,i)));
+          }
+        } else if (ivx == IVY) {
+          eta = fmax(eta_t1(m,k,j-1,i), eta_t1(m,k,j,i));
+          if (eta_t2.extent(0) > 0) {
+            eta = fmax(eta, fmax(eta_t2(m,k,j-1,i), eta_t2(m,k,j,i)));
+          }
+        } else {
+          eta = fmax(eta_t1(m,k-1,j,i), eta_t1(m,k,j,i));
+          if (eta_t2.extent(0) > 0) {
+            eta = fmax(eta, fmax(eta_t2(m,k-1,j,i), eta_t2(m,k,j,i)));
+          }
+        }
+        spd[0] = fmin(spd[0], -eta);
+        spd[4] = fmax(spd[4],  eta);
+      }
 
       //--- Step 3.  Compute L/R fluxes
 

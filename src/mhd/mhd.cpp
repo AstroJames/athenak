@@ -53,7 +53,10 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
     e3_cc("e3_cc",1,1,1,1),
     utest("utest",1,1,1,1,1),
     bcctest("bcctest",1,1,1,1,1),
-    fofc("fofc",1,1,1,1) {
+    fofc("fofc",1,1,1,1),
+    eta1("eta1",1,1,1,1),
+    eta2("eta2",1,1,1,1),
+    eta3("eta3",1,1,1,1) {
   // Total number of MeshBlocks on this rank to be used in array dimensioning
   int nmb = std::max((ppack->nmb_thispack), (ppack->pmesh->nmb_maxperrank));
 
@@ -184,6 +187,9 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
     // determine if FOFC is enabled
     use_fofc = pin->GetOrAddBoolean("mhd","fofc",false);
 
+    // determine if h-correction is enabled (Sanders, Morano & Druguet 1998)
+    use_hcorr = pin->GetOrAddBoolean("mhd","h_correction",false);
+
     // select reconstruction method (default PLM)
     std::string xorder = pin->GetOrAddString("mhd","reconstruct","plm");
     if (xorder.compare("dc") == 0) {
@@ -306,6 +312,13 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
       }
     }
 
+    // check h-correction is only used with HLLD
+    if (use_hcorr && rsolver_method != MHD_RSolver::hlld) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "h_correction requires rsolver=hlld" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+
     // Final memory allocations
     {
       // allocate second registers
@@ -344,6 +357,13 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
         Kokkos::realloc(utest,   nmb, nvars, ncells3, ncells2, ncells1);
         Kokkos::realloc(bcctest, nmb, 3,    ncells3, ncells2, ncells1);
         Kokkos::deep_copy(fofc, false);
+      }
+
+      // allocate cell-centered max eigenvalue arrays for h-correction
+      if (use_hcorr) {
+        Kokkos::realloc(eta1, nmb, ncells3, ncells2, ncells1);
+        Kokkos::realloc(eta2, nmb, ncells3, ncells2, ncells1);
+        Kokkos::realloc(eta3, nmb, ncells3, ncells2, ncells1);
       }
     }
   }
