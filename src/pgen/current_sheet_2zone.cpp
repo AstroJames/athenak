@@ -4,15 +4,60 @@
 // Licensed under the 3-clause BSD License (the "LICENSE")
 //========================================================================================
 //! \file current_sheet_2zone.cpp
-//  \ Problem generator for single Harris current sheet.
+//  \brief Problem generator for a single Harris current sheet.
 //
-//  Equilibrium: rho = p^(1/gamma), p = B0^2/(2*cosh^2(x/a0)) + p0
-//  By = B0*tanh(x/a0), Bz = bg, Bx = 0
+// =============================================================================
+//  Equilibrium (force balance, polytrope rho = p^(1/gamma))
+// =============================================================================
+//    By(x1) = b0 * tanh(x1/a0)                    (reconnecting field)
+//    Bx     = 0,     Bz = bg                       (guide field)
+//    p(x1)  = b0^2 / (2*cosh^2(x1/a0)) + p0        (thermal pressure)
+//    rho(x1)= p(x1)^(1/gamma)
 //
-//  After t_switch, user BCs activate:
-//    x1: IC-matching (fill ghost zones with analytical equilibrium)
+//  Upstream (|x1| >> a0):
+//    By -> +/- b0,  p -> p0,  rho -> rho_up = p0^(1/gamma)
+//
+// -----------------------------------------------------------------------------
+//  Plasma beta (upstream, asymptotic)
+// -----------------------------------------------------------------------------
+//    beta  ==  p_thermal / p_magnetic  =  p0 / (b0^2 / 2)  =  2*p0 / b0^2
+//
+//    For beta = 1 at a given p0:  b0 = sqrt(2*p0).
+//    Cleanest normalization:  p0 = 1  ->  rho_up = 1,  b0 = sqrt(2)  for beta=1,
+//                             then cs_up = sqrt(gamma),  v_A = sqrt(2).
+//
+// -----------------------------------------------------------------------------
+//  Lundquist number (upstream)
+// -----------------------------------------------------------------------------
+//    S  ==  v_A * L / eta
+//
+//    with upstream Alfven speed      v_A = b0 / sqrt(rho_up) = b0 / p0^(1/(2*gamma))
+//         characteristic length      L   = a0   (sheet half-width)
+//         resistivity                eta = ohmic_resistivity
+//
+//    For target S:  eta = v_A * a0 / S.
+//    Example: p0 = 1, b0 = sqrt(2), a0 = 0.05, S = 1e5
+//             -> v_A = sqrt(2)  ->  eta = sqrt(2) * 0.05 / 1e5 ≈ 7.07e-7.
+//
+// -----------------------------------------------------------------------------
+//  Perturbation (triggers pinch / reconnection)
+// -----------------------------------------------------------------------------
+//    delta_p(x1,x2) = epsp * [tanh(200*x1+2) + tanh(2-200*x1)]
+//                          * [tanh(200*x2-10) + tanh(-10-200*x2)]
+//    p_tot = p_eq * (1 + delta_p)
+//
+//  The envelope saturates to ~3.86 at the origin, so keep |epsp| < ~0.25 to
+//  guarantee p_tot > 0 (avoids the EOS pressure floor clipping and the
+//  resulting unphysical IC transient).
+//
+// -----------------------------------------------------------------------------
+//  Boundary conditions (after t_switch)
+// -----------------------------------------------------------------------------
+//    x1: IC-matching (fill ghost zones with analytical equilibrium).
 //    x2: hard-damping diode (damp tangential v and B to equilibrium,
-//        diode on normal v, By from div(B)=0)
+//        diode on normal v, By from div(B) = 0).
+//
+// =============================================================================
 
 // C/C++ headers
 #include <algorithm>  // min, max
