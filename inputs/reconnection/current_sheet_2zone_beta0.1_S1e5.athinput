@@ -1,0 +1,162 @@
+# =============================================================================
+#  AthenaK — Harris current sheet, thin-sheet tearing/plasmoid setup
+#  Problem generator:  current_sheet_2zone
+#  Grid:               3072^2 on [-3, 3]^2
+#  Resolution:         dx = 6/3072 ≈ 1.95e-3  →  a0/dx ≈ 26 cells (well-resolved)
+#  Target:             beta = 0.1,  S = 1e5
+#  BCs:                x1 diode (+ IC-matching after t_switch),
+#                      x2 periodic (+ hard-damping diode after t_switch)
+# =============================================================================
+#
+#  Equilibrium (force balance, polytrope rho = p^(1/gamma)):
+#    By(x1) = b0 · tanh(x1/a0)                    (reconnecting field)
+#    Bx     = 0,     Bz = bg                       (guide field)
+#    p(x1)  = b0^2 / (2·cosh^2(x1/a0)) + p0        (thermal pressure)
+#    rho(x1)= p(x1)^(1/gamma)
+#
+#  Upstream (|x1| >> a0):
+#    By -> ±b0,  p -> p0,  rho -> rho_up = p0^(1/gamma)
+#
+# -----------------------------------------------------------------------------
+#  PLASMA BETA (upstream, asymptotic)
+# -----------------------------------------------------------------------------
+#    beta  ==  p_thermal / p_magnetic  =  p0 / (b0^2 / 2)  =  2·p0 / b0^2
+#
+#    Target beta = 0.1  ->  b0 = sqrt(2·p0 / beta) = sqrt(20) ≈ 4.47214
+#
+# -----------------------------------------------------------------------------
+#  UPSTREAM SPEEDS (with p0 = 1, gamma = 5/3)
+# -----------------------------------------------------------------------------
+#    rho_up = p0^(1/gamma) = 1                               (exact)
+#    cs_up  = sqrt(gamma·p0/rho_up) = sqrt(gamma) ≈ 1.291
+#    v_A    = b0 / sqrt(rho_up)                  = sqrt(20) ≈ 4.47214
+#
+# -----------------------------------------------------------------------------
+#  LUNDQUIST NUMBER (upstream)
+# -----------------------------------------------------------------------------
+#    S  ==  v_A · L / eta       (with L = a0 = 0.05, sheet half-width)
+#
+#    For S = 1e5:
+#         eta = v_A · a0 / S = sqrt(20) · 0.05 / 1e5 ≈ 2.236e-6
+#
+# *****************************************************************************
+# *****************************************************************************
+# **                                                                         **
+# **   TIME UNIT  ==  FAST MAGNETOSONIC CROSSING TIME OF THE BOX             **
+# **                                                                         **
+# **   Every time-like quantity below (tlim, t_switch, all output dts) is    **
+# **   expressed as an integer/simple multiple of tau_fms.  The code reads   **
+# **   the numeric value in code units, but the *intent* for every number    **
+# **   is "N · tau_fms".  The multiple N is written in the comment next to   **
+# **   each parameter.                                                       **
+# **                                                                         **
+# **   To rescale the run, change ONLY the multiple N in the comments and    **
+# **   recompute the code value as N · tau_fms.                              **
+# **                                                                         **
+# **   Definition (beta = 0.1 run):                                          **
+# **     c_f      = sqrt(cs^2 + v_A^2)                                       **
+# **              = sqrt(gamma + b0^2) = sqrt(5/3 + 20)                      **
+# **              = sqrt(21.6667) ≈ 4.65475                                  **
+# **     L_box    = 6                                                        **
+# **     tau_fms  = L_box / c_f = 6 / 4.65475 ≈ 1.28878                      **
+# **                                                                         **
+# **   Multiples used in THIS input file (same cadence as the beta=1 run):   **
+# **     tlim           = 40    · tau_fms  =  51.5511                        **
+# **     t_switch       =  0.2  · tau_fms  =   0.257756                      **
+# **     output1 (w_bcc) dt =  0.2 · tau_fms =   0.257756                    **
+# **     output2 (jz)    dt =  0.2 · tau_fms =   0.257756                    **
+# **     output3 (rst)   dt =  0.5 · tau_fms =   0.644390                    **
+# **     output4 (hst)   dt =  0.02· tau_fms =   0.0257756                   **
+# **                                                                         **
+# *****************************************************************************
+# *****************************************************************************
+# =============================================================================
+
+<comment>
+problem   = current_sheet_2zone thin sheet, 3072^2, beta=0.1, S=1e5 (p0=1, b0=sqrt(20))
+
+<job>
+basename  = cs2_thin3072_beta0p1
+
+<mesh>
+nghost    = 4
+nx1       = 3072
+x1min     = -3.0
+x1max     =  3.0
+ix1_bc    = diode
+ox1_bc    = diode
+
+nx2       = 3072
+x2min     = -3.0
+x2max     =  3.0
+ix2_bc    = periodic
+ox2_bc    = periodic
+
+nx3       = 1
+x3min     = -0.5
+x3max     =  0.5
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1       = 128
+nx2       = 128
+nx3       = 1
+
+<time>
+evolution  = dynamic
+integrator = rk3
+cfl_number = 0.4
+nlim       = -1
+# TIME UNIT = tau_fms ≈ 1.28878   (fast magnetosonic crossing of the box)
+# tlim = 40 · tau_fms
+tlim       = 51.5511
+ndiag      = 10
+
+<mhd>
+eos                = ideal
+reconstruct        = wenoz
+fofc               = true
+rsolver            = hlld
+gamma              = 1.6666666666666667
+# --- Explicit resistivity: eta = v_A · a0 / S ---
+# Upstream:  v_A = b0 / sqrt(p0^(1/gamma)) = sqrt(20)
+#            a0  = 0.05
+# Target S = 1e5  ->  eta = sqrt(20) · 0.05 / 1e5 ≈ 2.236e-6
+resistivity        = ohmic
+ohmic_resistivity  = 2.236e-6
+
+<problem>
+# p0 = 1 chosen so that rho_upstream = p0^(1/gamma) = 1 exactly.
+# b0 = sqrt(2·p0/beta) = sqrt(20) gives beta = 0.1 exactly.
+b0        = 4.4721360
+a0        = 0.05
+bg        = 0.0
+p0        = 1.0
+# epsp kept at 0.25 so the initial pressure stays positive
+# (envelope saturates to ~3.86 at origin; need |epsp · 3.86| < 1).
+epsp      = 0.25
+# t_switch = 0.2 · tau_fms   (time to switch on IC-matching + damping BCs)
+t_switch  = 0.257756
+
+<output1>
+file_type   = bin
+variable    = mhd_w_bcc
+# dt = 0.2 · tau_fms   (primitive+B snapshots, 200 frames over tlim=40·tau_fms)
+dt          = 0.257756
+
+<output2>
+file_type   = bin
+variable    = mhd_jz
+# dt = 0.2 · tau_fms   (current-density snapshots, same cadence as output1)
+dt          = 0.257756
+
+<output3>
+file_type   = rst
+# dt = 0.5 · tau_fms   (restart dumps, 80 total over the run)
+dt          = 0.644390
+
+<output4>
+file_type   = hst
+# dt = 0.02 · tau_fms  (history/time-series, 2000 points over the run)
+dt          = 0.0257756
