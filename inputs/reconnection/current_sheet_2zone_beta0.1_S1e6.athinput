@@ -184,6 +184,7 @@ variable    = mhd_w_bcc
 # plasmoid passage, and flux pile-up along the reconnection layer.
 # dt = 0.02 · tau_fms  (2000 frames over tlim = 40·tau_fms)
 slice_x1    = 0.0
+id          = slice_x1
 dt          = 0.0257756
 
 <output6>
@@ -193,4 +194,5 @@ variable    = mhd_w_bcc
 # thickness evolution, and upstream damping near the x2 boundaries.
 # dt = 0.02 · tau_fms  (2000 frames over tlim = 40·tau_fms)
 slice_x2    = 0.0
+id          = slice_x2
 dt          = 0.0257756
