@@ -39,6 +39,18 @@
 #    For S = 1e3:
 #         eta = v_A · L / S = sqrt(20) · 6 / 1e3 ≈ 2.683e-2
 #
+# -----------------------------------------------------------------------------
+#  PLASMA REYNOLDS NUMBER (upstream, isotropic kinematic shear viscosity)
+# -----------------------------------------------------------------------------
+#    Re  ==  v_A · L / nu       (same L = L_box = 6 as the Lundquist number)
+#
+#    Magnetic Prandtl number:  Pm  ==  nu / eta  =  S / Re
+#
+#    This scan fixes Pm = 1  =>  Re = S,  so numerically  nu = eta.
+#
+#    For Re = 1e3:
+#         nu = v_A · L / Re = sqrt(20) · 6 / 1e3 ≈ 2.683e-2
+#
 # *****************************************************************************
 # *****************************************************************************
 # **                                                                         **
