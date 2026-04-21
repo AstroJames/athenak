@@ -6,6 +6,8 @@
 //! \file current_sheet_2zone.cpp
 //  \brief Problem generator for a single Harris current sheet.
 //
+//  Authors: James R. Beattie, Anna Tsai, Michael Grehan, Bart Ripperda
+//
 // =============================================================================
 //  Equilibrium (force balance, polytrope rho = p^(1/gamma))
 // =============================================================================
