@@ -34,10 +34,10 @@
 # -----------------------------------------------------------------------------
 #  LUNDQUIST NUMBER (upstream)
 # -----------------------------------------------------------------------------
-#    S  ==  v_A · L / eta       (with L = a0 = 0.05, sheet half-width)
+#    S  ==  v_A · L / eta       (with L = L_box = 6, sheet length = x2 box extent)
 #
 #    For S = 1e1:
-#         eta = v_A · a0 / S = 0.44721 · 0.05 / 1e1 ≈ 2.236e-3
+#         eta = v_A · L / S = sqrt(0.2) · 6 / 1e1 ≈ 2.683e-1
 #
 # *****************************************************************************
 # *****************************************************************************
@@ -119,13 +119,17 @@ reconstruct        = wenoz
 fofc               = true
 rsolver            = hlld
 gamma              = 1.6666666666666667
-# --- Explicit resistivity: eta = v_A · a0 / S ---
+# --- Explicit resistivity: eta = v_A · L / S ---
 # Upstream:  v_A = b0 / sqrt(p0^(1/gamma)) = sqrt(0.2)
-#            a0  = 0.05
-# Target S = 1e1  ->  eta = sqrt(0.2) · 0.05 / 1e1 ≈ 2.236e-3
+#            L   = L_box = 6   (sheet length)
+# Target S = 1e1  ->  eta = sqrt(0.2) · 6 / 1e1 ≈ 2.683e-1
 resistivity        = ohmic
-ohmic_resistivity  = 2.236e-3
+ohmic_resistivity  = 2.683e-1
 
+# --- Explicit shear viscosity: nu = v_A · L / Re ---
+# Setting Re = S  (plasma Reynolds = Lundquist)  =>  magnetic Prandtl Pm = nu/eta = 1
+# Same numerical value as the Ohmic resistivity above.
+viscosity          = 2.683e-1
 <problem>
 # p0 = 1 chosen so that rho_upstream = p0^(1/gamma) = 1 exactly.
 # b0 = sqrt(2·p0/beta) = sqrt(0.2) gives beta = 10 exactly.
