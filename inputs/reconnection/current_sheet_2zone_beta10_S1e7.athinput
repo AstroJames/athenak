@@ -1,5 +1,5 @@
 # =============================================================================
-#  AthenaK — Harris current sheet, thin-sheet tearing/plasmoid setup
+#  AthenaK — Harris current sheet, tearing/plasmoid setup
 #  Problem generator:  current_sheet_2zone
 #  Grid:               3072^2 on [-3, 3]^2
 #  Resolution:         dx = 6/3072 ≈ 1.95e-3  →  a0/dx ≈ 26 cells (well-resolved)
@@ -73,10 +73,10 @@
 # =============================================================================
 
 <comment>
-problem   = current_sheet_2zone thin sheet, 3072^2, beta=10, S=1e7 (p0=1, b0=sqrt(0.2))
+problem   = current_sheet_2zone, 3072^2, beta=10, S=1e7 (p0=1, b0=sqrt(0.2))
 
 <job>
-basename  = cs2_thin3072_beta10_S1e7
+basename  = cs2_3072_beta10_S1e7
 
 <mesh>
 nghost    = 4
