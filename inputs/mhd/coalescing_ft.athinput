@@ -1,0 +1,94 @@
+# AthenaK input file — 2D tearing-mode / plasmoid reconnection
+#
+# Follows Vicentin et al. (2025, ApJ): isothermal visco-resistive MHD in a square
+# box, coalescing flux-tube (Fadeev) initial field, with selectable RN or MM velocity
+# perturbation.
+#
+# Build with:
+#   cmake .. -DPROBLEM=coalescing_ft
+#
+# Geometry (AthenaK x1/x2 → paper x/y):
+#   x1 : along current sheet  [−L/2, L/2],  L = 1
+#   x2 : across current sheet [−L/2, L/2]
+#   Current sheet at x2 = 0, sheet half-thickness δ = a0 = S^{-1/2}
+#
+# Lundquist number S = B0 * L / eta.  For B0 = 1, L = 1:  eta = 1/S.
+#
+# This file is configured for S = 1000 (eta = 1e-3, delta = 0.0316),
+# resolution 512x512 — a quick test that fits in ~10 min on a laptop.
+#
+# For production runs increase nx1/nx2 and decrease eta following Table 1
+# of Vicentin et al. (2025):
+#   S=5e4, h^-1=2048  -> nx1=nx2=2048, eta=2e-5, a0=4.47e-3
+#   S=1e5, h^-1=4096  -> nx1=nx2=4096, eta=1e-5, a0=3.16e-3
+
+<comment>
+problem   = 2D tearing-mode / plasmoid reconnection (Vicentin et al. 2025)
+
+<job>
+basename  = TM2D
+
+<mesh>
+nghost    = 2
+
+nx1       = 512           # cells along current sheet (x1 = paper x)
+x1min     = -0.5
+x1max     = 0.5
+ix1_bc    = reflect       # perfectly-conducting, free-slip wall
+ox1_bc    = reflect
+
+nx2       = 512           # cells across current sheet (x2 = paper y)
+x2min     = -0.5
+x2max     = 0.5
+ix2_bc    = reflect       # perfectly-conducting, free-slip walls
+ox2_bc    = reflect
+
+nx3       = 1             # 2D simulation
+x3min     = -0.5
+x3max     = 0.5
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1       = 128
+nx2       = 128
+nx3       = 1
+
+<time>
+evolution  = dynamic
+integrator = rk2
+cfl_number = 0.3           # reduced from 0.4 — diffusion timestep can be tight
+nlim       = -1
+tlim       = 3.0           # Alfvén times (tA = Lx/VA); ~3 tA covers linear + nonlinear
+ndiag      = 1
+
+<mhd>
+eos              = isothermal
+iso_sound_speed  = 1.0     # cs = 1.0 → β = 2*ρ₀cs²/(B0²+bg²) = 2*1.25*1/1.25 = 2
+reconstruct      = plm
+rsolver          = hlld
+ohmic_resistivity = 1.0e-3  # η = 1/S → S = 1000 for this test
+viscosity         = 1.0e-3  # ν = η  (magnetic Prandtl number Pm = ν/η = 1)
+
+<problem>
+b0       = 1.0        # reconnecting field amplitude (sets VA = 1)
+bg       = 0.5        # guide field Bz
+a0       = 3.162e-2   # sheet half-thickness δ = S^{-1/2} = 1/sqrt(1000)
+beta     = 2.0        # target β used to set p0 = β * (Bmax^2/2)
+perturbation = mm     # none | rn | mm
+epsv     = 1.0e-2     # target RMS speed of the perturbation (in units of VA)
+rng_seed = 42         # integer seed for random noise / spectral phases
+
+<spectral_ic>
+spectrum = band       # gaussian | band
+# Default MM choice: constant power for all |k| >= 1/delta up to the grid cutoff.
+# Override with k_min/k_max for a custom band, or k_peak/k_width for a Gaussian shell.
+
+<output1>
+file_type  = bin
+variable   = mhd_u_bcc    # conserved vars + cell-centred B (safe for isothermal MHD)
+dt         = 0.1          # dump every 0.1 tA
+
+<output2>
+file_type  = hst
+dt         = 0.01         # history every 0.01 tA

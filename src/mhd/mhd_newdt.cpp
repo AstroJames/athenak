@@ -124,7 +124,10 @@ TaskStatus MHD::NewTimeStep(Driver *pdriver, int stage) {
         Real &w_by = bcc0_(m,IBY,k,j,i);
         Real &w_bz = bcc0_(m,IBZ,k,j,i);
         Real cf;
-        Real p = eos.IdealGasPressure(w0_(m,IEN,k,j,i));
+        Real p = 0.0;
+        if (eos.is_ideal) {
+          p = eos.IdealGasPressure(w0_(m,IEN,k,j,i));
+        }
         if (eos.is_ideal) {
           cf = eos.IdealMHDFastSpeed(w_d, p, w_bx, w_by, w_bz);
         } else {

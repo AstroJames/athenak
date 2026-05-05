@@ -148,6 +148,7 @@ add_executable(
 
         units/units.cpp
         utils/change_rundir.cpp
+        utils/spectral_2d_field_gen.cpp
         utils/show_config.cpp
         utils/lagrange_interpolator.cpp
         utils/tr_table.cpp

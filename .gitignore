@@ -1,5 +1,6 @@
 # build directories
 build/
+build_*/
 manual_build/
 
 # Claude Code tool directory (worktrees, session state)
