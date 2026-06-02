@@ -38,12 +38,15 @@ class TurbulenceDriver {
   int mode_count;
   Real tcorr, dedt;
   Real expo, exp_prl, exp_prp;
-  int driving_type;
+  Real sol_weight;
+  Real parabola_peak, parabola_width;
+  int driving_geometry, driving_profile;
 
   // functions
   void IncludeInitializeModesTask(std::shared_ptr<TaskList> tl, TaskID start);
   void IncludeAddForcingTask(std::shared_ptr<TaskList> tl, TaskID start);
   TaskStatus InitializeModes(Driver *pdrive, int stage);
+  TaskStatus UpdateForcing(Driver *pdrive, int stage);
   TaskStatus AddForcing(Driver *pdrive, int stage);
   void Initialize();
 

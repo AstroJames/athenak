@@ -27,24 +27,25 @@ void PowerSpectrumOutput::LoadOutputData(Mesh *pm) {
 }
 
 void PowerSpectrumOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
-#if MPI_PARALLEL_ENABLED
   int rank = 0;
+#if MPI_PARALLEL_ENABLED
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  if (rank != 0) return;
 #endif
 
-  auto host =
-      Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), spectrum_);
+  if (rank == 0) {
+    auto host =
+        Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), spectrum_);
 
-  std::ostringstream number;
-  number << std::setw(5) << std::setfill('0') << out_params.file_number;
-  std::string fname = out_params.file_basename + "." + out_params.file_id +
-                      "." + number.str() + ".spec";
+    std::ostringstream number;
+    number << std::setw(5) << std::setfill('0') << out_params.file_number;
+    std::string fname = out_params.file_basename + "." + out_params.file_id +
+                        "." + number.str() + ".spec";
 
-  std::ofstream ofs(fname);
-  ofs << std::scientific << std::setprecision(6);
-  for (int s = 1; s <= nbins_; ++s) {
-    ofs << s << ' ' << host(s - 1) << '\n';
+    std::ofstream ofs(fname);
+    ofs << std::scientific << std::setprecision(6);
+    for (int s = 1; s <= nbins_; ++s) {
+      ofs << s << ' ' << host(s - 1) << '\n';
+    }
   }
 
   out_params.file_number++;

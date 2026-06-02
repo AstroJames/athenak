@@ -53,6 +53,12 @@ tcorr = 0.5           # ~ L / 2 pi urms
 dedt  = 0.1           # ~ urms^3 / 2 L
 nlow = 1
 nhigh = 2
+# Optional driving geometry/profile choices.
+#driving_geometry = isotropic
+#driving_profile = powerlaw  # band/parabola/powerlaw
+#sol_weight = 1.0            # 1 solenoidal, 0 compressive, 0.5 natural mixture
+#parabola_peak = 2.0
+#parabola_width = 1.0
 
 <output1>
 file_type = hst

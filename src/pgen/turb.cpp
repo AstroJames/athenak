@@ -5,9 +5,12 @@
 //========================================================================================
 //! \file turb.cpp
 //  \brief Problem generator for turbulence
+#include <algorithm>
 #include <iostream> // cout
+#include <string>
 
 #include "athena.hpp"
+#include "globals.hpp"
 #include "parameter_input.hpp"
 #include "coordinates/cell_locations.hpp"
 #include "mesh/mesh.hpp"
@@ -19,6 +22,7 @@
 
 // User-defined history functions
 void TurbulentHistory(HistoryData *pdata, Mesh *pm);
+void TurbulentStatsHistory(HistoryData *pdata, Mesh *pm);
 
 
 //----------------------------------------------------------------------------------------
@@ -26,6 +30,19 @@ void TurbulentHistory(HistoryData *pdata, Mesh *pm);
 //  \brief Problem Generator for turbulence
 
 void ProblemGenerator::UserProblem(ParameterInput *pin, const bool restart) {
+  std::string turb_history = pin->GetOrAddString("problem","turb_history","legacy");
+  if (turb_history == "legacy") {
+    user_hist_func = TurbulentHistory;
+  } else if (turb_history == "stats" || turb_history == "custom" ||
+             turb_history == "rms_velocity" || turb_history == "vrms") {
+    user_hist_func = TurbulentStatsHistory;
+  } else {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+       << std::endl << "<problem>/turb_history = '" << turb_history
+       << "' not implemented" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+
   if (restart) return;
   MeshBlockPack *pmbp = pmy_mesh_->pmb_pack;
   auto &indcs = pmy_mesh_->mb_indcs;
@@ -37,15 +54,18 @@ void ProblemGenerator::UserProblem(ParameterInput *pin, const bool restart) {
     exit(EXIT_FAILURE);
   }
 
-  // enroll user history function
-  user_hist_func = TurbulentHistory;
-
   // capture variables for kernel
   int &is = indcs.is; int &ie = indcs.ie;
   int &js = indcs.js; int &je = indcs.je;
   int &ks = indcs.ks; int &ke = indcs.ke;
 
-  Real cs = pin->GetOrAddReal("eos","iso_sound_speed",1.0);
+  Real cs = 1.0;
+  if (pmbp->phydro != nullptr) {
+    cs = pin->GetOrAddReal("hydro","iso_sound_speed",1.0);
+  } else if (pmbp->pmhd != nullptr) {
+    cs = pin->GetOrAddReal("mhd","iso_sound_speed",1.0);
+  }
+
   Real beta = pin->GetOrAddReal("problem","beta",1.0);
 
   // Initialize Hydro variables -------------------------------
@@ -163,6 +183,88 @@ void ProblemGenerator::UserProblem(ParameterInput *pin, const bool restart) {
     });
   }
 
+  return;
+}
+
+
+//----------------------------------------------------------------------------------------
+// Function for computing an alternative turbulence history.
+// These are raw, volume-weighted global sums. HistoryOutput reduces and finalizes them.
+void TurbulentStatsHistory(HistoryData *pdata, Mesh *pm) {
+  pdata->nhist = 13;
+  pdata->label[0] = "turbstat_raw";
+
+  DvceArray5D<Real> w0;
+  EOS_Data eos;
+  if (pm->pmb_pack->phydro != nullptr) {
+    w0 = pm->pmb_pack->phydro->w0;
+    eos = pm->pmb_pack->phydro->peos->eos_data;
+  } else if (pm->pmb_pack->pmhd != nullptr) {
+    w0 = pm->pmb_pack->pmhd->w0;
+    eos = pm->pmb_pack->pmhd->peos->eos_data;
+  } else {
+    for (int n=0; n<NHISTORY_VARIABLES; ++n) {
+      pdata->hdata[n] = 0.0;
+    }
+    return;
+  }
+
+  auto &size = pm->pmb_pack->pmb->mb_size;
+  auto &indcs = pm->pmb_pack->pmesh->mb_indcs;
+  int is = indcs.is; int nx1 = indcs.nx1;
+  int js = indcs.js; int nx2 = indcs.nx2;
+  int ks = indcs.ks; int nx3 = indcs.nx3;
+  const int nmkji = (pm->pmb_pack->nmb_thispack)*nx3*nx2*nx1;
+  const int nkji = nx3*nx2*nx1;
+  const int nji  = nx2*nx1;
+
+  array_sum::GlobalSum raw_sum;
+  Kokkos::parallel_reduce("TurbStatsRaw",
+  Kokkos::RangePolicy<>(DevExeSpace(),0,nmkji),
+  KOKKOS_LAMBDA(const int &idx, array_sum::GlobalSum &mb_sum) {
+    int m = (idx)/nkji;
+    int k = (idx - m*nkji)/nji;
+    int j = (idx - m*nkji - k*nji)/nx1;
+    int i = (idx - m*nkji - k*nji - j*nx1) + is;
+    k += ks;
+    j += js;
+
+    Real vol = size.d_view(m).dx1*size.d_view(m).dx2*size.d_view(m).dx3;
+    Real rho = w0(m,IDN,k,j,i);
+    Real vx = w0(m,IVX,k,j,i);
+    Real vy = w0(m,IVY,k,j,i);
+    Real vz = w0(m,IVZ,k,j,i);
+    Real cs = eos.iso_cs;
+    if (eos.is_ideal) {
+      Real pgas = eos.IdealGasPressure(w0(m,IEN,k,j,i));
+      cs = eos.IdealHydroSoundSpeed(rho, pgas);
+    }
+    Real vocs = sqrt(vx*vx + vy*vy + vz*vz)/cs;
+
+    array_sum::GlobalSum hvars;
+    hvars.the_array[0] = vol;
+    hvars.the_array[1] = rho*vol;
+    hvars.the_array[2] = rho*rho*vol;
+    hvars.the_array[3] = vx*vol;
+    hvars.the_array[4] = vy*vol;
+    hvars.the_array[5] = vz*vol;
+    hvars.the_array[6] = vx*vx*vol;
+    hvars.the_array[7] = vy*vy*vol;
+    hvars.the_array[8] = vz*vz*vol;
+    hvars.the_array[9] = cs*vol;
+    hvars.the_array[10] = cs*cs*vol;
+    hvars.the_array[11] = vocs*vol;
+    hvars.the_array[12] = vocs*vocs*vol;
+    for (int n=13; n<NHISTORY_VARIABLES; ++n) {
+      hvars.the_array[n] = 0.0;
+    }
+    mb_sum += hvars;
+  }, Kokkos::Sum<array_sum::GlobalSum>(raw_sum));
+  Kokkos::fence();
+
+  for (int n=0; n<NHISTORY_VARIABLES; ++n) {
+    pdata->hdata[n] = raw_sum.the_array[n];
+  }
   return;
 }
 

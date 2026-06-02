@@ -7,6 +7,8 @@
 //  \brief writes history output data, volume-averaged quantities that are output
 //         frequently in time to trace their evolution.
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <iomanip>
@@ -22,6 +24,52 @@
 #include "mhd/mhd.hpp"
 #include "z4c/z4c.hpp"
 #include "outputs.hpp"
+
+namespace {
+void FinalizeTurbulentStatsHistory(HistoryData *pdata) {
+  Real raw[NHISTORY_VARIABLES];
+  for (int n=0; n<NHISTORY_VARIABLES; ++n) {
+    raw[n] = pdata->hdata[n];
+    pdata->hdata[n] = 0.0;
+  }
+
+  Real vol_inv = 1.0/raw[0];
+  Real mean_rho = raw[1]*vol_inv;
+  Real mean_vx = raw[3]*vol_inv;
+  Real mean_vy = raw[4]*vol_inv;
+  Real mean_vz = raw[5]*vol_inv;
+  Real mean_cs = raw[9]*vol_inv;
+  Real mean_vocs = raw[11]*vol_inv;
+
+  Real sig_rho2 = raw[2]*vol_inv - SQR(mean_rho);
+  Real sig_vx2 = raw[6]*vol_inv - SQR(mean_vx);
+  Real sig_vy2 = raw[7]*vol_inv - SQR(mean_vy);
+  Real sig_vz2 = raw[8]*vol_inv - SQR(mean_vz);
+  Real sig_cs2 = raw[10]*vol_inv - SQR(mean_cs);
+  Real sig_vocs2 = raw[12]*vol_inv - SQR(mean_vocs);
+
+  pdata->nhist = 9;
+  pdata->label[0] = "sig_vx";
+  pdata->label[1] = "sig_vy";
+  pdata->label[2] = "sig_vz";
+  pdata->label[3] = "sig_v";
+  pdata->label[4] = "sig_rho";
+  pdata->label[5] = "mean_cs";
+  pdata->label[6] = "sig_cs";
+  pdata->label[7] = "mach_turb";
+  pdata->label[8] = "sig_vocs";
+
+  pdata->hdata[0] = std::sqrt(std::max(sig_vx2, 0.0));
+  pdata->hdata[1] = std::sqrt(std::max(sig_vy2, 0.0));
+  pdata->hdata[2] = std::sqrt(std::max(sig_vz2, 0.0));
+  pdata->hdata[3] = std::sqrt(std::max(sig_vx2 + sig_vy2 + sig_vz2, 0.0));
+  pdata->hdata[4] = std::sqrt(std::max(sig_rho2, 0.0));
+  pdata->hdata[5] = mean_cs;
+  pdata->hdata[6] = std::sqrt(std::max(sig_cs2, 0.0));
+  pdata->hdata[7] = pdata->hdata[3]/mean_cs;
+  pdata->hdata[8] = std::sqrt(std::max(sig_vocs2, 0.0));
+}
+} // namespace
 
 //----------------------------------------------------------------------------------------
 // Constructor: also calls BaseTypeOutput base class constructor
@@ -342,6 +390,11 @@ void HistoryOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
 
     // only the master rank writes the file
     if (global_variable::my_rank == 0) {
+      if (data.physics == PhysicsModule::UserDefined &&
+          data.label[0] == "turbstat_raw") {
+        FinalizeTurbulentStatsHistory(&data);
+      }
+
       // create filename: "file_basename" + ".physics" + ".hst"
       // There is no file number or id in history output filenames.
       std::string fname;
