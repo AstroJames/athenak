@@ -150,6 +150,7 @@ add_executable(
         utils/change_rundir.cpp
         utils/show_config.cpp
         utils/lagrange_interpolator.cpp
+        utils/spectral_ic_gen.cpp
         utils/tr_table.cpp
 
         z4c/compact_object_tracker.cpp
