@@ -69,6 +69,115 @@ void FinalizeTurbulentStatsHistory(HistoryData *pdata) {
   pdata->hdata[7] = pdata->hdata[3]/mean_cs;
   pdata->hdata[8] = std::sqrt(std::max(sig_vocs2, 0.0));
 }
+
+void FinalizeTcgHistory(HistoryData *pdata) {
+  Real raw[NHISTORY_VARIABLES];
+  for (int n=0; n<NHISTORY_VARIABLES; ++n) {
+    raw[n] = pdata->hdata[n];
+    pdata->hdata[n] = 0.0;
+  }
+
+  Real volume = raw[0];
+  Real vol_inv = (volume > 0.0) ? 1.0/volume : 0.0;
+  Real mass_mid_inv = (raw[2] > 0.0) ? 1.0/raw[2] : 0.0;
+  Real vol_mid_inv = (raw[9] > 0.0) ? 1.0/raw[9] : 0.0;
+  Real vol_atm_inv = (raw[11] > 0.0) ? 1.0/raw[11] : 0.0;
+
+  pdata->nhist = 46;
+  pdata->label[0] = "mass";
+  pdata->label[1] = "mass_mid";
+  pdata->label[2] = "fcold_mid";
+  pdata->label[3] = "mean_T";
+  pdata->label[4] = "mean_mach";
+  pdata->label[5] = "mean_rho";
+  pdata->label[6] = "mean_pgas";
+  pdata->label[7] = "mean_abs_vz";
+  pdata->label[8] = "mean_T_mid";
+  pdata->label[9] = "mean_T_atm";
+  pdata->label[10] = "cool_src";
+  pdata->label[11] = "heat_src";
+  pdata->label[12] = "vol_mid";
+  pdata->label[13] = "vol_atm";
+  pdata->label[14] = "mean_tcool_atm";
+  pdata->label[15] = "mean_src_frac";
+  pdata->label[16] = "min_T";
+  pdata->label[17] = "max_T";
+  pdata->label[18] = "min_rho";
+  pdata->label[19] = "max_rho";
+  pdata->label[20] = "max_mach";
+  pdata->label[21] = "max_abs_v";
+  pdata->label[22] = "max_sig_sp";
+  pdata->label[23] = "max_src_fr";
+  pdata->label[24] = "max_sig_x";
+  pdata->label[25] = "max_sig_y";
+  pdata->label[26] = "max_sig_z";
+  pdata->label[27] = "turb_src";
+  pdata->label[28] = "bal_src";
+  pdata->label[29] = "disk_turb";
+  pdata->label[30] = "disk_bal";
+  pdata->label[31] = "cool_disk";
+  pdata->label[32] = "heat_disk";
+  pdata->label[33] = "app_cool";
+  pdata->label[34] = "app_heat";
+  pdata->label[35] = "app_disk";
+  pdata->label[36] = "app_net";
+  pdata->label[37] = "mass_disk";
+  pdata->label[38] = "eth_disk";
+  pdata->label[39] = "ekin_disk";
+  pdata->label[40] = "etot_disk";
+  pdata->label[41] = "mdot_adv";
+  pdata->label[42] = "edot_adv";
+  pdata->label[43] = "eint_adv";
+  pdata->label[44] = "grav_work";
+  pdata->label[45] = "turb_wdsk";
+
+  pdata->hdata[0] = raw[1];
+  pdata->hdata[1] = raw[2];
+  pdata->hdata[2] = raw[3]*mass_mid_inv;
+  pdata->hdata[3] = raw[4]*vol_inv;
+  pdata->hdata[4] = raw[14]*vol_inv;
+  pdata->hdata[5] = raw[5]*vol_inv;
+  pdata->hdata[6] = raw[6]*vol_inv;
+  pdata->hdata[7] = raw[7]*vol_inv;
+  pdata->hdata[8] = raw[8]*vol_mid_inv;
+  pdata->hdata[9] = raw[10]*vol_atm_inv;
+  pdata->hdata[10] = raw[12];
+  pdata->hdata[11] = raw[13];
+  pdata->hdata[12] = raw[9];
+  pdata->hdata[13] = raw[11];
+  pdata->hdata[14] = raw[15]*vol_atm_inv;
+  pdata->hdata[15] = raw[16]*vol_inv;
+  pdata->hdata[16] = raw[19];
+  pdata->hdata[17] = raw[20];
+  pdata->hdata[18] = raw[21];
+  pdata->hdata[19] = raw[22];
+  pdata->hdata[20] = raw[23];
+  pdata->hdata[21] = raw[24];
+  pdata->hdata[22] = raw[25];
+  pdata->hdata[23] = raw[26];
+  pdata->hdata[24] = raw[27];
+  pdata->hdata[25] = raw[28];
+  pdata->hdata[26] = raw[29];
+  pdata->hdata[27] = raw[30];
+  pdata->hdata[28] = raw[31];
+  pdata->hdata[29] = raw[32];
+  pdata->hdata[30] = raw[33];
+  pdata->hdata[31] = raw[17];
+  pdata->hdata[32] = raw[18];
+  pdata->hdata[33] = raw[34];
+  pdata->hdata[34] = raw[35];
+  pdata->hdata[35] = raw[36];
+  pdata->hdata[36] = raw[37];
+  pdata->hdata[37] = raw[38];
+  pdata->hdata[38] = raw[39];
+  pdata->hdata[39] = raw[40];
+  pdata->hdata[40] = raw[41];
+  pdata->hdata[41] = raw[42];
+  pdata->hdata[42] = raw[43];
+  pdata->hdata[43] = raw[44];
+  pdata->hdata[44] = raw[45];
+  pdata->hdata[45] = raw[46];
+}
 } // namespace
 
 //----------------------------------------------------------------------------------------
@@ -393,6 +502,9 @@ void HistoryOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
       if (data.physics == PhysicsModule::UserDefined &&
           data.label[0] == "turbstat_raw") {
         FinalizeTurbulentStatsHistory(&data);
+      } else if (data.physics == PhysicsModule::UserDefined &&
+                 data.label[0] == "tcg_raw") {
+        FinalizeTcgHistory(&data);
       }
 
       // create filename: "file_basename" + ".physics" + ".hst"

@@ -7,11 +7,13 @@
 //  \brief implementation of functions in TurbulenceDriver
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "athena.hpp"
 #include "parameter_input.hpp"
@@ -30,9 +32,36 @@
 namespace {
 constexpr int kGeometryIsotropic = 0;
 constexpr int kGeometryAnisotropic = 1;
+constexpr int kGeometryVertical = 2;
 constexpr int kProfilePowerLaw = 0;
 constexpr int kProfileParabola = 1;
 constexpr int kProfileBand = 2;
+constexpr int kWindowNone = 0;
+constexpr int kWindowSmoothTophat = 1;
+constexpr int kWindowTophat = 2;
+constexpr int kWindowGaussian = 3;
+
+KOKKOS_INLINE_FUNCTION
+Real SpatialWindowWeight(Real x, int window, Real width, Real transition) {
+  if (window == kWindowNone) return 1.0;
+  if (width <= 0.0) return 0.0;
+
+  Real az = fabs(x);
+  if (window == kWindowTophat) {
+    return (az <= width) ? 1.0 : 0.0;
+  }
+  if (window == kWindowGaussian) {
+    return exp(-0.5*SQR(az/width));
+  }
+
+  if (transition <= 0.0) {
+    return (az <= width) ? 1.0 : 0.0;
+  }
+  if (az >= width) return 0.0;
+  if (az <= width - transition) return 1.0;
+  Real s = (width - az)/transition;
+  return s*s*(3.0 - 2.0*s);
+}
 
 bool BasisActive(int n, int nkx, int nky, int nkz) {
   bool sx = (n & 4) != 0;
@@ -68,32 +97,139 @@ void ApplySolenoidalWeight(Real kx, Real ky, Real kz, Real sol_weight,
   }
 }
 
-void StoreModeCoefficients(int nmode,
-                           DualArray1D<Real> &xccc, DualArray1D<Real> &xccs,
-                           DualArray1D<Real> &xcsc, DualArray1D<Real> &xcss,
-                           DualArray1D<Real> &xscc, DualArray1D<Real> &xscs,
-                           DualArray1D<Real> &xssc, DualArray1D<Real> &xsss,
-                           DualArray1D<Real> &yccc, DualArray1D<Real> &yccs,
-                           DualArray1D<Real> &ycsc, DualArray1D<Real> &ycss,
-                           DualArray1D<Real> &yscc, DualArray1D<Real> &yscs,
-                           DualArray1D<Real> &yssc, DualArray1D<Real> &ysss,
-                           DualArray1D<Real> &zccc, DualArray1D<Real> &zccs,
-                           DualArray1D<Real> &zcsc, DualArray1D<Real> &zcss,
-                           DualArray1D<Real> &zscc, DualArray1D<Real> &zscs,
-                           DualArray1D<Real> &zssc, DualArray1D<Real> &zsss,
+void StoreModeCoefficients(int component, int nmode,
+                           DualArray2D<Real> &xccc, DualArray2D<Real> &xccs,
+                           DualArray2D<Real> &xcsc, DualArray2D<Real> &xcss,
+                           DualArray2D<Real> &xscc, DualArray2D<Real> &xscs,
+                           DualArray2D<Real> &xssc, DualArray2D<Real> &xsss,
+                           DualArray2D<Real> &yccc, DualArray2D<Real> &yccs,
+                           DualArray2D<Real> &ycsc, DualArray2D<Real> &ycss,
+                           DualArray2D<Real> &yscc, DualArray2D<Real> &yscs,
+                           DualArray2D<Real> &yssc, DualArray2D<Real> &ysss,
+                           DualArray2D<Real> &zccc, DualArray2D<Real> &zccs,
+                           DualArray2D<Real> &zcsc, DualArray2D<Real> &zcss,
+                           DualArray2D<Real> &zscc, DualArray2D<Real> &zscs,
+                           DualArray2D<Real> &zssc, DualArray2D<Real> &zsss,
                            Real xcoef[8], Real ycoef[8], Real zcoef[8]) {
-  xccc.h_view(nmode) = xcoef[0]; xccs.h_view(nmode) = xcoef[1];
-  xcsc.h_view(nmode) = xcoef[2]; xcss.h_view(nmode) = xcoef[3];
-  xscc.h_view(nmode) = xcoef[4]; xscs.h_view(nmode) = xcoef[5];
-  xssc.h_view(nmode) = xcoef[6]; xsss.h_view(nmode) = xcoef[7];
-  yccc.h_view(nmode) = ycoef[0]; yccs.h_view(nmode) = ycoef[1];
-  ycsc.h_view(nmode) = ycoef[2]; ycss.h_view(nmode) = ycoef[3];
-  yscc.h_view(nmode) = ycoef[4]; yscs.h_view(nmode) = ycoef[5];
-  yssc.h_view(nmode) = ycoef[6]; ysss.h_view(nmode) = ycoef[7];
-  zccc.h_view(nmode) = zcoef[0]; zccs.h_view(nmode) = zcoef[1];
-  zcsc.h_view(nmode) = zcoef[2]; zcss.h_view(nmode) = zcoef[3];
-  zscc.h_view(nmode) = zcoef[4]; zscs.h_view(nmode) = zcoef[5];
-  zssc.h_view(nmode) = zcoef[6]; zsss.h_view(nmode) = zcoef[7];
+  xccc.h_view(component,nmode) = xcoef[0]; xccs.h_view(component,nmode) = xcoef[1];
+  xcsc.h_view(component,nmode) = xcoef[2]; xcss.h_view(component,nmode) = xcoef[3];
+  xscc.h_view(component,nmode) = xcoef[4]; xscs.h_view(component,nmode) = xcoef[5];
+  xssc.h_view(component,nmode) = xcoef[6]; xsss.h_view(component,nmode) = xcoef[7];
+  yccc.h_view(component,nmode) = ycoef[0]; yccs.h_view(component,nmode) = ycoef[1];
+  ycsc.h_view(component,nmode) = ycoef[2]; ycss.h_view(component,nmode) = ycoef[3];
+  yscc.h_view(component,nmode) = ycoef[4]; yscs.h_view(component,nmode) = ycoef[5];
+  yssc.h_view(component,nmode) = ycoef[6]; ysss.h_view(component,nmode) = ycoef[7];
+  zccc.h_view(component,nmode) = zcoef[0]; zccs.h_view(component,nmode) = zcoef[1];
+  zcsc.h_view(component,nmode) = zcoef[2]; zcss.h_view(component,nmode) = zcoef[3];
+  zscc.h_view(component,nmode) = zcoef[4]; zscs.h_view(component,nmode) = zcoef[5];
+  zssc.h_view(component,nmode) = zcoef[6]; zsss.h_view(component,nmode) = zcoef[7];
+}
+
+int ParseDrivingGeometry(ParameterInput *pin, const std::string &block) {
+  bool has_geometry = pin->DoesParameterExist(block, "driving_geometry");
+  bool has_legacy_type = pin->DoesParameterExist(block, "driving_type");
+  if (has_geometry && has_legacy_type) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+              << std::endl << "Use only one of <" << block << ">/driving_geometry "
+              << "or legacy <" << block << ">/driving_type" << std::endl;
+    std::exit(EXIT_FAILURE);
+  }
+  if (has_legacy_type) {
+    int geometry = pin->GetInteger(block, "driving_type");
+    if (geometry < 0 || geometry > 1) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "Legacy driving_type must be 0 or 1" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    return geometry;
+  }
+
+  std::string geometry = pin->GetOrAddString(block, "driving_geometry", "isotropic");
+  if (geometry == "isotropic" || geometry == "iso" || geometry == "0") {
+    return kGeometryIsotropic;
+  } else if (geometry == "anisotropic" || geometry == "aniso" || geometry == "1") {
+    return kGeometryAnisotropic;
+  } else if (geometry == "vertical" || geometry == "z" || geometry == "2") {
+    return kGeometryVertical;
+  }
+  std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+            << std::endl << "Unknown driving_geometry = '" << geometry
+            << "' in <" << block << ">" << std::endl;
+  std::exit(EXIT_FAILURE);
+}
+
+int ParseDrivingProfile(ParameterInput *pin, const std::string &block) {
+  bool has_profile = pin->DoesParameterExist(block, "driving_profile");
+  bool has_legacy_parabola = pin->DoesParameterExist(block, "parabola_driving");
+  if (has_profile && has_legacy_parabola) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+              << std::endl << "Use only one of <" << block << ">/driving_profile "
+              << "or legacy <" << block << ">/parabola_driving" << std::endl;
+    std::exit(EXIT_FAILURE);
+  }
+  if (has_legacy_parabola) {
+    bool parabola_driving = pin->GetBoolean(block, "parabola_driving");
+    return parabola_driving ? kProfileParabola : kProfilePowerLaw;
+  }
+
+  std::string profile = pin->GetOrAddString(block, "driving_profile", "powerlaw");
+  if (profile == "powerlaw" || profile == "power_law" || profile == "power-law") {
+    return kProfilePowerLaw;
+  } else if (profile == "parabola" || profile == "parabolic") {
+    return kProfileParabola;
+  } else if (profile == "band" || profile == "rectangle" || profile == "constant" ||
+             profile == "top_hat" || profile == "tophat") {
+    return kProfileBand;
+  }
+  std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+            << std::endl << "Unknown driving_profile = '" << profile
+            << "' in <" << block << ">" << std::endl;
+  std::exit(EXIT_FAILURE);
+}
+
+int ParseWindow(ParameterInput *pin, const std::string &block, const std::string &name) {
+  std::string window = pin->GetOrAddString(block, name, "none");
+  if (window == "none" || window == "off" || window == "0") {
+    return kWindowNone;
+  } else if (window == "smooth_tophat" || window == "smooth_top_hat" ||
+             window == "smooth") {
+    return kWindowSmoothTophat;
+  } else if (window == "tophat" || window == "top_hat" || window == "hard") {
+    return kWindowTophat;
+  } else if (window == "gaussian") {
+    return kWindowGaussian;
+  }
+  std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+            << std::endl << "Unknown " << name << " = '" << window
+            << "' in <" << block << ">" << std::endl;
+  std::exit(EXIT_FAILURE);
+}
+
+int CountDrivingModes(int nlow, int nhigh, int driving_geometry) {
+  int nlow_sqr = SQR(nlow);
+  int nhigh_sqr = SQR(nhigh);
+  int count = 0;
+  for (int nkx = 0; nkx <= nhigh; nkx++) {
+    for (int nky = 0; nky <= nhigh; nky++) {
+      for (int nkz = 0; nkz <= nhigh; nkz++) {
+        if (nkx == 0 && nky == 0 && nkz == 0) continue;
+        int nsqr = 0;
+        bool flag_prl = true;
+        if (driving_geometry == kGeometryIsotropic) {
+          nsqr = SQR(nkx) + SQR(nky) + SQR(nkz);
+        } else if (driving_geometry == kGeometryAnisotropic) {
+          nsqr = SQR(nkx) + SQR(nky);
+          int nprlsqr = SQR(nkz);
+          flag_prl = (nprlsqr >= nlow_sqr && nprlsqr <= nhigh_sqr);
+        } else if (driving_geometry == kGeometryVertical) {
+          nsqr = SQR(nkx) + SQR(nky);
+          flag_prl = (nkz == 0);
+        }
+        if (nsqr >= nlow_sqr && nsqr <= nhigh_sqr && flag_prl) count++;
+      }
+    }
+  }
+  return count;
 }
 } // namespace
 
@@ -104,15 +240,17 @@ TurbulenceDriver::TurbulenceDriver(MeshBlockPack *pp, ParameterInput *pin) :
   pmy_pack(pp),
   force("force",1,1,1,1,1),
   force_tmp("force_tmp",1,1,1,1,1),
-  xccc("xccc",1),xccs("xccs",1),xcsc("xcsc",1),xcss("xcss",1),
-  xscc("xscc",1),xscs("xscs",1),xssc("xssc",1),xsss("xsss",1),
-  yccc("yccc",1),yccs("yccs",1),ycsc("ycsc",1),ycss("ycss",1),
-  yscc("yscc",1),yscs("yscs",1),yssc("yssc",1),ysss("ysss",1),
-  zccc("zccc",1),zccs("zccs",1),zcsc("zcsc",1),zcss("zcss",1),
-  zscc("zscc",1),zscs("zscs",1),zssc("zssc",1),zsss("zsss",1),
-  kx_mode("kx_mode",1),ky_mode("ky_mode",1),kz_mode("kz_mode",1),
-  xcos("xcos",1,1,1),xsin("xsin",1,1,1),ycos("ycos",1,1,1),
-  ysin("ysin",1,1,1),zcos("zcos",1,1,1),zsin("zsin",1,1,1) {
+  force_component("force_component",1,1,1,1,1,1),
+  force_tmp_component("force_tmp_component",1,1,1,1,1,1),
+  xccc("xccc",1,1),xccs("xccs",1,1),xcsc("xcsc",1,1),xcss("xcss",1,1),
+  xscc("xscc",1,1),xscs("xscs",1,1),xssc("xssc",1,1),xsss("xsss",1,1),
+  yccc("yccc",1,1),yccs("yccs",1,1),ycsc("ycsc",1,1),ycss("ycss",1,1),
+  yscc("yscc",1,1),yscs("yscs",1,1),yssc("yssc",1,1),ysss("ysss",1,1),
+  zccc("zccc",1,1),zccs("zccs",1,1),zcsc("zcsc",1,1),zcss("zcss",1,1),
+  zscc("zscc",1,1),zscs("zscs",1,1),zssc("zssc",1,1),zsss("zsss",1,1),
+  kx_mode("kx_mode",1,1),ky_mode("ky_mode",1,1),kz_mode("kz_mode",1,1),
+  xcos("xcos",1,1,1,1),xsin("xsin",1,1,1,1),ycos("ycos",1,1,1,1),
+  ysin("ysin",1,1,1,1),zcos("zcos",1,1,1,1),zsin("zsin",1,1,1,1) {
   // allocate memory for force registers
   int nmb = pmy_pack->nmb_thispack;
   auto &indcs = pmy_pack->pmesh->mb_indcs;
@@ -123,174 +261,195 @@ TurbulenceDriver::TurbulenceDriver(MeshBlockPack *pp, ParameterInput *pin) :
   Kokkos::realloc(force, nmb, 3, ncells3, ncells2, ncells1);
   Kokkos::realloc(force_tmp, nmb, 3, ncells3, ncells2, ncells1);
 
-  // range of modes including, corresponding to kmin and kmax
-  nlow = pin->GetOrAddInteger("turb_driving", "nlow", 1);
-  nhigh = pin->GetOrAddInteger("turb_driving", "nhigh", 2);
-  // Driving geometry.  Legacy driving_type = 0/1 is still accepted when the new
-  // driving_geometry key is absent.
-  bool has_geometry = pin->DoesParameterExist("turb_driving", "driving_geometry");
-  bool has_legacy_type = pin->DoesParameterExist("turb_driving", "driving_type");
-  if (has_geometry && has_legacy_type) {
+  num_components = pin->GetOrAddInteger("turb_driving", "num_components", 1);
+  if (num_components < 1) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-              << std::endl << "Use only one of <turb_driving>/driving_geometry "
-              << "or legacy <turb_driving>/driving_type" << std::endl;
+              << std::endl << "num_components must be >= 1" << std::endl;
     std::exit(EXIT_FAILURE);
   }
-  if (has_legacy_type) {
-    driving_geometry = pin->GetInteger("turb_driving", "driving_type");
-    if (driving_geometry < 0 || driving_geometry > 1) {
+  component_name.resize(num_components);
+  nlow.resize(num_components);
+  nhigh.resize(num_components);
+  mode_count.resize(num_components);
+  tcorr.resize(num_components);
+  dedt.resize(num_components);
+  expo.resize(num_components);
+  exp_prp.resize(num_components);
+  exp_prl.resize(num_components);
+  sol_weight.resize(num_components);
+  parabola_peak.resize(num_components);
+  parabola_width.resize(num_components);
+  vertical_window.resize(num_components);
+  vertical_window_width.resize(num_components);
+  vertical_window_transition.resize(num_components);
+  transverse_window.resize(num_components);
+  transverse_window_radius.resize(num_components);
+  transverse_window_transition.resize(num_components);
+  driving_geometry.resize(num_components);
+  driving_profile.resize(num_components);
+
+  Real default_window_width = 0.0;
+  if (pin->DoesParameterExist("problem", "h")) {
+    default_window_width = pin->GetReal("problem", "h");
+  }
+
+  max_mode_count = 0;
+  for (int c = 0; c < num_components; ++c) {
+    std::string block = (num_components == 1) ?
+                        "turb_driving" :
+                        "turb_driving/component" + std::to_string(c);
+    if (num_components > 1 && !pin->DoesBlockExist(block)) {
       std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-                << std::endl << "Legacy driving_type must be 0 or 1" << std::endl;
+                << std::endl << "Missing <" << block << "> for num_components = "
+                << num_components << std::endl;
       std::exit(EXIT_FAILURE);
     }
-  } else {
-    std::string geometry = pin->GetOrAddString("turb_driving", "driving_geometry",
-                                               "isotropic");
-    if (geometry == "isotropic" || geometry == "iso" || geometry == "0") {
-      driving_geometry = kGeometryIsotropic;
-    } else if (geometry == "anisotropic" || geometry == "aniso" || geometry == "1") {
-      driving_geometry = kGeometryAnisotropic;
-    } else {
+
+    component_name[c] = pin->GetOrAddString(block, "name",
+                                            "component" + std::to_string(c));
+    nlow[c] = pin->GetOrAddInteger(block, "nlow", 1);
+    nhigh[c] = pin->GetOrAddInteger(block, "nhigh", 2);
+    if (nlow[c] < 0 || nhigh[c] < nlow[c]) {
       std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-                << std::endl << "Unknown driving_geometry = '" << geometry << "'"
+                << std::endl << "Invalid mode range in <" << block << ">"
                 << std::endl;
       std::exit(EXIT_FAILURE);
     }
-  }
-  // power-law exponent for isotropic driving
-  expo = pin->GetOrAddReal("turb_driving", "expo", 5.0/3.0);
-  exp_prp = pin->GetOrAddReal("turb_driving", "exp_prp", 5.0/3.0);
-  exp_prl = pin->GetOrAddReal("turb_driving", "exp_prl", 0.0);
-  // Projection weight for isotropic driving: 1 is solenoidal, 0 is compressive,
-  // and 0.5 gives the natural mixture.
-  sol_weight = pin->GetOrAddReal("turb_driving", "sol_weight", 1.0);
-  if (sol_weight < 0.0 || sol_weight > 1.0) {
-    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-              << std::endl << "sol_weight must be in [0, 1]" << std::endl;
-    std::exit(EXIT_FAILURE);
-  }
-  // Driving profile.  Legacy parabola_driving=true is still accepted when the new
-  // driving_profile key is absent.
-  bool has_profile = pin->DoesParameterExist("turb_driving", "driving_profile");
-  bool has_legacy_parabola = pin->DoesParameterExist("turb_driving", "parabola_driving");
-  if (has_profile && has_legacy_parabola) {
-    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-              << std::endl << "Use only one of <turb_driving>/driving_profile "
-              << "or legacy <turb_driving>/parabola_driving" << std::endl;
-    std::exit(EXIT_FAILURE);
-  }
-  if (has_legacy_parabola) {
-    bool parabola_driving = pin->GetBoolean("turb_driving", "parabola_driving");
-    driving_profile = parabola_driving ? kProfileParabola : kProfilePowerLaw;
-  } else {
-    std::string profile = pin->GetOrAddString("turb_driving", "driving_profile",
-                                              "powerlaw");
-    if (profile == "powerlaw" || profile == "power_law" || profile == "power-law") {
-      driving_profile = kProfilePowerLaw;
-    } else if (profile == "parabola" || profile == "parabolic") {
-      driving_profile = kProfileParabola;
-    } else if (profile == "band" || profile == "rectangle" || profile == "constant" ||
-               profile == "top_hat" || profile == "tophat") {
-      driving_profile = kProfileBand;
-    } else {
+    driving_geometry[c] = ParseDrivingGeometry(pin, block);
+    driving_profile[c] = ParseDrivingProfile(pin, block);
+    expo[c] = pin->GetOrAddReal(block, "expo", 5.0/3.0);
+    exp_prp[c] = pin->GetOrAddReal(block, "exp_prp", 5.0/3.0);
+    exp_prl[c] = pin->GetOrAddReal(block, "exp_prl", 0.0);
+    sol_weight[c] = pin->GetOrAddReal(block, "sol_weight", 1.0);
+    if (sol_weight[c] < 0.0 || sol_weight[c] > 1.0) {
       std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-                << std::endl << "Unknown driving_profile = '" << profile << "'"
+                << std::endl << "sol_weight must be in [0, 1] in <" << block << ">"
                 << std::endl;
       std::exit(EXIT_FAILURE);
     }
-  }
-  parabola_peak = pin->GetOrAddReal("turb_driving", "parabola_peak", 2.0);
-  parabola_width = pin->GetOrAddReal("turb_driving", "parabola_width", 1.0);
-  if (driving_profile != kProfilePowerLaw && driving_geometry != kGeometryIsotropic) {
-    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-              << std::endl << "driving_profile = band/parabola is currently implemented "
-              << "only for driving_geometry = isotropic" << std::endl;
-    std::exit(EXIT_FAILURE);
-  }
-  if (driving_geometry != kGeometryIsotropic && sol_weight != 1.0) {
-    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-              << std::endl << "sol_weight != 1 is currently implemented only for "
-              << "driving_geometry = isotropic" << std::endl;
-    std::exit(EXIT_FAILURE);
-  }
-  if (driving_profile == kProfileParabola && parabola_width <= 0.0) {
-    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-              << std::endl << "parabola_width must be positive" << std::endl;
-    std::exit(EXIT_FAILURE);
-  }
-  // energy injection rate
-  dedt = pin->GetOrAddReal("turb_driving", "dedt", 0.0);
-  // correlation time
-  tcorr = pin->GetOrAddReal("turb_driving", "tcorr", 0.0);
-
-  Real nlow_sqr = nlow*nlow;
-  Real nhigh_sqr = nhigh*nhigh;
-
-  mode_count = 0;
-
-  int nkx, nky, nkz;
-  Real nsqr;
-  for (nkx = 0; nkx <= nhigh; nkx++) {
-    for (nky = 0; nky <= nhigh; nky++) {
-      for (nkz = 0; nkz <= nhigh; nkz++) {
-        if (nkx == 0 && nky == 0 && nkz == 0) continue;
-        nsqr = 0.0;
-        bool flag_prl = true;
-        if (driving_geometry == kGeometryIsotropic) {
-          nsqr = SQR(nkx) + SQR(nky) + SQR(nkz);
-        } else if (driving_geometry == kGeometryAnisotropic) {
-          nsqr = SQR(nkx) + SQR(nky);
-          Real nprlsqr = SQR(nkz);
-          if (nprlsqr >= nlow_sqr && nprlsqr <= nhigh_sqr) {
-            flag_prl = true;
-          } else {
-            flag_prl = false;
-          }
-        }
-        if (nsqr >= nlow_sqr && nsqr <= nhigh_sqr && flag_prl) {
-          mode_count++;
-        }
-      }
+    parabola_peak[c] = pin->GetOrAddReal(block, "parabola_peak", 2.0);
+    parabola_width[c] = pin->GetOrAddReal(block, "parabola_width", 1.0);
+    if (driving_profile[c] != kProfilePowerLaw &&
+        driving_geometry[c] != kGeometryIsotropic &&
+        driving_geometry[c] != kGeometryVertical) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "driving_profile = band/parabola is currently "
+                << "implemented only for driving_geometry = isotropic/vertical in <"
+                << block << ">" << std::endl;
+      std::exit(EXIT_FAILURE);
     }
+    if (driving_geometry[c] != kGeometryIsotropic &&
+        driving_geometry[c] != kGeometryVertical && sol_weight[c] != 1.0) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "sol_weight != 1 is currently implemented only for "
+                << "driving_geometry = isotropic/vertical in <" << block << ">"
+                << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    if (driving_profile[c] == kProfileParabola && parabola_width[c] <= 0.0) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "parabola_width must be positive in <" << block << ">"
+                << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    vertical_window[c] = ParseWindow(pin, block, "vertical_window");
+    vertical_window_width[c] =
+        pin->GetOrAddReal(block, "vertical_window_width", default_window_width);
+    vertical_window_transition[c] =
+        pin->GetOrAddReal(block, "vertical_window_transition",
+                          0.5*vertical_window_width[c]);
+    if (vertical_window[c] != kWindowNone && vertical_window_width[c] <= 0.0) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "vertical_window_width must be positive when "
+                << "vertical_window != none in <" << block << ">" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    if (vertical_window[c] == kWindowSmoothTophat &&
+        vertical_window_transition[c] < 0.0) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "vertical_window_transition must be non-negative in <"
+                << block << ">" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    vertical_window_transition[c] = std::min(vertical_window_transition[c],
+                                            vertical_window_width[c]);
+
+    transverse_window[c] = ParseWindow(pin, block, "transverse_window");
+    transverse_window_radius[c] =
+        pin->GetOrAddReal(block, "transverse_window_radius", 0.0);
+    transverse_window_transition[c] =
+        pin->GetOrAddReal(block, "transverse_window_transition",
+                          0.5*transverse_window_radius[c]);
+    if (transverse_window[c] != kWindowNone && transverse_window_radius[c] <= 0.0) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "transverse_window_radius must be positive when "
+                << "transverse_window != none in <" << block << ">" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    if (transverse_window[c] == kWindowSmoothTophat &&
+        transverse_window_transition[c] < 0.0) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "transverse_window_transition must be non-negative in <"
+                << block << ">" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    transverse_window_transition[c] = std::min(transverse_window_transition[c],
+                                              transverse_window_radius[c]);
+
+    dedt[c] = pin->GetOrAddReal(block, "dedt", 0.0);
+    tcorr[c] = pin->GetOrAddReal(block, "tcorr", 0.0);
+    mode_count[c] = CountDrivingModes(nlow[c], nhigh[c], driving_geometry[c]);
+    if (mode_count[c] <= 0) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "No active forcing modes in <" << block << ">"
+                << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    max_mode_count = std::max(max_mode_count, mode_count[c]);
   }
 
-  Kokkos::realloc(xccc, mode_count);
-  Kokkos::realloc(xccs, mode_count);
-  Kokkos::realloc(xcsc, mode_count);
-  Kokkos::realloc(xcss, mode_count);
-  Kokkos::realloc(xscc, mode_count);
-  Kokkos::realloc(xscs, mode_count);
-  Kokkos::realloc(xssc, mode_count);
-  Kokkos::realloc(xsss, mode_count);
+  Kokkos::realloc(force_component, num_components, nmb, 3, ncells3, ncells2,
+                  ncells1);
+  Kokkos::realloc(force_tmp_component, num_components, nmb, 3, ncells3, ncells2,
+                  ncells1);
 
-  Kokkos::realloc(yccc, mode_count);
-  Kokkos::realloc(yccs, mode_count);
-  Kokkos::realloc(ycsc, mode_count);
-  Kokkos::realloc(ycss, mode_count);
-  Kokkos::realloc(yscc, mode_count);
-  Kokkos::realloc(yscs, mode_count);
-  Kokkos::realloc(yssc, mode_count);
-  Kokkos::realloc(ysss, mode_count);
+  Kokkos::realloc(xccc, num_components, max_mode_count);
+  Kokkos::realloc(xccs, num_components, max_mode_count);
+  Kokkos::realloc(xcsc, num_components, max_mode_count);
+  Kokkos::realloc(xcss, num_components, max_mode_count);
+  Kokkos::realloc(xscc, num_components, max_mode_count);
+  Kokkos::realloc(xscs, num_components, max_mode_count);
+  Kokkos::realloc(xssc, num_components, max_mode_count);
+  Kokkos::realloc(xsss, num_components, max_mode_count);
 
-  Kokkos::realloc(zccc, mode_count);
-  Kokkos::realloc(zccs, mode_count);
-  Kokkos::realloc(zcsc, mode_count);
-  Kokkos::realloc(zcss, mode_count);
-  Kokkos::realloc(zscc, mode_count);
-  Kokkos::realloc(zscs, mode_count);
-  Kokkos::realloc(zssc, mode_count);
-  Kokkos::realloc(zsss, mode_count);
+  Kokkos::realloc(yccc, num_components, max_mode_count);
+  Kokkos::realloc(yccs, num_components, max_mode_count);
+  Kokkos::realloc(ycsc, num_components, max_mode_count);
+  Kokkos::realloc(ycss, num_components, max_mode_count);
+  Kokkos::realloc(yscc, num_components, max_mode_count);
+  Kokkos::realloc(yscs, num_components, max_mode_count);
+  Kokkos::realloc(yssc, num_components, max_mode_count);
+  Kokkos::realloc(ysss, num_components, max_mode_count);
 
-  Kokkos::realloc(kx_mode, mode_count);
-  Kokkos::realloc(ky_mode, mode_count);
-  Kokkos::realloc(kz_mode, mode_count);
+  Kokkos::realloc(zccc, num_components, max_mode_count);
+  Kokkos::realloc(zccs, num_components, max_mode_count);
+  Kokkos::realloc(zcsc, num_components, max_mode_count);
+  Kokkos::realloc(zcss, num_components, max_mode_count);
+  Kokkos::realloc(zscc, num_components, max_mode_count);
+  Kokkos::realloc(zscs, num_components, max_mode_count);
+  Kokkos::realloc(zssc, num_components, max_mode_count);
+  Kokkos::realloc(zsss, num_components, max_mode_count);
 
-  Kokkos::realloc(xcos, nmb, mode_count, ncells1);
-  Kokkos::realloc(xsin, nmb, mode_count, ncells1);
-  Kokkos::realloc(ycos, nmb, mode_count, ncells2);
-  Kokkos::realloc(ysin, nmb, mode_count, ncells2);
-  Kokkos::realloc(zcos, nmb, mode_count, ncells3);
-  Kokkos::realloc(zsin, nmb, mode_count, ncells3);
+  Kokkos::realloc(kx_mode, num_components, max_mode_count);
+  Kokkos::realloc(ky_mode, num_components, max_mode_count);
+  Kokkos::realloc(kz_mode, num_components, max_mode_count);
+
+  Kokkos::realloc(xcos, num_components, nmb, max_mode_count, ncells1);
+  Kokkos::realloc(xsin, num_components, nmb, max_mode_count, ncells1);
+  Kokkos::realloc(ycos, num_components, nmb, max_mode_count, ncells2);
+  Kokkos::realloc(ysin, num_components, nmb, max_mode_count, ncells2);
+  Kokkos::realloc(zcos, num_components, nmb, max_mode_count, ncells3);
+  Kokkos::realloc(zsin, num_components, nmb, max_mode_count, ncells3);
 
   Initialize();
 }
@@ -320,10 +479,28 @@ void TurbulenceDriver::Initialize() {
   int &nx3 = indcs.nx3;
 
   auto force_ = force;
+  auto force_component_ = force_component;
   par_for("force_init_pgen",DevExeSpace(),
           0,nmb-1,0,2,0,ncells3-1,0,ncells2-1,0,ncells1-1,
   KOKKOS_LAMBDA(int m, int n, int k, int j, int i) {
     force_(m,n,k,j,i) = 0.0;
+  });
+  const int init_total = num_components*nmb*3*ncells3*ncells2*ncells1;
+  Kokkos::parallel_for("force_component_init_pgen",
+      Kokkos::RangePolicy<>(DevExeSpace(),0,init_total),
+  KOKKOS_LAMBDA(const int &idx) {
+    int q = idx;
+    int i = q%ncells1;
+    q /= ncells1;
+    int j = q%ncells2;
+    q /= ncells2;
+    int k = q%ncells3;
+    q /= ncells3;
+    int n = q%3;
+    q /= 3;
+    int m = q%nmb;
+    int c = q/nmb;
+    force_component_(c,m,n,k,j,i) = 0.0;
   });
 
   rstate.idum = -1;
@@ -347,36 +524,35 @@ void TurbulenceDriver::Initialize() {
   dky = 2.0*M_PI/ly;
   dkz = 2.0*M_PI/lz;
 
-  int nmode = 0;
-  int nkx, nky, nkz;
-  Real nsqr;
-  Real nlow_sqr = nlow*nlow;
-  Real nhigh_sqr = nhigh*nhigh;
-  for (nkx = 0; nkx <= nhigh; nkx++) {
-    for (nky = 0; nky <= nhigh; nky++) {
-      for (nkz = 0; nkz <= nhigh; nkz++) {
-        if (nkx == 0 && nky == 0 && nkz == 0) continue;
-        nsqr = 0.0;
-        bool flag_prl = true;
-        if (driving_geometry == kGeometryIsotropic) {
-          nsqr = SQR(nkx) + SQR(nky) + SQR(nkz);
-        } else if (driving_geometry == kGeometryAnisotropic) {
-          nsqr = SQR(nkx) + SQR(nky);
-          Real nprlsqr = SQR(nkz);
-          if (nprlsqr >= nlow_sqr && nprlsqr <= nhigh_sqr) {
-            flag_prl = true;
-          } else {
-            flag_prl = false;
+  for (int c = 0; c < num_components; ++c) {
+    int nmode = 0;
+    int nlow_sqr = SQR(nlow[c]);
+    int nhigh_sqr = SQR(nhigh[c]);
+    for (int nkx = 0; nkx <= nhigh[c]; nkx++) {
+      for (int nky = 0; nky <= nhigh[c]; nky++) {
+        for (int nkz = 0; nkz <= nhigh[c]; nkz++) {
+          if (nkx == 0 && nky == 0 && nkz == 0) continue;
+          int nsqr = 0;
+          bool flag_prl = true;
+          if (driving_geometry[c] == kGeometryIsotropic) {
+            nsqr = SQR(nkx) + SQR(nky) + SQR(nkz);
+          } else if (driving_geometry[c] == kGeometryAnisotropic) {
+            nsqr = SQR(nkx) + SQR(nky);
+            int nprlsqr = SQR(nkz);
+            flag_prl = (nprlsqr >= nlow_sqr && nprlsqr <= nhigh_sqr);
+          } else if (driving_geometry[c] == kGeometryVertical) {
+            nsqr = SQR(nkx) + SQR(nky);
+            flag_prl = (nkz == 0);
           }
-        }
-        if (nsqr >= nlow_sqr && nsqr <= nhigh_sqr && flag_prl) {
-          kx = dkx*nkx;
-          ky = dky*nky;
-          kz = dkz*nkz;
-          kx_mode_.h_view(nmode) = kx;
-          ky_mode_.h_view(nmode) = ky;
-          kz_mode_.h_view(nmode) = kz;
-          nmode++;
+          if (nsqr >= nlow_sqr && nsqr <= nhigh_sqr && flag_prl) {
+            kx = dkx*nkx;
+            ky = dky*nky;
+            kz = dkz*nkz;
+            kx_mode_.h_view(c,nmode) = kx;
+            ky_mode_.h_view(c,nmode) = ky;
+            kz_mode_.h_view(c,nmode) = kz;
+            nmode++;
+          }
         }
       }
     }
@@ -391,41 +567,41 @@ void TurbulenceDriver::Initialize() {
 
   auto &size = pmy_pack->pmb->mb_size;
 
-  par_for("xsin/xcos", DevExeSpace(),0,nmb-1,0,mode_count-1,is,ie,
-  KOKKOS_LAMBDA(int m, int n, int i) {
+  par_for("xsin/xcos", DevExeSpace(),0,num_components-1,0,nmb-1,0,max_mode_count-1,is,ie,
+  KOKKOS_LAMBDA(int c, int m, int n, int i) {
     Real &x1min = size.d_view(m).x1min;
     Real &x1max = size.d_view(m).x1max;
     Real x1v = CellCenterX(i-is, nx1, x1min, x1max);
-    Real k1v = kx_mode_.d_view(n);
-    xsin_(m,n,i) = sin(k1v*x1v);
-    xcos_(m,n,i) = cos(k1v*x1v);
+    Real k1v = kx_mode_.d_view(c,n);
+    xsin_(c,m,n,i) = sin(k1v*x1v);
+    xcos_(c,m,n,i) = cos(k1v*x1v);
   });
 
-  par_for("ysin/ycos", DevExeSpace(),0,nmb-1,0,mode_count-1,js,je,
-  KOKKOS_LAMBDA(int m, int n, int j) {
+  par_for("ysin/ycos", DevExeSpace(),0,num_components-1,0,nmb-1,0,max_mode_count-1,js,je,
+  KOKKOS_LAMBDA(int c, int m, int n, int j) {
     Real &x2min = size.d_view(m).x2min;
     Real &x2max = size.d_view(m).x2max;
     Real x2v = CellCenterX(j-js, nx2, x2min, x2max);
-    Real k2v = ky_mode_.d_view(n);
-    ysin_(m,n,j) = sin(k2v*x2v);
-    ycos_(m,n,j) = cos(k2v*x2v);
+    Real k2v = ky_mode_.d_view(c,n);
+    ysin_(c,m,n,j) = sin(k2v*x2v);
+    ycos_(c,m,n,j) = cos(k2v*x2v);
     if (ncells2-1 == 0) {
-      ysin_(m,n,j) = 0.0;
-      ycos_(m,n,j) = 1.0;
+      ysin_(c,m,n,j) = 0.0;
+      ycos_(c,m,n,j) = 1.0;
     }
   });
 
-  par_for("zsin/zcos", DevExeSpace(),0,nmb-1,0,mode_count-1,ks,ke,
-  KOKKOS_LAMBDA(int m, int n, int k) {
+  par_for("zsin/zcos", DevExeSpace(),0,num_components-1,0,nmb-1,0,max_mode_count-1,ks,ke,
+  KOKKOS_LAMBDA(int c, int m, int n, int k) {
     Real &x3min = size.d_view(m).x3min;
     Real &x3max = size.d_view(m).x3max;
     Real x3v = CellCenterX(k-ks, nx3, x3min, x3max);
-    Real k3v = kz_mode_.d_view(n);
-    zsin_(m,n,k) = sin(k3v*x3v);
-    zcos_(m,n,k) = cos(k3v*x3v);
+    Real k3v = kz_mode_.d_view(c,n);
+    zsin_(c,m,n,k) = sin(k3v*x3v);
+    zcos_(c,m,n,k) = cos(k3v*x3v);
     if (ncells3-1 == 0) {
-      zsin_(m,n,k) = 0.0;
-      zcos_(m,n,k) = 1.0;
+      zsin_(c,m,n,k) = 0.0;
+      zcos_(c,m,n,k) = 1.0;
     }
   });
 
@@ -484,6 +660,7 @@ TaskStatus TurbulenceDriver::InitializeModes(Driver *pdrive, int stage) {
   int &nx1 = indcs.nx1;
   int &nx2 = indcs.nx2;
   int &nx3 = indcs.nx3;
+  auto &size = pmy_pack->pmb->mb_size;
   auto &gindcs = pm->mesh_indcs;
   int &gnx1 = gindcs.nx1;
   int &gnx2 = gindcs.nx2;
@@ -492,16 +669,24 @@ TaskStatus TurbulenceDriver::InitializeModes(Driver *pdrive, int stage) {
   // Now compute new force using new random amplitudes and phases
 
   // Zero out new force array
-  auto force_tmp_ = force_tmp;
+  auto force_tmp_ = force_tmp_component;
   int &nmb = pmy_pack->nmb_thispack;
-  par_for("force_init", DevExeSpace(),0,nmb-1,0,2,ks,ke,js,je,is,ie,
-  KOKKOS_LAMBDA(int m, int n, int k, int j, int i) {
-    force_tmp_(m,n,k,j,i) = 0.0;
+  const int init_total = num_components*nmb*3*nx3*nx2*nx1;
+  Kokkos::parallel_for("force_init", Kokkos::RangePolicy<>(DevExeSpace(),0,init_total),
+  KOKKOS_LAMBDA(const int &idx) {
+    int q = idx;
+    int i = q%nx1 + is;
+    q /= nx1;
+    int j = q%nx2 + js;
+    q /= nx2;
+    int k = q%nx3 + ks;
+    q /= nx3;
+    int n = q%3;
+    q /= 3;
+    int m = q%nmb;
+    int c = q/nmb;
+    force_tmp_(c,m,n,k,j,i) = 0.0;
   });
-
-  int nlow_sqr = SQR(nlow);
-  int nhigh_sqr = SQR(nhigh);
-  auto mode_count_ = mode_count;
 
   auto xccc_ = xccc;
   auto xccs_ = xccs;
@@ -539,42 +724,45 @@ TaskStatus TurbulenceDriver::InitializeModes(Driver *pdrive, int stage) {
   dky = 2.0*M_PI/ly;
   dkz = 2.0*M_PI/lz;
 
-  Real &ex = expo;
-  Real &ex_prp = exp_prp;
-  Real &ex_prl = exp_prl;
-  Real &sol_weight_ = sol_weight;
-  Real &parabola_peak_ = parabola_peak;
-  Real &parabola_width_ = parabola_width;
-  int &driving_profile_ = driving_profile;
   Real norm, kprl, kprp, kiso;
 
-  int nmode = 0;
-  int nkx, nky, nkz, nsqr;
-  for (nkx = 0; nkx <= nhigh; nkx++) {
-    for (nky = 0; nky <= nhigh; nky++) {
-      for (nkz = 0; nkz <= nhigh; nkz++) {
-        if (nkx == 0 && nky == 0 && nkz == 0) continue;
-        norm = 0.0;
-        nsqr = 0.0;
-        bool flag_prl = true;
-        if (driving_geometry == kGeometryIsotropic) {
-          nsqr = SQR(nkx) + SQR(nky) + SQR(nkz);
-        } else if (driving_geometry == kGeometryAnisotropic) {
-          nsqr = SQR(nkx) + SQR(nky);
-          Real nprlsqr = SQR(nkz);
-          if (nprlsqr >= nlow_sqr && nprlsqr <= nhigh_sqr) {
-            flag_prl = true;
-          } else {
-            flag_prl = false;
+  for (int c = 0; c < num_components; ++c) {
+    int nlow_sqr = SQR(nlow[c]);
+    int nhigh_sqr = SQR(nhigh[c]);
+    Real ex = expo[c];
+    Real ex_prp = exp_prp[c];
+    Real ex_prl = exp_prl[c];
+    Real sol_weight_ = sol_weight[c];
+    Real parabola_peak_ = parabola_peak[c];
+    Real parabola_width_ = parabola_width[c];
+    int driving_profile_ = driving_profile[c];
+    int driving_geometry_ = driving_geometry[c];
+
+    int nmode = 0;
+    for (int nkx = 0; nkx <= nhigh[c]; nkx++) {
+      for (int nky = 0; nky <= nhigh[c]; nky++) {
+        for (int nkz = 0; nkz <= nhigh[c]; nkz++) {
+          if (nkx == 0 && nky == 0 && nkz == 0) continue;
+          norm = 0.0;
+          int nsqr = 0;
+          bool flag_prl = true;
+          if (driving_geometry_ == kGeometryIsotropic) {
+            nsqr = SQR(nkx) + SQR(nky) + SQR(nkz);
+          } else if (driving_geometry_ == kGeometryAnisotropic) {
+            nsqr = SQR(nkx) + SQR(nky);
+            int nprlsqr = SQR(nkz);
+            flag_prl = (nprlsqr >= nlow_sqr && nprlsqr <= nhigh_sqr);
+          } else if (driving_geometry_ == kGeometryVertical) {
+            nsqr = SQR(nkx) + SQR(nky);
+            flag_prl = (nkz == 0);
           }
-        }
-        if (nsqr >= nlow_sqr && nsqr <= nhigh_sqr && flag_prl) {
-          kx = dkx*nkx;
-          ky = dky*nky;
-          kz = dkz*nkz;
+          if (nsqr >= nlow_sqr && nsqr <= nhigh_sqr && flag_prl) {
+            kx = dkx*nkx;
+            ky = dky*nky;
+            kz = dkz*nkz;
 
           // Generate Fourier amplitudes
-          if (driving_geometry == kGeometryIsotropic) {
+          if (driving_geometry_ == kGeometryIsotropic) {
             kiso = sqrt(SQR(kx) + SQR(ky) + SQR(kz));
             if (kiso > 1e-16) {
               if (driving_profile_ == kProfileParabola) {
@@ -602,11 +790,40 @@ TaskStatus TurbulenceDriver::InitializeModes(Driver *pdrive, int stage) {
               }
             }
             ApplySolenoidalWeight(kx, ky, kz, sol_weight_, xcoef, ycoef, zcoef);
-            StoreModeCoefficients(nmode, xccc_, xccs_, xcsc_, xcss_, xscc_, xscs_,
+            StoreModeCoefficients(c, nmode, xccc_, xccs_, xcsc_, xcss_, xscc_, xscs_,
                                   xssc_, xsss_, yccc_, yccs_, ycsc_, ycss_, yscc_,
                                   yscs_, yssc_, ysss_, zccc_, zccs_, zcsc_, zcss_,
                                   zscc_, zscs_, zssc_, zsss_, xcoef, ycoef, zcoef);
-          } else if (driving_geometry == kGeometryAnisotropic) {
+          } else if (driving_geometry_ == kGeometryVertical) {
+            kprp = sqrt(SQR(kx) + SQR(ky));
+            if (kprp > 1e-16) {
+              if (driving_profile_ == kProfileParabola) {
+                Real nmag = sqrt(static_cast<Real>(nsqr));
+                Real profile = 1.0 - SQR((nmag - parabola_peak_)/parabola_width_);
+                norm = (profile > 0.0) ? sqrt(profile) : 0.0;
+              } else if (driving_profile_ == kProfileBand) {
+                norm = 1.0;
+              } else {
+                norm = 1.0/pow(kprp,(ex+2.0)/2.0);
+              }
+            } else {
+              norm = 0.0;
+            }
+            Real xcoef[8], ycoef[8], zcoef[8];
+            for (int n=0; n<8; ++n) {
+              xcoef[n] = 0.0;
+              ycoef[n] = 0.0;
+              if (BasisActive(n, nkx, nky, nkz)) {
+                zcoef[n] = RanGaussianSt(&(rstate));
+              } else {
+                zcoef[n] = 0.0;
+              }
+            }
+            StoreModeCoefficients(c, nmode, xccc_, xccs_, xcsc_, xcss_, xscc_, xscs_,
+                                  xssc_, xsss_, yccc_, yccs_, ycsc_, ycss_, yscc_,
+                                  yscs_, yssc_, ysss_, zccc_, zccs_, zcsc_, zcss_,
+                                  zscc_, zscs_, zssc_, zsss_, xcoef, ycoef, zcoef);
+          } else if (driving_geometry_ == kGeometryAnisotropic) {
             kprl = sqrt(SQR(kx));
             kprp = sqrt(SQR(ky) + SQR(kz));
             if (kprl > 1e-16 && kprp > 1e-16) {
@@ -618,90 +835,91 @@ TaskStatus TurbulenceDriver::InitializeModes(Driver *pdrive, int stage) {
             if (nky != 0) {
               iky = 1.0/(dky*((Real) nky));
 
-              xccc_.h_view(nmode) = RanGaussianSt(&(rstate));
-              xccs_.h_view(nmode) = RanGaussianSt(&(rstate));
-              xcsc_.h_view(nmode) = RanGaussianSt(&(rstate));
-              xcss_.h_view(nmode) = RanGaussianSt(&(rstate));
-              xscc_.h_view(nmode) = (nkx==0) ? 0.0 : RanGaussianSt(&(rstate));
-              xscs_.h_view(nmode) = (nkx==0) ? 0.0 : RanGaussianSt(&(rstate));
-              xssc_.h_view(nmode) = (nkx==0) ? 0.0 : RanGaussianSt(&(rstate));
-              xsss_.h_view(nmode) = (nkx==0) ? 0.0 : RanGaussianSt(&(rstate));
+              xccc_.h_view(c,nmode) = RanGaussianSt(&(rstate));
+              xccs_.h_view(c,nmode) = RanGaussianSt(&(rstate));
+              xcsc_.h_view(c,nmode) = RanGaussianSt(&(rstate));
+              xcss_.h_view(c,nmode) = RanGaussianSt(&(rstate));
+              xscc_.h_view(c,nmode) = (nkx==0) ? 0.0 : RanGaussianSt(&(rstate));
+              xscs_.h_view(c,nmode) = (nkx==0) ? 0.0 : RanGaussianSt(&(rstate));
+              xssc_.h_view(c,nmode) = (nkx==0) ? 0.0 : RanGaussianSt(&(rstate));
+              xsss_.h_view(c,nmode) = (nkx==0) ? 0.0 : RanGaussianSt(&(rstate));
 
               // incompressibility
-              yccc_.h_view(nmode) =  iky*(kx*xssc_.h_view(nmode));
-              yccs_.h_view(nmode) =  iky*(kx*xsss_.h_view(nmode));
-              ycsc_.h_view(nmode) = -iky*(kx*xscc_.h_view(nmode));
-              ycss_.h_view(nmode) = -iky*(kx*xscs_.h_view(nmode));
-              yscc_.h_view(nmode) = -iky*(kx*xcsc_.h_view(nmode));
-              yscs_.h_view(nmode) = -iky*(kx*xcss_.h_view(nmode));
-              yssc_.h_view(nmode) =  iky*(kx*xccc_.h_view(nmode));
-              ysss_.h_view(nmode) =  iky*(kx*xccs_.h_view(nmode));
+              yccc_.h_view(c,nmode) =  iky*(kx*xssc_.h_view(c,nmode));
+              yccs_.h_view(c,nmode) =  iky*(kx*xsss_.h_view(c,nmode));
+              ycsc_.h_view(c,nmode) = -iky*(kx*xscc_.h_view(c,nmode));
+              ycss_.h_view(c,nmode) = -iky*(kx*xscs_.h_view(c,nmode));
+              yscc_.h_view(c,nmode) = -iky*(kx*xcsc_.h_view(c,nmode));
+              yscs_.h_view(c,nmode) = -iky*(kx*xcss_.h_view(c,nmode));
+              yssc_.h_view(c,nmode) =  iky*(kx*xccc_.h_view(c,nmode));
+              ysss_.h_view(c,nmode) =  iky*(kx*xccs_.h_view(c,nmode));
 
-              zccc_.h_view(nmode) = 0.0;
-              zccs_.h_view(nmode) = 0.0;
-              zcsc_.h_view(nmode) = 0.0;
-              zcss_.h_view(nmode) = 0.0;
-              zscc_.h_view(nmode) = 0.0;
-              zscs_.h_view(nmode) = 0.0;
-              zssc_.h_view(nmode) = 0.0;
-              zsss_.h_view(nmode) = 0.0;
+              zccc_.h_view(c,nmode) = 0.0;
+              zccs_.h_view(c,nmode) = 0.0;
+              zcsc_.h_view(c,nmode) = 0.0;
+              zcss_.h_view(c,nmode) = 0.0;
+              zscc_.h_view(c,nmode) = 0.0;
+              zscs_.h_view(c,nmode) = 0.0;
+              zssc_.h_view(c,nmode) = 0.0;
+              zsss_.h_view(c,nmode) = 0.0;
             } else {  // ky == 0
-              yccc_.h_view(nmode) = RanGaussianSt(&(rstate));
-              yscc_.h_view(nmode) = RanGaussianSt(&(rstate));
-              ycsc_.h_view(nmode) = 0.0;
-              yssc_.h_view(nmode) = 0.0;
-              yccs_.h_view(nmode) = 0.0;
-              ycss_.h_view(nmode) = 0.0;
-              yscs_.h_view(nmode) = 0.0;
-              ysss_.h_view(nmode) = 0.0;
+              yccc_.h_view(c,nmode) = RanGaussianSt(&(rstate));
+              yscc_.h_view(c,nmode) = RanGaussianSt(&(rstate));
+              ycsc_.h_view(c,nmode) = 0.0;
+              yssc_.h_view(c,nmode) = 0.0;
+              yccs_.h_view(c,nmode) = 0.0;
+              ycss_.h_view(c,nmode) = 0.0;
+              yscs_.h_view(c,nmode) = 0.0;
+              ysss_.h_view(c,nmode) = 0.0;
 
               // incompressibility
-              xccc_.h_view(nmode) = 0.0;
-              xscc_.h_view(nmode) = 0.0;
-              xcsc_.h_view(nmode) = 0.0;
-              xssc_.h_view(nmode) = 0.0;
-              xccs_.h_view(nmode) = 0.0;
-              xscs_.h_view(nmode) = 0.0;
-              xcss_.h_view(nmode) = 0.0;
-              xsss_.h_view(nmode) = 0.0;
+              xccc_.h_view(c,nmode) = 0.0;
+              xscc_.h_view(c,nmode) = 0.0;
+              xcsc_.h_view(c,nmode) = 0.0;
+              xssc_.h_view(c,nmode) = 0.0;
+              xccs_.h_view(c,nmode) = 0.0;
+              xscs_.h_view(c,nmode) = 0.0;
+              xcss_.h_view(c,nmode) = 0.0;
+              xsss_.h_view(c,nmode) = 0.0;
 
-              zccc_.h_view(nmode) = 0.0;
-              zscc_.h_view(nmode) = 0.0;
-              zcsc_.h_view(nmode) = 0.0;
-              zssc_.h_view(nmode) = 0.0;
-              zccs_.h_view(nmode) = 0.0;
-              zcss_.h_view(nmode) = 0.0;
-              zscs_.h_view(nmode) = 0.0;
-              zsss_.h_view(nmode) = 0.0;
+              zccc_.h_view(c,nmode) = 0.0;
+              zscc_.h_view(c,nmode) = 0.0;
+              zcsc_.h_view(c,nmode) = 0.0;
+              zssc_.h_view(c,nmode) = 0.0;
+              zccs_.h_view(c,nmode) = 0.0;
+              zcss_.h_view(c,nmode) = 0.0;
+              zscs_.h_view(c,nmode) = 0.0;
+              zsss_.h_view(c,nmode) = 0.0;
             }
           }
           // normalization
-          xccc_.h_view(nmode) *= norm;
-          xscc_.h_view(nmode) *= norm;
-          xcsc_.h_view(nmode) *= norm;
-          xssc_.h_view(nmode) *= norm;
-          xccs_.h_view(nmode) *= norm;
-          xscs_.h_view(nmode) *= norm;
-          xcss_.h_view(nmode) *= norm;
-          xsss_.h_view(nmode) *= norm;
-          yccc_.h_view(nmode) *= norm;
-          yscc_.h_view(nmode) *= norm;
-          ycsc_.h_view(nmode) *= norm;
-          yssc_.h_view(nmode) *= norm;
-          yccs_.h_view(nmode) *= norm;
-          yscs_.h_view(nmode) *= norm;
-          ycss_.h_view(nmode) *= norm;
-          ysss_.h_view(nmode) *= norm;
-          zccc_.h_view(nmode) *= norm;
-          zscc_.h_view(nmode) *= norm;
-          zcsc_.h_view(nmode) *= norm;
-          zssc_.h_view(nmode) *= norm;
-          zccs_.h_view(nmode) *= norm;
-          zscs_.h_view(nmode) *= norm;
-          zcss_.h_view(nmode) *= norm;
-          zsss_.h_view(nmode) *= norm;
+          xccc_.h_view(c,nmode) *= norm;
+          xscc_.h_view(c,nmode) *= norm;
+          xcsc_.h_view(c,nmode) *= norm;
+          xssc_.h_view(c,nmode) *= norm;
+          xccs_.h_view(c,nmode) *= norm;
+          xscs_.h_view(c,nmode) *= norm;
+          xcss_.h_view(c,nmode) *= norm;
+          xsss_.h_view(c,nmode) *= norm;
+          yccc_.h_view(c,nmode) *= norm;
+          yscc_.h_view(c,nmode) *= norm;
+          ycsc_.h_view(c,nmode) *= norm;
+          yssc_.h_view(c,nmode) *= norm;
+          yccs_.h_view(c,nmode) *= norm;
+          yscs_.h_view(c,nmode) *= norm;
+          ycss_.h_view(c,nmode) *= norm;
+          ysss_.h_view(c,nmode) *= norm;
+          zccc_.h_view(c,nmode) *= norm;
+          zscc_.h_view(c,nmode) *= norm;
+          zcsc_.h_view(c,nmode) *= norm;
+          zssc_.h_view(c,nmode) *= norm;
+          zccs_.h_view(c,nmode) *= norm;
+          zscs_.h_view(c,nmode) *= norm;
+          zcss_.h_view(c,nmode) *= norm;
+          zsss_.h_view(c,nmode) *= norm;
 
           nmode++;
+          }
         }
       }
     }
@@ -765,38 +983,6 @@ TaskStatus TurbulenceDriver::InitializeModes(Driver *pdrive, int stage) {
   auto zcos_ = zcos;
   auto zsin_ = zsin;
 
-  for (int n=0; n<mode_count_; n++) {
-    par_for("force_compute", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
-    KOKKOS_LAMBDA(int m, int k, int j, int i) {
-      force_tmp_(m,0,k,j,i) += xccc_.d_view(n)*xcos_(m,n,i)*ycos_(m,n,j)*zcos_(m,n,k);
-      force_tmp_(m,0,k,j,i) += xccs_.d_view(n)*xcos_(m,n,i)*ycos_(m,n,j)*zsin_(m,n,k);
-      force_tmp_(m,0,k,j,i) += xcsc_.d_view(n)*xcos_(m,n,i)*ysin_(m,n,j)*zcos_(m,n,k);
-      force_tmp_(m,0,k,j,i) += xcss_.d_view(n)*xcos_(m,n,i)*ysin_(m,n,j)*zsin_(m,n,k);
-      force_tmp_(m,0,k,j,i) += xscc_.d_view(n)*xsin_(m,n,i)*ycos_(m,n,j)*zcos_(m,n,k);
-      force_tmp_(m,0,k,j,i) += xscs_.d_view(n)*xsin_(m,n,i)*ycos_(m,n,j)*zsin_(m,n,k);
-      force_tmp_(m,0,k,j,i) += xssc_.d_view(n)*xsin_(m,n,i)*ysin_(m,n,j)*zcos_(m,n,k);
-      force_tmp_(m,0,k,j,i) += xsss_.d_view(n)*xsin_(m,n,i)*ysin_(m,n,j)*zsin_(m,n,k);
-
-      force_tmp_(m,1,k,j,i) += yccc_.d_view(n)*xcos_(m,n,i)*ycos_(m,n,j)*zcos_(m,n,k);
-      force_tmp_(m,1,k,j,i) += yccs_.d_view(n)*xcos_(m,n,i)*ycos_(m,n,j)*zsin_(m,n,k);
-      force_tmp_(m,1,k,j,i) += ycsc_.d_view(n)*xcos_(m,n,i)*ysin_(m,n,j)*zcos_(m,n,k);
-      force_tmp_(m,1,k,j,i) += ycss_.d_view(n)*xcos_(m,n,i)*ysin_(m,n,j)*zsin_(m,n,k);
-      force_tmp_(m,1,k,j,i) += yscc_.d_view(n)*xsin_(m,n,i)*ycos_(m,n,j)*zcos_(m,n,k);
-      force_tmp_(m,1,k,j,i) += yscs_.d_view(n)*xsin_(m,n,i)*ycos_(m,n,j)*zsin_(m,n,k);
-      force_tmp_(m,1,k,j,i) += yssc_.d_view(n)*xsin_(m,n,i)*ysin_(m,n,j)*zcos_(m,n,k);
-      force_tmp_(m,1,k,j,i) += ysss_.d_view(n)*xsin_(m,n,i)*ysin_(m,n,j)*zsin_(m,n,k);
-
-      force_tmp_(m,2,k,j,i) += zccc_.d_view(n)*xcos_(m,n,i)*ycos_(m,n,j)*zcos_(m,n,k);
-      force_tmp_(m,2,k,j,i) += zccs_.d_view(n)*xcos_(m,n,i)*ycos_(m,n,j)*zsin_(m,n,k);
-      force_tmp_(m,2,k,j,i) += zcsc_.d_view(n)*xcos_(m,n,i)*ysin_(m,n,j)*zcos_(m,n,k);
-      force_tmp_(m,2,k,j,i) += zcss_.d_view(n)*xcos_(m,n,i)*ysin_(m,n,j)*zsin_(m,n,k);
-      force_tmp_(m,2,k,j,i) += zscc_.d_view(n)*xsin_(m,n,i)*ycos_(m,n,j)*zcos_(m,n,k);
-      force_tmp_(m,2,k,j,i) += zscs_.d_view(n)*xsin_(m,n,i)*ycos_(m,n,j)*zsin_(m,n,k);
-      force_tmp_(m,2,k,j,i) += zssc_.d_view(n)*xsin_(m,n,i)*ysin_(m,n,j)*zcos_(m,n,k);
-      force_tmp_(m,2,k,j,i) += zsss_.d_view(n)*xsin_(m,n,i)*ysin_(m,n,j)*zsin_(m,n,k);
-    });
-  }
-
   DvceArray5D<Real> u0, u0_;
   if (pmy_pack->phydro != nullptr) u0 = (pmy_pack->phydro->u0);
   if (pmy_pack->pmhd != nullptr) u0 = (pmy_pack->pmhd->u0);
@@ -810,102 +996,211 @@ TaskStatus TurbulenceDriver::InitializeModes(Driver *pdrive, int stage) {
   const int nmkji = nmb*nx3*nx2*nx1;
   const int nkji = nx3*nx2*nx1;
   const int nji  = nx2*nx1;
-  Real t0 = 0.0, t1 = 0.0, t2 = 0.0, t3 = 0.0;
-
-  Kokkos::parallel_reduce("net_mom_1", Kokkos::RangePolicy<>(DevExeSpace(),0,nmkji),
-  KOKKOS_LAMBDA(const int &idx, Real &sum_t0, Real &sum_t1,
-                                Real &sum_t2, Real &sum_t3) {
-    // compute n,k,j,i indices of thread
-    int m = (idx)/nkji;
-    int k = (idx - m*nkji)/nji;
-    int j = (idx - m*nkji - k*nji)/nx1;
-    int i = (idx - m*nkji - k*nji - j*nx1) + is;
-    k += ks;
-    j += js;
-    Real den = u0(m,IDN,k,j,i);
-    if (flag_twofl) {
-      den += u0_(m,IDN,k,j,i);
-    }
-    sum_t0 += den;
-    sum_t1 += den*force_tmp_(m,0,k,j,i);
-    sum_t2 += den*force_tmp_(m,1,k,j,i);
-    sum_t3 += den*force_tmp_(m,2,k,j,i);
-  }, Kokkos::Sum<Real>(t0), Kokkos::Sum<Real>(t1),
-     Kokkos::Sum<Real>(t2), Kokkos::Sum<Real>(t3));
-
-
-#if MPI_PARALLEL_ENABLED
-  Real m[4], gm[4];
-  m[0] = t0; m[1] = t1; m[2] = t2; m[3] = t3;
-  MPI_Allreduce(m, gm, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  t0 = gm[0]; t1 = gm[1]; t2 = gm[2]; t3 = gm[3];
-#endif
-
-  par_for("force_remove_net_mom", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
-  KOKKOS_LAMBDA(int m, int k, int j, int i) {
-    force_tmp_(m,0,k,j,i) -= t1/t0;
-    force_tmp_(m,1,k,j,i) -= t2/t0;
-    force_tmp_(m,2,k,j,i) -= t3/t0;
-  });
-
-  t0 = 0.0;
-  t1 = 0.0;
-  Kokkos::parallel_reduce("net_mom_2", Kokkos::RangePolicy<>(DevExeSpace(),0,nmkji),
-  KOKKOS_LAMBDA(const int &idx, Real &sum_t0, Real &sum_t1) {
-    // compute n,k,j,i indices of thread
-    int m = (idx)/nkji;
-    int k = (idx - m*nkji)/nji;
-    int j = (idx - m*nkji - k*nji)/nx1;
-    int i = (idx - m*nkji - k*nji - j*nx1) + is;
-    k += ks;
-    j += js;
-
-    Real den  = u0(m,IDN,k,j,i);
-    Real mom1 = u0(m,IM1,k,j,i);
-    Real mom2 = u0(m,IM2,k,j,i);
-    Real mom3 = u0(m,IM3,k,j,i);
-    if (flag_twofl) {
-      den  += u0_(m,IDN,k,j,i);
-      mom1 += u0_(m,IM1,k,j,i);
-      mom2 += u0_(m,IM2,k,j,i);
-      mom3 += u0_(m,IM3,k,j,i);
-    }
-    Real v1 = force_tmp_(m,0,k,j,i);
-    Real v2 = force_tmp_(m,1,k,j,i);
-    Real v3 = force_tmp_(m,2,k,j,i);
-
-    sum_t0 += den*(v1*v1+v2*v2+v3*v3);
-    sum_t1 += mom1*v1+mom2*v2+mom3*v3;
-  }, Kokkos::Sum<Real>(t0), Kokkos::Sum<Real>(t1));
-
-#if MPI_PARALLEL_ENABLED
-  m[0] = t0; m[1] = t1;
-  MPI_Allreduce(m, gm, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  t0 = gm[0]; t1 = gm[1];
-#endif
-
-  t0 = std::max(t0, 1.0e-20);
-
-  Real m0 = t0, m1 = t1;
   Real dt = pm->dt;
   Real dvol = 1.0/(gnx1*gnx2*gnx3);
-  m0 = 0.5*m0*dvol*dt;
-  m1 = m1*dvol;
+  for (int c = 0; c < num_components; ++c) {
+    for (int n=0; n<mode_count[c]; n++) {
+      par_for("force_compute", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
+      KOKKOS_LAMBDA(int m, int k, int j, int i) {
+        force_tmp_(c,m,0,k,j,i) +=
+            xccc_.d_view(c,n)*xcos_(c,m,n,i)*ycos_(c,m,n,j)*zcos_(c,m,n,k);
+        force_tmp_(c,m,0,k,j,i) +=
+            xccs_.d_view(c,n)*xcos_(c,m,n,i)*ycos_(c,m,n,j)*zsin_(c,m,n,k);
+        force_tmp_(c,m,0,k,j,i) +=
+            xcsc_.d_view(c,n)*xcos_(c,m,n,i)*ysin_(c,m,n,j)*zcos_(c,m,n,k);
+        force_tmp_(c,m,0,k,j,i) +=
+            xcss_.d_view(c,n)*xcos_(c,m,n,i)*ysin_(c,m,n,j)*zsin_(c,m,n,k);
+        force_tmp_(c,m,0,k,j,i) +=
+            xscc_.d_view(c,n)*xsin_(c,m,n,i)*ycos_(c,m,n,j)*zcos_(c,m,n,k);
+        force_tmp_(c,m,0,k,j,i) +=
+            xscs_.d_view(c,n)*xsin_(c,m,n,i)*ycos_(c,m,n,j)*zsin_(c,m,n,k);
+        force_tmp_(c,m,0,k,j,i) +=
+            xssc_.d_view(c,n)*xsin_(c,m,n,i)*ysin_(c,m,n,j)*zcos_(c,m,n,k);
+        force_tmp_(c,m,0,k,j,i) +=
+            xsss_.d_view(c,n)*xsin_(c,m,n,i)*ysin_(c,m,n,j)*zsin_(c,m,n,k);
 
-  Real s;
-  if (m1 >= 0) {
-    s = -m1/2./m0 + sqrt(m1*m1/4./m0/m0 + dedt/m0);
-  } else {
-    s = m1/2./m0 + sqrt(m1*m1/4./m0/m0 + dedt/m0);
+        force_tmp_(c,m,1,k,j,i) +=
+            yccc_.d_view(c,n)*xcos_(c,m,n,i)*ycos_(c,m,n,j)*zcos_(c,m,n,k);
+        force_tmp_(c,m,1,k,j,i) +=
+            yccs_.d_view(c,n)*xcos_(c,m,n,i)*ycos_(c,m,n,j)*zsin_(c,m,n,k);
+        force_tmp_(c,m,1,k,j,i) +=
+            ycsc_.d_view(c,n)*xcos_(c,m,n,i)*ysin_(c,m,n,j)*zcos_(c,m,n,k);
+        force_tmp_(c,m,1,k,j,i) +=
+            ycss_.d_view(c,n)*xcos_(c,m,n,i)*ysin_(c,m,n,j)*zsin_(c,m,n,k);
+        force_tmp_(c,m,1,k,j,i) +=
+            yscc_.d_view(c,n)*xsin_(c,m,n,i)*ycos_(c,m,n,j)*zcos_(c,m,n,k);
+        force_tmp_(c,m,1,k,j,i) +=
+            yscs_.d_view(c,n)*xsin_(c,m,n,i)*ycos_(c,m,n,j)*zsin_(c,m,n,k);
+        force_tmp_(c,m,1,k,j,i) +=
+            yssc_.d_view(c,n)*xsin_(c,m,n,i)*ysin_(c,m,n,j)*zcos_(c,m,n,k);
+        force_tmp_(c,m,1,k,j,i) +=
+            ysss_.d_view(c,n)*xsin_(c,m,n,i)*ysin_(c,m,n,j)*zsin_(c,m,n,k);
+
+        force_tmp_(c,m,2,k,j,i) +=
+            zccc_.d_view(c,n)*xcos_(c,m,n,i)*ycos_(c,m,n,j)*zcos_(c,m,n,k);
+        force_tmp_(c,m,2,k,j,i) +=
+            zccs_.d_view(c,n)*xcos_(c,m,n,i)*ycos_(c,m,n,j)*zsin_(c,m,n,k);
+        force_tmp_(c,m,2,k,j,i) +=
+            zcsc_.d_view(c,n)*xcos_(c,m,n,i)*ysin_(c,m,n,j)*zcos_(c,m,n,k);
+        force_tmp_(c,m,2,k,j,i) +=
+            zcss_.d_view(c,n)*xcos_(c,m,n,i)*ysin_(c,m,n,j)*zsin_(c,m,n,k);
+        force_tmp_(c,m,2,k,j,i) +=
+            zscc_.d_view(c,n)*xsin_(c,m,n,i)*ycos_(c,m,n,j)*zcos_(c,m,n,k);
+        force_tmp_(c,m,2,k,j,i) +=
+            zscs_.d_view(c,n)*xsin_(c,m,n,i)*ycos_(c,m,n,j)*zsin_(c,m,n,k);
+        force_tmp_(c,m,2,k,j,i) +=
+            zssc_.d_view(c,n)*xsin_(c,m,n,i)*ysin_(c,m,n,j)*zcos_(c,m,n,k);
+        force_tmp_(c,m,2,k,j,i) +=
+            zsss_.d_view(c,n)*xsin_(c,m,n,i)*ysin_(c,m,n,j)*zsin_(c,m,n,k);
+      });
+    }
+
+    int vertical_window_ = vertical_window[c];
+    Real vertical_window_width_ = vertical_window_width[c];
+    Real vertical_window_transition_ = vertical_window_transition[c];
+    int transverse_window_ = transverse_window[c];
+    Real transverse_window_radius_ = transverse_window_radius[c];
+    Real transverse_window_transition_ = transverse_window_transition[c];
+    par_for("force_tmp_spatial_window", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      Real &x1min = size.d_view(m).x1min;
+      Real &x1max = size.d_view(m).x1max;
+      Real &x2min = size.d_view(m).x2min;
+      Real &x2max = size.d_view(m).x2max;
+      Real &x3min = size.d_view(m).x3min;
+      Real &x3max = size.d_view(m).x3max;
+      Real x = CellCenterX(i - is, nx1, x1min, x1max);
+      Real y = CellCenterX(j - js, nx2, x2min, x2max);
+      Real z = CellCenterX(k - ks, nx3, x3min, x3max);
+      Real rperp = sqrt(x*x + y*y);
+      Real weight = SpatialWindowWeight(z, vertical_window_, vertical_window_width_,
+                                        vertical_window_transition_);
+      weight *= SpatialWindowWeight(rperp, transverse_window_, transverse_window_radius_,
+                                    transverse_window_transition_);
+      force_tmp_(c,m,0,k,j,i) *= weight;
+      force_tmp_(c,m,1,k,j,i) *= weight;
+      force_tmp_(c,m,2,k,j,i) *= weight;
+    });
+
+    Real t0 = 0.0, t1 = 0.0, t2 = 0.0, t3 = 0.0;
+    Kokkos::parallel_reduce("net_mom_1", Kokkos::RangePolicy<>(DevExeSpace(),0,nmkji),
+    KOKKOS_LAMBDA(const int &idx, Real &sum_t0, Real &sum_t1,
+                                  Real &sum_t2, Real &sum_t3) {
+      int m = (idx)/nkji;
+      int k = (idx - m*nkji)/nji;
+      int j = (idx - m*nkji - k*nji)/nx1;
+      int i = (idx - m*nkji - k*nji - j*nx1) + is;
+      k += ks;
+      j += js;
+      Real den = u0(m,IDN,k,j,i);
+      if (flag_twofl) {
+        den += u0_(m,IDN,k,j,i);
+      }
+      Real &x1min = size.d_view(m).x1min;
+      Real &x1max = size.d_view(m).x1max;
+      Real &x2min = size.d_view(m).x2min;
+      Real &x2max = size.d_view(m).x2max;
+      Real &x3min = size.d_view(m).x3min;
+      Real &x3max = size.d_view(m).x3max;
+      Real x = CellCenterX(i - is, nx1, x1min, x1max);
+      Real y = CellCenterX(j - js, nx2, x2min, x2max);
+      Real z = CellCenterX(k - ks, nx3, x3min, x3max);
+      Real rperp = sqrt(x*x + y*y);
+      Real weight = SpatialWindowWeight(z, vertical_window_, vertical_window_width_,
+                                        vertical_window_transition_);
+      weight *= SpatialWindowWeight(rperp, transverse_window_, transverse_window_radius_,
+                                    transverse_window_transition_);
+      sum_t0 += den*weight;
+      sum_t1 += den*force_tmp_(c,m,0,k,j,i);
+      sum_t2 += den*force_tmp_(c,m,1,k,j,i);
+      sum_t3 += den*force_tmp_(c,m,2,k,j,i);
+    }, Kokkos::Sum<Real>(t0), Kokkos::Sum<Real>(t1),
+       Kokkos::Sum<Real>(t2), Kokkos::Sum<Real>(t3));
+
+#if MPI_PARALLEL_ENABLED
+    Real m[4], gm[4];
+    m[0] = t0; m[1] = t1; m[2] = t2; m[3] = t3;
+    MPI_Allreduce(m, gm, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    t0 = gm[0]; t1 = gm[1]; t2 = gm[2]; t3 = gm[3];
+#endif
+    t0 = std::max(t0, 1.0e-20);
+
+    par_for("force_remove_net_mom", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      Real &x1min = size.d_view(m).x1min;
+      Real &x1max = size.d_view(m).x1max;
+      Real &x2min = size.d_view(m).x2min;
+      Real &x2max = size.d_view(m).x2max;
+      Real &x3min = size.d_view(m).x3min;
+      Real &x3max = size.d_view(m).x3max;
+      Real x = CellCenterX(i - is, nx1, x1min, x1max);
+      Real y = CellCenterX(j - js, nx2, x2min, x2max);
+      Real z = CellCenterX(k - ks, nx3, x3min, x3max);
+      Real rperp = sqrt(x*x + y*y);
+      Real weight = SpatialWindowWeight(z, vertical_window_, vertical_window_width_,
+                                        vertical_window_transition_);
+      weight *= SpatialWindowWeight(rperp, transverse_window_, transverse_window_radius_,
+                                    transverse_window_transition_);
+      force_tmp_(c,m,0,k,j,i) -= weight*t1/t0;
+      force_tmp_(c,m,1,k,j,i) -= weight*t2/t0;
+      force_tmp_(c,m,2,k,j,i) -= weight*t3/t0;
+    });
+
+    t0 = 0.0;
+    t1 = 0.0;
+    Kokkos::parallel_reduce("net_mom_2", Kokkos::RangePolicy<>(DevExeSpace(),0,nmkji),
+    KOKKOS_LAMBDA(const int &idx, Real &sum_t0, Real &sum_t1) {
+      int m = (idx)/nkji;
+      int k = (idx - m*nkji)/nji;
+      int j = (idx - m*nkji - k*nji)/nx1;
+      int i = (idx - m*nkji - k*nji - j*nx1) + is;
+      k += ks;
+      j += js;
+
+      Real den  = u0(m,IDN,k,j,i);
+      Real mom1 = u0(m,IM1,k,j,i);
+      Real mom2 = u0(m,IM2,k,j,i);
+      Real mom3 = u0(m,IM3,k,j,i);
+      if (flag_twofl) {
+        den  += u0_(m,IDN,k,j,i);
+        mom1 += u0_(m,IM1,k,j,i);
+        mom2 += u0_(m,IM2,k,j,i);
+        mom3 += u0_(m,IM3,k,j,i);
+      }
+      Real v1 = force_tmp_(c,m,0,k,j,i);
+      Real v2 = force_tmp_(c,m,1,k,j,i);
+      Real v3 = force_tmp_(c,m,2,k,j,i);
+
+      sum_t0 += den*(v1*v1+v2*v2+v3*v3);
+      sum_t1 += mom1*v1+mom2*v2+mom3*v3;
+    }, Kokkos::Sum<Real>(t0), Kokkos::Sum<Real>(t1));
+
+#if MPI_PARALLEL_ENABLED
+    m[0] = t0; m[1] = t1;
+    MPI_Allreduce(m, gm, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    t0 = gm[0]; t1 = gm[1];
+#endif
+
+    t0 = std::max(t0, 1.0e-20);
+
+    Real m0 = 0.5*t0*dvol*dt;
+    Real m1 = t1*dvol;
+
+    Real s;
+    if (m1 >= 0) {
+      s = -m1/2./m0 + sqrt(m1*m1/4./m0/m0 + dedt[c]/m0);
+    } else {
+      s = m1/2./m0 + sqrt(m1*m1/4./m0/m0 + dedt[c]/m0);
+    }
+    if (dedt[c] == 0.0 || m0 == 0.0) s = 0.0;
+
+    par_for("force_norm", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      force_tmp_(c,m,0,k,j,i) *= s;
+      force_tmp_(c,m,1,k,j,i) *= s;
+      force_tmp_(c,m,2,k,j,i) *= s;
+    });
   }
-  if (m0 == 0.0) s = 0.0;
-
-  par_for("force_norm", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
-  KOKKOS_LAMBDA(int m, int k, int j, int i) {
-    force_tmp_(m,0,k,j,i) *= s;
-    force_tmp_(m,1,k,j,i) *= s;
-    force_tmp_(m,2,k,j,i) *= s;
-  });
 
   return TaskStatus::complete;
 }
@@ -926,30 +1221,18 @@ TaskStatus TurbulenceDriver::UpdateForcing(Driver *pdrive, int stage) {
   int &nx1 = indcs.nx1;
   int &nx2 = indcs.nx2;
   int &nx3 = indcs.nx3;
+  auto &size = pmy_pack->pmb->mb_size;
   auto &gindcs = pm->mesh_indcs;
   int &gnx1 = gindcs.nx1;
   int &gnx2 = gindcs.nx2;
   int &gnx3 = gindcs.nx3;
 
   Real dt = pm->dt;
-  Real fcorr, gcorr;
-  if (tcorr <= 1e-6) {  // use whitenoise
-    fcorr = 0.0;
-    gcorr = 1.0;
-  } else {
-    fcorr = std::exp(-dt/tcorr);
-    gcorr = std::sqrt(1.0 - fcorr*fcorr);
-  }
+  Real dvol = 1.0/(gnx1*gnx2*gnx3);
 
-  auto force_ = force;
-  auto force_tmp_ = force_tmp;
-
-  par_for("force_OU_process",DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
-  KOKKOS_LAMBDA(int m, int k, int j, int i) {
-    force_(m,0,k,j,i) = fcorr*force_(m,0,k,j,i) + gcorr*force_tmp_(m,0,k,j,i);
-    force_(m,1,k,j,i) = fcorr*force_(m,1,k,j,i) + gcorr*force_tmp_(m,1,k,j,i);
-    force_(m,2,k,j,i) = fcorr*force_(m,2,k,j,i) + gcorr*force_tmp_(m,2,k,j,i);
-  });
+  auto force_total_ = force;
+  auto force_ = force_component;
+  auto force_tmp_ = force_tmp_component;
 
   DvceArray5D<Real> u0, u0_;
   if (pmy_pack->phydro != nullptr) u0 = (pmy_pack->phydro->u0);
@@ -964,98 +1247,163 @@ TaskStatus TurbulenceDriver::UpdateForcing(Driver *pdrive, int stage) {
   const int nmkji = nmb*nx3*nx2*nx1;
   const int nkji = nx3*nx2*nx1;
   const int nji  = nx2*nx1;
-  Real t0 = 0.0, t1 = 0.0, t2 = 0.0, t3 = 0.0;
-
-  Kokkos::parallel_reduce("force_net_mom", Kokkos::RangePolicy<>(DevExeSpace(),0,nmkji),
-  KOKKOS_LAMBDA(const int &idx, Real &sum_t0, Real &sum_t1,
-                                Real &sum_t2, Real &sum_t3) {
-    int m = (idx)/nkji;
-    int k = (idx - m*nkji)/nji;
-    int j = (idx - m*nkji - k*nji)/nx1;
-    int i = (idx - m*nkji - k*nji - j*nx1) + is;
-    k += ks;
-    j += js;
-    Real den = u0(m,IDN,k,j,i);
-    if (flag_twofl) {
-      den += u0_(m,IDN,k,j,i);
+  for (int c = 0; c < num_components; ++c) {
+    Real fcorr, gcorr;
+    if (tcorr[c] <= 1e-6) {  // use whitenoise
+      fcorr = 0.0;
+      gcorr = 1.0;
+    } else {
+      fcorr = std::exp(-dt/tcorr[c]);
+      gcorr = std::sqrt(1.0 - fcorr*fcorr);
     }
-    sum_t0 += den;
-    sum_t1 += den*force_(m,0,k,j,i);
-    sum_t2 += den*force_(m,1,k,j,i);
-    sum_t3 += den*force_(m,2,k,j,i);
-  }, Kokkos::Sum<Real>(t0), Kokkos::Sum<Real>(t1),
-     Kokkos::Sum<Real>(t2), Kokkos::Sum<Real>(t3));
+
+    par_for("force_OU_process",DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      force_(c,m,0,k,j,i) =
+          fcorr*force_(c,m,0,k,j,i) + gcorr*force_tmp_(c,m,0,k,j,i);
+      force_(c,m,1,k,j,i) =
+          fcorr*force_(c,m,1,k,j,i) + gcorr*force_tmp_(c,m,1,k,j,i);
+      force_(c,m,2,k,j,i) =
+          fcorr*force_(c,m,2,k,j,i) + gcorr*force_tmp_(c,m,2,k,j,i);
+    });
+
+    Real t0 = 0.0, t1 = 0.0, t2 = 0.0, t3 = 0.0;
+    int vertical_window_ = vertical_window[c];
+    Real vertical_window_width_ = vertical_window_width[c];
+    Real vertical_window_transition_ = vertical_window_transition[c];
+    int transverse_window_ = transverse_window[c];
+    Real transverse_window_radius_ = transverse_window_radius[c];
+    Real transverse_window_transition_ = transverse_window_transition[c];
+
+    Kokkos::parallel_reduce("force_net_mom", Kokkos::RangePolicy<>(DevExeSpace(),0,nmkji),
+    KOKKOS_LAMBDA(const int &idx, Real &sum_t0, Real &sum_t1,
+                                  Real &sum_t2, Real &sum_t3) {
+      int m = (idx)/nkji;
+      int k = (idx - m*nkji)/nji;
+      int j = (idx - m*nkji - k*nji)/nx1;
+      int i = (idx - m*nkji - k*nji - j*nx1) + is;
+      k += ks;
+      j += js;
+      Real den = u0(m,IDN,k,j,i);
+      if (flag_twofl) {
+        den += u0_(m,IDN,k,j,i);
+      }
+      Real &x1min = size.d_view(m).x1min;
+      Real &x1max = size.d_view(m).x1max;
+      Real &x2min = size.d_view(m).x2min;
+      Real &x2max = size.d_view(m).x2max;
+      Real &x3min = size.d_view(m).x3min;
+      Real &x3max = size.d_view(m).x3max;
+      Real x = CellCenterX(i - is, nx1, x1min, x1max);
+      Real y = CellCenterX(j - js, nx2, x2min, x2max);
+      Real z = CellCenterX(k - ks, nx3, x3min, x3max);
+      Real rperp = sqrt(x*x + y*y);
+      Real weight = SpatialWindowWeight(z, vertical_window_, vertical_window_width_,
+                                        vertical_window_transition_);
+      weight *= SpatialWindowWeight(rperp, transverse_window_, transverse_window_radius_,
+                                    transverse_window_transition_);
+      sum_t0 += den*weight;
+      sum_t1 += den*force_(c,m,0,k,j,i);
+      sum_t2 += den*force_(c,m,1,k,j,i);
+      sum_t3 += den*force_(c,m,2,k,j,i);
+    }, Kokkos::Sum<Real>(t0), Kokkos::Sum<Real>(t1),
+       Kokkos::Sum<Real>(t2), Kokkos::Sum<Real>(t3));
 
 #if MPI_PARALLEL_ENABLED
-  Real m[4], gm[4];
-  m[0] = t0; m[1] = t1; m[2] = t2; m[3] = t3;
-  MPI_Allreduce(m, gm, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  t0 = gm[0]; t1 = gm[1]; t2 = gm[2]; t3 = gm[3];
+    Real m[4], gm[4];
+    m[0] = t0; m[1] = t1; m[2] = t2; m[3] = t3;
+    MPI_Allreduce(m, gm, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    t0 = gm[0]; t1 = gm[1]; t2 = gm[2]; t3 = gm[3];
 #endif
+    t0 = std::max(t0, 1.0e-20);
 
-  par_for("force_remove_net_mom", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
-  KOKKOS_LAMBDA(int m, int k, int j, int i) {
-    force_(m,0,k,j,i) -= t1/t0;
-    force_(m,1,k,j,i) -= t2/t0;
-    force_(m,2,k,j,i) -= t3/t0;
-  });
+    par_for("force_remove_net_mom", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      Real &x1min = size.d_view(m).x1min;
+      Real &x1max = size.d_view(m).x1max;
+      Real &x2min = size.d_view(m).x2min;
+      Real &x2max = size.d_view(m).x2max;
+      Real &x3min = size.d_view(m).x3min;
+      Real &x3max = size.d_view(m).x3max;
+      Real x = CellCenterX(i - is, nx1, x1min, x1max);
+      Real y = CellCenterX(j - js, nx2, x2min, x2max);
+      Real z = CellCenterX(k - ks, nx3, x3min, x3max);
+      Real rperp = sqrt(x*x + y*y);
+      Real weight = SpatialWindowWeight(z, vertical_window_, vertical_window_width_,
+                                        vertical_window_transition_);
+      weight *= SpatialWindowWeight(rperp, transverse_window_, transverse_window_radius_,
+                                    transverse_window_transition_);
+      force_(c,m,0,k,j,i) -= weight*t1/t0;
+      force_(c,m,1,k,j,i) -= weight*t2/t0;
+      force_(c,m,2,k,j,i) -= weight*t3/t0;
+    });
 
-  t0 = 0.0;
-  t1 = 0.0;
-  Kokkos::parallel_reduce("force_dedt_norm", Kokkos::RangePolicy<>(DevExeSpace(),0,nmkji),
-  KOKKOS_LAMBDA(const int &idx, Real &sum_t0, Real &sum_t1) {
-    int m = (idx)/nkji;
-    int k = (idx - m*nkji)/nji;
-    int j = (idx - m*nkji - k*nji)/nx1;
-    int i = (idx - m*nkji - k*nji - j*nx1) + is;
-    k += ks;
-    j += js;
+    t0 = 0.0;
+    t1 = 0.0;
+    Kokkos::parallel_reduce("force_dedt_norm", Kokkos::RangePolicy<>(DevExeSpace(),0,nmkji),
+    KOKKOS_LAMBDA(const int &idx, Real &sum_t0, Real &sum_t1) {
+      int m = (idx)/nkji;
+      int k = (idx - m*nkji)/nji;
+      int j = (idx - m*nkji - k*nji)/nx1;
+      int i = (idx - m*nkji - k*nji - j*nx1) + is;
+      k += ks;
+      j += js;
 
-    Real den  = u0(m,IDN,k,j,i);
-    Real mom1 = u0(m,IM1,k,j,i);
-    Real mom2 = u0(m,IM2,k,j,i);
-    Real mom3 = u0(m,IM3,k,j,i);
-    if (flag_twofl) {
-      den  += u0_(m,IDN,k,j,i);
-      mom1 += u0_(m,IM1,k,j,i);
-      mom2 += u0_(m,IM2,k,j,i);
-      mom3 += u0_(m,IM3,k,j,i);
-    }
-    Real v1 = force_(m,0,k,j,i);
-    Real v2 = force_(m,1,k,j,i);
-    Real v3 = force_(m,2,k,j,i);
+      Real den  = u0(m,IDN,k,j,i);
+      Real mom1 = u0(m,IM1,k,j,i);
+      Real mom2 = u0(m,IM2,k,j,i);
+      Real mom3 = u0(m,IM3,k,j,i);
+      if (flag_twofl) {
+        den  += u0_(m,IDN,k,j,i);
+        mom1 += u0_(m,IM1,k,j,i);
+        mom2 += u0_(m,IM2,k,j,i);
+        mom3 += u0_(m,IM3,k,j,i);
+      }
+      Real v1 = force_(c,m,0,k,j,i);
+      Real v2 = force_(c,m,1,k,j,i);
+      Real v3 = force_(c,m,2,k,j,i);
 
-    sum_t0 += den*(v1*v1+v2*v2+v3*v3);
-    sum_t1 += mom1*v1+mom2*v2+mom3*v3;
-  }, Kokkos::Sum<Real>(t0), Kokkos::Sum<Real>(t1));
+      sum_t0 += den*(v1*v1+v2*v2+v3*v3);
+      sum_t1 += mom1*v1+mom2*v2+mom3*v3;
+    }, Kokkos::Sum<Real>(t0), Kokkos::Sum<Real>(t1));
 
 #if MPI_PARALLEL_ENABLED
-  m[0] = t0; m[1] = t1;
-  MPI_Allreduce(m, gm, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  t0 = gm[0]; t1 = gm[1];
+    m[0] = t0; m[1] = t1;
+    MPI_Allreduce(m, gm, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    t0 = gm[0]; t1 = gm[1];
 #endif
 
-  t0 = std::max(t0, 1.0e-20);
+    t0 = std::max(t0, 1.0e-20);
 
-  Real m0 = t0, m1 = t1;
-  Real dvol = 1.0/(gnx1*gnx2*gnx3);
-  m0 = 0.5*m0*dvol*dt;
-  m1 = m1*dvol;
+    Real m0 = 0.5*t0*dvol*dt;
+    Real m1 = t1*dvol;
 
-  Real s;
-  if (m1 >= 0) {
-    s = -m1/2./m0 + sqrt(m1*m1/4./m0/m0 + dedt/m0);
-  } else {
-    s = m1/2./m0 + sqrt(m1*m1/4./m0/m0 + dedt/m0);
+    Real s;
+    if (m1 >= 0) {
+      s = -m1/2./m0 + sqrt(m1*m1/4./m0/m0 + dedt[c]/m0);
+    } else {
+      s = m1/2./m0 + sqrt(m1*m1/4./m0/m0 + dedt[c]/m0);
+    }
+    if (dedt[c] == 0.0 || m0 == 0.0) s = 0.0;
+
+    par_for("force_norm", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      force_(c,m,0,k,j,i) *= s;
+      force_(c,m,1,k,j,i) *= s;
+      force_(c,m,2,k,j,i) *= s;
+    });
   }
-  if (dedt == 0.0 || m0 == 0.0) s = 0.0;
 
-  par_for("force_norm", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
-  KOKKOS_LAMBDA(int m, int k, int j, int i) {
-    force_(m,0,k,j,i) *= s;
-    force_(m,1,k,j,i) *= s;
-    force_(m,2,k,j,i) *= s;
+  par_for("force_total_zero", DevExeSpace(),0,nmb-1,0,2,ks,ke,js,je,is,ie,
+  KOKKOS_LAMBDA(int m, int n, int k, int j, int i) {
+    force_total_(m,n,k,j,i) = 0.0;
   });
+  for (int c = 0; c < num_components; ++c) {
+    par_for("force_total_sum", DevExeSpace(),0,nmb-1,0,2,ks,ke,js,je,is,ie,
+    KOKKOS_LAMBDA(int m, int n, int k, int j, int i) {
+      force_total_(m,n,k,j,i) += force_(c,m,n,k,j,i);
+    });
+  }
 
   return TaskStatus::complete;
 }
@@ -1073,6 +1421,7 @@ TaskStatus TurbulenceDriver::AddForcing(Driver *pdrive, int stage) {
   int &nx1 = indcs.nx1;
   int &nx2 = indcs.nx2;
   int &nx3 = indcs.nx3;
+  auto &size = pmy_pack->pmb->mb_size;
 
   Real dt = pm->dt;
   Real bdt = (pdrive->beta[stage-1])*dt;
@@ -1112,6 +1461,61 @@ TaskStatus TurbulenceDriver::AddForcing(Driver *pdrive, int stage) {
   bool flag_relativistic = pmy_pack->pcoord->is_special_relativistic;
 
   auto force_ = force;
+  const int nmkji = nmb*nx3*nx2*nx1;
+  const int nkji = nx3*nx2*nx1;
+  const int nji = nx2*nx1;
+
+  Real forcing_power = 0.0;
+  Kokkos::parallel_reduce("turb_forcing_power",
+      Kokkos::RangePolicy<>(DevExeSpace(), 0, nmkji),
+  KOKKOS_LAMBDA(const int &idx, Real &sum) {
+    int m = idx/nkji;
+    int k = (idx - m*nkji)/nji;
+    int j = (idx - m*nkji - k*nji)/nx1;
+    int i = (idx - m*nkji - k*nji - j*nx1) + is;
+    k += ks;
+    j += js;
+
+    Real a1 = force_(m,0,k,j,i);
+    Real a2 = force_(m,1,k,j,i);
+    Real a3 = force_(m,2,k,j,i);
+    Real a2sum = a1*a1 + a2*a2 + a3*a3;
+    Real vol = size.d_view(m).dx1*size.d_view(m).dx2*size.d_view(m).dx3;
+
+    if (primary_is_ideal) {
+      Real den = w0(m,IDN,k,j,i);
+      Real ux = w0(m,IVX,k,j,i);
+      Real uy = w0(m,IVY,k,j,i);
+      Real uz = w0(m,IVZ,k,j,i);
+      Real Fv = a1*ux + a2*uy + a3*uz;
+      if (flag_relativistic) {
+        Real ut = sqrt(1.0 + ux*ux + uy*uy + uz*uz);
+        den /= ut;
+        Fv /= ut;
+      }
+      sum += den*(Fv + 0.5*a2sum*bdt)*vol;
+    }
+
+    if (flag_twofl && secondary_is_ideal) {
+      Real den = w0_(m,IDN,k,j,i);
+      Real ux = w0_(m,IVX,k,j,i);
+      Real uy = w0_(m,IVY,k,j,i);
+      Real uz = w0_(m,IVZ,k,j,i);
+      Real Fv = a1*ux + a2*uy + a3*uz;
+      if (flag_relativistic) {
+        Real ut = sqrt(1.0 + ux*ux + uy*uy + uz*uz);
+        den /= ut;
+        Fv /= ut;
+      }
+      sum += den*(Fv + 0.5*a2sum*bdt)*vol;
+    }
+  }, Kokkos::Sum<Real>(forcing_power));
+
+#if MPI_PARALLEL_ENABLED
+  MPI_Allreduce(MPI_IN_PLACE, &forcing_power, 1, MPI_ATHENA_REAL, MPI_SUM,
+                MPI_COMM_WORLD);
+#endif
+  last_power = forcing_power;
 
   par_for("push",DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
   KOKKOS_LAMBDA(int m, int k, int j, int i) {
@@ -1158,10 +1562,6 @@ TaskStatus TurbulenceDriver::AddForcing(Driver *pdrive, int stage) {
       }
     }
   });
-
-  const int nmkji = nmb*nx3*nx2*nx1;
-  const int nkji = nx3*nx2*nx1;
-  const int nji = nx2*nx1;
 
   // Relativistic case will require a Lorentz transformation
   if (flag_relativistic) {
