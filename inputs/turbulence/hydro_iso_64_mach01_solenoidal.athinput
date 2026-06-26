@@ -1,0 +1,83 @@
+# 64^3 isothermal hydro turbulence, solenoidal forcing, target Mach 0.1
+# L = 1, cs = 1, ell_drive = L/2, target vrms = 0.1, t_eddy = 5.
+# This input integrates for 10 turnover times.
+
+<comment>
+problem = turbulence
+
+<job>
+basename = Turb64_iso_mach01_sol
+
+<mesh>
+nghost = 3
+nx1 = 64
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+
+nx2 = 64
+x2min = 0.0
+x2max = 1.0
+ix2_bc = periodic
+ox2_bc = periodic
+
+nx3 = 64
+x3min = 0.0
+x3max = 1.0
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 32
+nx2 = 32
+nx3 = 32
+
+<time>
+evolution = dynamic
+integrator = rk3
+cfl_number = 0.3
+nlim = -1
+tlim = 50.0
+ndiag = 25
+
+<hydro>
+eos = isothermal
+iso_sound_speed = 1.0
+reconstruct = wenoz
+rsolver = hlle
+
+<problem>
+user_hist = true
+turb_history = stats
+
+<turb_driving>
+type = hydro
+tcorr = 5.0
+dedt = 5.0e-4
+nlow = 1
+nhigh = 3
+driving_geometry = isotropic
+driving_profile = parabola
+sol_weight = 1.0
+parabola_peak = 2.0
+parabola_width = 0.5
+
+<output1>
+file_type = hst
+dt = 0.1
+
+<output2>
+file_type = bin
+variable = hydro_w
+dt = 0.5
+
+<output3>
+file_type = bin
+variable = turb_force
+dt = 0.5
+
+<output4>
+file_type = power_spectrum
+variable = velocity
+dt = 0.5

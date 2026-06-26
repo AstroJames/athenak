@@ -1,0 +1,72 @@
+# 32^3 isothermal hydro turbulence, parabolic solenoidal driving
+
+<comment>
+problem = turbulence
+
+<job>
+basename = Turb_parabola_sol
+
+<mesh>
+nghost = 3
+nx1 = 32
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+
+nx2 = 32
+x2min = 0.0
+x2max = 1.0
+ix2_bc = periodic
+ox2_bc = periodic
+
+nx3 = 32
+x3min = 0.0
+x3max = 1.0
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 16
+nx2 = 16
+nx3 = 16
+
+<time>
+evolution = dynamic
+integrator = rk3
+cfl_number = 0.3
+nlim = -1
+tlim = 10.0
+ndiag = 10
+
+<hydro>
+eos = isothermal
+iso_sound_speed = 1.0
+reconstruct = wenoz
+rsolver = hlle
+
+<problem>
+user_hist = true
+turb_history = stats
+
+<turb_driving>
+type = hydro
+tcorr = 0.5
+dedt = 5.0e-4
+nlow = 1
+nhigh = 3
+driving_geometry = isotropic
+driving_profile = parabola
+sol_weight = 1.0
+parabola_peak = 2.0
+parabola_width = 1.0
+
+<output1>
+file_type = hst
+dt = 0.05
+user_hist_only = true
+
+<output2>
+file_type = power_spectrum
+variable = velocity
+dt = 1.0

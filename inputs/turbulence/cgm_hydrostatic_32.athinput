@@ -1,0 +1,84 @@
+# 32 x 32 x 64 stratified CGM hydrostatic smoke test.
+# Build with: cmake .. -DPROBLEM=turb_cgm
+
+<comment>
+problem = stratified CGM hydrostatic smoke test
+
+<job>
+basename = CGM_Hydrostatic32
+
+<units>
+# Code units: length = 1 kpc, time = 1 Myr, density = 1e-26 g cm^-3.
+length_cgs = 3.0856775809623245e21
+mass_cgs   = 2.938027326589103e38
+time_cgs   = 3.15576e13
+mu         = 0.6
+
+<mesh>
+nghost = 3
+nx1 = 32
+x1min = -50.0
+x1max = 50.0
+ix1_bc = periodic
+ox1_bc = periodic
+
+nx2 = 32
+x2min = -50.0
+x2max = 50.0
+ix2_bc = periodic
+ox2_bc = periodic
+
+nx3 = 64
+x3min = -100.0
+x3max = 100.0
+ix3_bc = reflect
+ox3_bc = reflect
+
+<meshblock>
+nx1 = 16
+nx2 = 16
+nx3 = 32
+
+<time>
+evolution = dynamic
+integrator = rk2
+cfl_number = 0.3
+nlim = -1
+tlim = 20.0
+ndiag = 10
+
+<hydro>
+eos = ideal
+reconstruct = plm
+rsolver = hllc
+gamma = 1.666666666666667
+dfloor = 1.0e-12
+pfloor = 1.0e-14
+tfloor = 1.0e-8
+
+<problem>
+temp0_cgs = 1.0e7
+temp_floor_cgs = 1.0e6
+z0 = 50.0
+h = 5.0
+mu = 0.6
+hydrogen_mass_fraction = 0.75
+lambda0_cgs = 1.0e-22
+tcool_tff_z0 = 4.0
+perturb_amp = 0.0
+gravity = true
+cooling = false
+thermostat = false
+thermostat_kp = 1.0
+cooling_cfl = 0.1
+enforce_temp_floor = true
+
+<output1>
+file_type = hst
+user_hist_only = true
+dt = 1.0
+
+<output2>
+file_type = bin
+variable = hydro_w
+dt = 10.0

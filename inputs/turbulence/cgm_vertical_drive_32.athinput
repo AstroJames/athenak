@@ -1,0 +1,103 @@
+# 32 x 32 x 64 stratified CGM vertical-driving smoke test.
+# Build with: cmake .. -DPROBLEM=turb_cgm
+
+<comment>
+problem = stratified CGM vertical turbulent driving smoke test
+
+<job>
+basename = CGM_VerticalDrive32
+
+<units>
+# Code units: length = 1 kpc, time = 1 Myr, density = 1e-26 g cm^-3.
+length_cgs = 3.0856775809623245e21
+mass_cgs   = 2.938027326589103e38
+time_cgs   = 3.15576e13
+mu         = 0.6
+
+<mesh>
+nghost = 3
+nx1 = 32
+x1min = -50.0
+x1max = 50.0
+ix1_bc = periodic
+ox1_bc = periodic
+
+nx2 = 32
+x2min = -50.0
+x2max = 50.0
+ix2_bc = periodic
+ox2_bc = periodic
+
+nx3 = 64
+x3min = -100.0
+x3max = 100.0
+ix3_bc = reflect
+ox3_bc = reflect
+
+<meshblock>
+nx1 = 16
+nx2 = 16
+nx3 = 32
+
+<time>
+evolution = dynamic
+integrator = rk3
+cfl_number = 0.3
+nlim = -1
+tlim = 100.0
+ndiag = 10
+
+<hydro>
+eos = ideal
+reconstruct = wenoz
+rsolver = hllc
+gamma = 1.666666666666667
+dfloor = 1.0e-12
+pfloor = 1.0e-14
+tfloor = 1.0e-8
+
+<problem>
+temp0_cgs = 1.0e7
+temp_floor_cgs = 1.0e6
+z0 = 50.0
+h = 5.0
+mu = 0.6
+hydrogen_mass_fraction = 0.75
+lambda0_cgs = 1.0e-22
+tcool_tff_z0 = 4.0
+perturb_amp = 0.0
+gravity = true
+cooling = false
+enforce_temp_floor = true
+
+<turb_driving>
+type = hydro
+tcorr = 500.0
+dedt = 1.0e-7
+nlow = 1
+nhigh = 3
+driving_geometry = vertical
+driving_profile = parabola
+parabola_peak = 2.0
+parabola_width = 0.5
+vertical_window = smooth_tophat
+vertical_window_width = 5.0
+vertical_window_transition = 2.5
+transverse_window = smooth_tophat
+transverse_window_radius = 5.0
+transverse_window_transition = 2.5
+
+<output1>
+file_type = hst
+user_hist_only = true
+dt = 5.0
+
+<output2>
+file_type = bin
+variable = hydro_w
+dt = 25.0
+
+<output3>
+file_type = bin
+variable = turb_force
+dt = 25.0

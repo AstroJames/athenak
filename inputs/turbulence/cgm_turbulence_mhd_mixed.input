@@ -1,0 +1,145 @@
+# 32 x 32 x 64 stratified CGM MHD turbulence with natural-mix ISM forcing.
+# Build with: cmake .. -DPROBLEM=turb_cgm -DAthena_ENABLE_MPI=ON
+
+<comment>
+problem = stratified CGM MHD turbulence, natural-mix ISM forcing
+
+<job>
+basename = CGM_Turbulence_MHD_Mixed
+
+<units>
+# Code units: length = 1 kpc, time = 1 Myr, density = 1e-26 g cm^-3.
+length_cgs = 3.0856775809623245e21
+mass_cgs   = 2.938027326589103e38
+time_cgs   = 3.15576e13
+mu         = 0.6
+
+<mesh>
+nghost = 4
+nx1 = 32
+x1min = -50.0
+x1max = 50.0
+ix1_bc = periodic
+ox1_bc = periodic
+
+nx2 = 32
+x2min = -50.0
+x2max = 50.0
+ix2_bc = periodic
+ox2_bc = periodic
+
+nx3 = 64
+x3min = -100.0
+x3max = 100.0
+ix3_bc = reflect
+ox3_bc = reflect
+
+<meshblock>
+nx1 = 16
+nx2 = 16
+nx3 = 32
+
+<time>
+evolution = dynamic
+integrator = rk3
+cfl_number = 0.6
+nlim = -1
+tlim = 1000.0
+ndiag = 10
+
+<mhd>
+eos = ideal
+reconstruct = wenoz
+rsolver = hlld
+gamma = 1.666666666666667
+dfloor = 1.0e-12
+pfloor = 1.0e-14
+tfloor = 1.0e-8
+fofc = true
+
+<problem>
+temp0_cgs = 1.0e7
+temp_floor_cgs = 1.0e6
+z0 = 50.0
+h = 5.0
+mu = 0.6
+hydrogen_mass_fraction = 0.75
+lambda0_cgs = 1.0e-22
+tcool_tff_z0 = 4.0
+perturb_amp = 0.0
+gravity = true
+cooling = true
+thermostat = true
+thermal_mask = outer_tanh
+disk_balance_width = 5.0
+disk_balance_transition = 2.5
+cooling_cfl = 0.1
+thermal_transition = 2.5
+enforce_temp_floor = true
+magnetic_field = spectral
+beta_z0 = 100.0
+
+<spectral_ic>
+nlow = 1
+nhigh = 3
+spectrum = parabolic
+iseed = 210989
+b_mean_x = 0.0
+b_mean_y = 0.0
+b_mean_z = 0.0
+
+<turb_driving>
+type = mhd
+num_components = 2
+
+<turb_driving/component0>
+name = central_engine
+tcorr = 500.0
+dedt = 0.0
+nlow = 1
+nhigh = 3
+driving_geometry = vertical
+driving_profile = parabola
+parabola_peak = 2.0
+parabola_width = 0.5
+vertical_window = smooth_tophat
+vertical_window_width = 5.0
+vertical_window_transition = 2.5
+transverse_window = smooth_tophat
+transverse_window_radius = 5.0
+transverse_window_transition = 2.5
+
+<turb_driving/component1>
+name = background_ism
+tcorr = 25.0
+dedt = 2.5e-4
+nlow = 4
+nhigh = 8
+driving_geometry = isotropic
+driving_profile = band
+# Natural 3D random-vector mix: two transverse degrees of freedom and one
+# longitudinal degree of freedom.
+sol_weight = 0.666666666666667
+vertical_window = smooth_tophat
+vertical_window_width = 5.0
+vertical_window_transition = 2.5
+transverse_window = none
+
+<output1>
+file_type = hst
+user_hist_only = true
+dt = 5.0
+
+<output2>
+file_type = bin
+variable = mhd_w_bcc
+dt = 100.0
+
+<output3>
+file_type = bin
+variable = turb_force
+dt = 100.0
+
+<output4>
+file_type = rst
+dt = 500.0
