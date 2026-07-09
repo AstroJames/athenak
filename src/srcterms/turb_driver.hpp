@@ -27,7 +27,7 @@ class TurbulenceDriver {
   ~TurbulenceDriver();
 
   DvceArray5D<Real> force, force_tmp;  // arrays used for turb forcing
-  DvceArray6D<Real> force_component, force_tmp_component;
+  DvceArray6D<Real> force_component, force_tmp_component, force_norm_component;
   RNG_State rstate;                    // random state
 
   DualArray2D<Real> xccc, xccs, xcsc, xcss, xscc, xscs, xssc, xsss;

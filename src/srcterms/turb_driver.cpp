@@ -242,6 +242,7 @@ TurbulenceDriver::TurbulenceDriver(MeshBlockPack *pp, ParameterInput *pin) :
   force_tmp("force_tmp",1,1,1,1,1),
   force_component("force_component",1,1,1,1,1,1),
   force_tmp_component("force_tmp_component",1,1,1,1,1,1),
+  force_norm_component("force_norm_component",1,1,1,1,1,1),
   xccc("xccc",1,1),xccs("xccs",1,1),xcsc("xcsc",1,1),xcss("xcss",1,1),
   xscc("xscc",1,1),xscs("xscs",1,1),xssc("xssc",1,1),xsss("xsss",1,1),
   yccc("yccc",1,1),yccs("yccs",1,1),ycsc("ycsc",1,1),ycss("ycss",1,1),
@@ -412,6 +413,8 @@ TurbulenceDriver::TurbulenceDriver(MeshBlockPack *pp, ParameterInput *pin) :
                   ncells1);
   Kokkos::realloc(force_tmp_component, num_components, nmb, 3, ncells3, ncells2,
                   ncells1);
+  Kokkos::realloc(force_norm_component, num_components, nmb, 3, ncells3, ncells2,
+                  ncells1);
 
   Kokkos::realloc(xccc, num_components, max_mode_count);
   Kokkos::realloc(xccs, num_components, max_mode_count);
@@ -480,6 +483,7 @@ void TurbulenceDriver::Initialize() {
 
   auto force_ = force;
   auto force_component_ = force_component;
+  auto force_norm_component_ = force_norm_component;
   par_for("force_init_pgen",DevExeSpace(),
           0,nmb-1,0,2,0,ncells3-1,0,ncells2-1,0,ncells1-1,
   KOKKOS_LAMBDA(int m, int n, int k, int j, int i) {
@@ -501,6 +505,7 @@ void TurbulenceDriver::Initialize() {
     int m = q%nmb;
     int c = q/nmb;
     force_component_(c,m,n,k,j,i) = 0.0;
+    force_norm_component_(c,m,n,k,j,i) = 0.0;
   });
 
   rstate.idum = -1;
@@ -661,10 +666,6 @@ TaskStatus TurbulenceDriver::InitializeModes(Driver *pdrive, int stage) {
   int &nx2 = indcs.nx2;
   int &nx3 = indcs.nx3;
   auto &size = pmy_pack->pmb->mb_size;
-  auto &gindcs = pm->mesh_indcs;
-  int &gnx1 = gindcs.nx1;
-  int &gnx2 = gindcs.nx2;
-  int &gnx3 = gindcs.nx3;
 
   // Now compute new force using new random amplitudes and phases
 
@@ -983,21 +984,6 @@ TaskStatus TurbulenceDriver::InitializeModes(Driver *pdrive, int stage) {
   auto zcos_ = zcos;
   auto zsin_ = zsin;
 
-  DvceArray5D<Real> u0, u0_;
-  if (pmy_pack->phydro != nullptr) u0 = (pmy_pack->phydro->u0);
-  if (pmy_pack->pmhd != nullptr) u0 = (pmy_pack->pmhd->u0);
-  bool flag_twofl = false;
-  if (pmy_pack->pionn != nullptr) {
-    u0 = (pmy_pack->phydro->u0);
-    u0_ = (pmy_pack->pmhd->u0);
-    flag_twofl = true;
-  }
-
-  const int nmkji = nmb*nx3*nx2*nx1;
-  const int nkji = nx3*nx2*nx1;
-  const int nji  = nx2*nx1;
-  Real dt = pm->dt;
-  Real dvol = 1.0/(gnx1*gnx2*gnx3);
   for (int c = 0; c < num_components; ++c) {
     for (int n=0; n<mode_count[c]; n++) {
       par_for("force_compute", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
@@ -1081,125 +1067,6 @@ TaskStatus TurbulenceDriver::InitializeModes(Driver *pdrive, int stage) {
       force_tmp_(c,m,1,k,j,i) *= weight;
       force_tmp_(c,m,2,k,j,i) *= weight;
     });
-
-    Real t0 = 0.0, t1 = 0.0, t2 = 0.0, t3 = 0.0;
-    Kokkos::parallel_reduce("net_mom_1", Kokkos::RangePolicy<>(DevExeSpace(),0,nmkji),
-    KOKKOS_LAMBDA(const int &idx, Real &sum_t0, Real &sum_t1,
-                                  Real &sum_t2, Real &sum_t3) {
-      int m = (idx)/nkji;
-      int k = (idx - m*nkji)/nji;
-      int j = (idx - m*nkji - k*nji)/nx1;
-      int i = (idx - m*nkji - k*nji - j*nx1) + is;
-      k += ks;
-      j += js;
-      Real den = u0(m,IDN,k,j,i);
-      if (flag_twofl) {
-        den += u0_(m,IDN,k,j,i);
-      }
-      Real &x1min = size.d_view(m).x1min;
-      Real &x1max = size.d_view(m).x1max;
-      Real &x2min = size.d_view(m).x2min;
-      Real &x2max = size.d_view(m).x2max;
-      Real &x3min = size.d_view(m).x3min;
-      Real &x3max = size.d_view(m).x3max;
-      Real x = CellCenterX(i - is, nx1, x1min, x1max);
-      Real y = CellCenterX(j - js, nx2, x2min, x2max);
-      Real z = CellCenterX(k - ks, nx3, x3min, x3max);
-      Real rperp = sqrt(x*x + y*y);
-      Real weight = SpatialWindowWeight(z, vertical_window_, vertical_window_width_,
-                                        vertical_window_transition_);
-      weight *= SpatialWindowWeight(rperp, transverse_window_, transverse_window_radius_,
-                                    transverse_window_transition_);
-      sum_t0 += den*weight;
-      sum_t1 += den*force_tmp_(c,m,0,k,j,i);
-      sum_t2 += den*force_tmp_(c,m,1,k,j,i);
-      sum_t3 += den*force_tmp_(c,m,2,k,j,i);
-    }, Kokkos::Sum<Real>(t0), Kokkos::Sum<Real>(t1),
-       Kokkos::Sum<Real>(t2), Kokkos::Sum<Real>(t3));
-
-#if MPI_PARALLEL_ENABLED
-    Real m[4], gm[4];
-    m[0] = t0; m[1] = t1; m[2] = t2; m[3] = t3;
-    MPI_Allreduce(m, gm, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    t0 = gm[0]; t1 = gm[1]; t2 = gm[2]; t3 = gm[3];
-#endif
-    t0 = std::max(t0, 1.0e-20);
-
-    par_for("force_remove_net_mom", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
-    KOKKOS_LAMBDA(int m, int k, int j, int i) {
-      Real &x1min = size.d_view(m).x1min;
-      Real &x1max = size.d_view(m).x1max;
-      Real &x2min = size.d_view(m).x2min;
-      Real &x2max = size.d_view(m).x2max;
-      Real &x3min = size.d_view(m).x3min;
-      Real &x3max = size.d_view(m).x3max;
-      Real x = CellCenterX(i - is, nx1, x1min, x1max);
-      Real y = CellCenterX(j - js, nx2, x2min, x2max);
-      Real z = CellCenterX(k - ks, nx3, x3min, x3max);
-      Real rperp = sqrt(x*x + y*y);
-      Real weight = SpatialWindowWeight(z, vertical_window_, vertical_window_width_,
-                                        vertical_window_transition_);
-      weight *= SpatialWindowWeight(rperp, transverse_window_, transverse_window_radius_,
-                                    transverse_window_transition_);
-      force_tmp_(c,m,0,k,j,i) -= weight*t1/t0;
-      force_tmp_(c,m,1,k,j,i) -= weight*t2/t0;
-      force_tmp_(c,m,2,k,j,i) -= weight*t3/t0;
-    });
-
-    t0 = 0.0;
-    t1 = 0.0;
-    Kokkos::parallel_reduce("net_mom_2", Kokkos::RangePolicy<>(DevExeSpace(),0,nmkji),
-    KOKKOS_LAMBDA(const int &idx, Real &sum_t0, Real &sum_t1) {
-      int m = (idx)/nkji;
-      int k = (idx - m*nkji)/nji;
-      int j = (idx - m*nkji - k*nji)/nx1;
-      int i = (idx - m*nkji - k*nji - j*nx1) + is;
-      k += ks;
-      j += js;
-
-      Real den  = u0(m,IDN,k,j,i);
-      Real mom1 = u0(m,IM1,k,j,i);
-      Real mom2 = u0(m,IM2,k,j,i);
-      Real mom3 = u0(m,IM3,k,j,i);
-      if (flag_twofl) {
-        den  += u0_(m,IDN,k,j,i);
-        mom1 += u0_(m,IM1,k,j,i);
-        mom2 += u0_(m,IM2,k,j,i);
-        mom3 += u0_(m,IM3,k,j,i);
-      }
-      Real v1 = force_tmp_(c,m,0,k,j,i);
-      Real v2 = force_tmp_(c,m,1,k,j,i);
-      Real v3 = force_tmp_(c,m,2,k,j,i);
-
-      sum_t0 += den*(v1*v1+v2*v2+v3*v3);
-      sum_t1 += mom1*v1+mom2*v2+mom3*v3;
-    }, Kokkos::Sum<Real>(t0), Kokkos::Sum<Real>(t1));
-
-#if MPI_PARALLEL_ENABLED
-    m[0] = t0; m[1] = t1;
-    MPI_Allreduce(m, gm, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    t0 = gm[0]; t1 = gm[1];
-#endif
-
-    t0 = std::max(t0, 1.0e-20);
-
-    Real m0 = 0.5*t0*dvol*dt;
-    Real m1 = t1*dvol;
-
-    Real s;
-    if (m1 >= 0) {
-      s = -m1/2./m0 + sqrt(m1*m1/4./m0/m0 + dedt[c]/m0);
-    } else {
-      s = m1/2./m0 + sqrt(m1*m1/4./m0/m0 + dedt[c]/m0);
-    }
-    if (dedt[c] == 0.0 || m0 == 0.0) s = 0.0;
-
-    par_for("force_norm", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
-    KOKKOS_LAMBDA(int m, int k, int j, int i) {
-      force_tmp_(c,m,0,k,j,i) *= s;
-      force_tmp_(c,m,1,k,j,i) *= s;
-      force_tmp_(c,m,2,k,j,i) *= s;
-    });
   }
 
   return TaskStatus::complete;
@@ -1233,6 +1100,7 @@ TaskStatus TurbulenceDriver::UpdateForcing(Driver *pdrive, int stage) {
   auto force_total_ = force;
   auto force_ = force_component;
   auto force_tmp_ = force_tmp_component;
+  auto force_norm_ = force_norm_component;
 
   DvceArray5D<Real> u0, u0_;
   if (pmy_pack->phydro != nullptr) u0 = (pmy_pack->phydro->u0);
@@ -1265,6 +1133,9 @@ TaskStatus TurbulenceDriver::UpdateForcing(Driver *pdrive, int stage) {
           fcorr*force_(c,m,1,k,j,i) + gcorr*force_tmp_(c,m,1,k,j,i);
       force_(c,m,2,k,j,i) =
           fcorr*force_(c,m,2,k,j,i) + gcorr*force_tmp_(c,m,2,k,j,i);
+      force_norm_(c,m,0,k,j,i) = force_(c,m,0,k,j,i);
+      force_norm_(c,m,1,k,j,i) = force_(c,m,1,k,j,i);
+      force_norm_(c,m,2,k,j,i) = force_(c,m,2,k,j,i);
     });
 
     Real t0 = 0.0, t1 = 0.0, t2 = 0.0, t3 = 0.0;
@@ -1303,9 +1174,9 @@ TaskStatus TurbulenceDriver::UpdateForcing(Driver *pdrive, int stage) {
       weight *= SpatialWindowWeight(rperp, transverse_window_, transverse_window_radius_,
                                     transverse_window_transition_);
       sum_t0 += den*weight;
-      sum_t1 += den*force_(c,m,0,k,j,i);
-      sum_t2 += den*force_(c,m,1,k,j,i);
-      sum_t3 += den*force_(c,m,2,k,j,i);
+      sum_t1 += den*force_norm_(c,m,0,k,j,i);
+      sum_t2 += den*force_norm_(c,m,1,k,j,i);
+      sum_t3 += den*force_norm_(c,m,2,k,j,i);
     }, Kokkos::Sum<Real>(t0), Kokkos::Sum<Real>(t1),
        Kokkos::Sum<Real>(t2), Kokkos::Sum<Real>(t3));
 
@@ -1333,9 +1204,9 @@ TaskStatus TurbulenceDriver::UpdateForcing(Driver *pdrive, int stage) {
                                         vertical_window_transition_);
       weight *= SpatialWindowWeight(rperp, transverse_window_, transverse_window_radius_,
                                     transverse_window_transition_);
-      force_(c,m,0,k,j,i) -= weight*t1/t0;
-      force_(c,m,1,k,j,i) -= weight*t2/t0;
-      force_(c,m,2,k,j,i) -= weight*t3/t0;
+      force_norm_(c,m,0,k,j,i) -= weight*t1/t0;
+      force_norm_(c,m,1,k,j,i) -= weight*t2/t0;
+      force_norm_(c,m,2,k,j,i) -= weight*t3/t0;
     });
 
     t0 = 0.0;
@@ -1359,9 +1230,9 @@ TaskStatus TurbulenceDriver::UpdateForcing(Driver *pdrive, int stage) {
         mom2 += u0_(m,IM2,k,j,i);
         mom3 += u0_(m,IM3,k,j,i);
       }
-      Real v1 = force_(c,m,0,k,j,i);
-      Real v2 = force_(c,m,1,k,j,i);
-      Real v3 = force_(c,m,2,k,j,i);
+      Real v1 = force_norm_(c,m,0,k,j,i);
+      Real v2 = force_norm_(c,m,1,k,j,i);
+      Real v3 = force_norm_(c,m,2,k,j,i);
 
       sum_t0 += den*(v1*v1+v2*v2+v3*v3);
       sum_t1 += mom1*v1+mom2*v2+mom3*v3;
@@ -1388,9 +1259,9 @@ TaskStatus TurbulenceDriver::UpdateForcing(Driver *pdrive, int stage) {
 
     par_for("force_norm", DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
     KOKKOS_LAMBDA(int m, int k, int j, int i) {
-      force_(c,m,0,k,j,i) *= s;
-      force_(c,m,1,k,j,i) *= s;
-      force_(c,m,2,k,j,i) *= s;
+      force_norm_(c,m,0,k,j,i) *= s;
+      force_norm_(c,m,1,k,j,i) *= s;
+      force_norm_(c,m,2,k,j,i) *= s;
     });
   }
 
@@ -1401,7 +1272,7 @@ TaskStatus TurbulenceDriver::UpdateForcing(Driver *pdrive, int stage) {
   for (int c = 0; c < num_components; ++c) {
     par_for("force_total_sum", DevExeSpace(),0,nmb-1,0,2,ks,ke,js,je,is,ie,
     KOKKOS_LAMBDA(int m, int n, int k, int j, int i) {
-      force_total_(m,n,k,j,i) += force_(c,m,n,k,j,i);
+      force_total_(m,n,k,j,i) += force_norm_(c,m,n,k,j,i);
     });
   }
 
