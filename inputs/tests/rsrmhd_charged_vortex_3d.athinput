@@ -1,0 +1,56 @@
+# Three-dimensional cyclic-plane validation of the resistive relativistic charged vortex
+
+<job>
+basename  = rsrmhd_charged_vortex_3d
+
+<mesh>
+nghost    = 2
+nx1       = 64
+x1min     = -10.0
+x1max     = 10.0
+ix1_bc    = outflow
+ox1_bc    = outflow
+nx2       = 64
+x2min     = -10.0
+x2max     = 10.0
+ix2_bc    = outflow
+ox2_bc    = outflow
+nx3       = 64
+x3min     = -10.0
+x3max     = 10.0
+ix3_bc    = outflow
+ox3_bc    = outflow
+
+<meshblock>
+nx1       = 64
+nx2       = 64
+nx3       = 64
+
+<coord>
+special_rel = true
+
+<time>
+evolution  = dynamic
+integrator = imex2
+cfl_number = 0.5
+ndiag      = 100
+nlim       = -1
+tlim       = 1.0
+
+<mhd>
+eos            = ideal
+gamma          = 1.3333333333333333333
+resistive_rel  = true
+electric_ct    = false
+resistivity    = 1.0e-3
+rsolver        = llf
+reconstruct    = plm
+fofc           = false
+
+<problem>
+pgen_name = rsrmhd_charged_vortex
+plane     = xy
+q0        = 0.7
+p0        = 0.1
+rho       = 1.0
+interior_radius = 5.0

@@ -19,6 +19,7 @@
 #include "coordinates/cell_locations.hpp"
 #include "mesh/mesh.hpp"
 #include "eos/eos.hpp"
+#include "eos/resistive_srmhd.hpp"
 #include "globals.hpp"
 #include "hydro/hydro.hpp"
 #include "mhd/mhd.hpp"
@@ -41,6 +42,7 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
     derived_var("derived-var",1,1,1,1,1),
     outarray("cc_outvar",1,1,1,1,1),
     outfield("fc_outvar",1,1,1,1),
+    outfield_e("fc_e_restart",1,1,1,1),
     out_params(opar) {
   // exit for history, restart, or event log files
   if (out_params.file_type.compare("hst") == 0 ||
@@ -90,8 +92,9 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
   }
 
   if (is_power_spectrum && !(velocity_alias || density_alias || magnetic_alias)) {
-    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
-       << "Power spectrum output in block '" << out_params.block_name << "' uses variable='"
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+       << std::endl << "Power spectrum output in block '" << out_params.block_name
+       << "' uses variable='"
        << out_params.variable << "' but supported choices are "
        << "'velocity' (or mhd_w_vx/hydro_w_vx) and "
        << "'density' (or mhd_w_d/hydro_w_d), and "
@@ -105,7 +108,8 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
        << "Power spectrum output requested in <output> block '" << out_params.block_name
        << "' with variable='" << out_params.variable
        << "' but neither Hydro nor MHD object is constructed."
-       << std::endl << "Input file is likely missing a <hydro> or <mhd> block" << std::endl;
+       << std::endl << "Input file is likely missing a <hydro> or <mhd> block"
+       << std::endl;
     exit(EXIT_FAILURE);
   }
 
@@ -124,7 +128,8 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
       if (out_params.variable.compare(var_choice[i]) == 0) {ivar = i;}
     }
     if (ivar < 0) {
-      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+         << std::endl
          << "Variable '" << out_params.variable << "' in block '" << out_params.block_name
          << "' in input file is not a valid choice" << std::endl;
       std::exit(EXIT_FAILURE);
@@ -235,6 +240,14 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
        << "Output of particles requested in <output> block '"
        << out_params.block_name << "' but particle object not constructed."
        << std::endl << "Input file is likely missing corresponding block" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  if ((!power_spectrum_alias) && (ivar>=152) &&
+      (pm->pmb_pack->pmhd == nullptr || !(pm->pmb_pack->pmhd->is_resistive_rel))) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
+       << "Output of a resistive-SRMHD field requested in <output> block '"
+       << out_params.block_name << "' but resistive SRMHD is not active."
+       << std::endl << "Input file must set <mhd>/resistive_rel=true" << std::endl;
     exit(EXIT_FAILURE);
   }
 
@@ -495,6 +508,36 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
         vname.append(number);
         outvars.emplace_back(vname,n,&(pm->pmb_pack->pmhd->w0));
       }
+    }
+
+    // Resistive SRMHD cell-centered electric field.  E is copied unchanged between
+    // the primitive and conserved arrays, so use w0 for both individual and grouped
+    // output with unambiguous physical labels.
+    if (variable.compare("mhd_e1") == 0 || variable.compare("mhd_e") == 0) {
+      outvars.emplace_back("e1",srrmhd::IRE1,&(pm->pmb_pack->pmhd->w0));
+    }
+    if (variable.compare("mhd_e2") == 0 || variable.compare("mhd_e") == 0) {
+      outvars.emplace_back("e2",srrmhd::IRE2,&(pm->pmb_pack->pmhd->w0));
+    }
+    if (variable.compare("mhd_e3") == 0 || variable.compare("mhd_e") == 0) {
+      outvars.emplace_back("e3",srrmhd::IRE3,&(pm->pmb_pack->pmhd->w0));
+    }
+
+    if (variable.compare("mhd_q") == 0) {
+      out_params.contains_derived = true;
+      out_params.n_derived += 1;
+      const int i_derived = out_params.n_derived - 1;
+      outvars.emplace_back("q",i_derived,&(derived_var));
+    }
+
+    // Cell-centered diagnostic evaluation of the local resistivity model.  This is
+    // evaluated from the accepted state at output time and is independent of the
+    // cell-E or dual-CT placement used by the implicit update.
+    if (variable.compare("mhd_eta") == 0) {
+      out_params.contains_derived = true;
+      out_params.n_derived += 1;
+      const int i_derived = out_params.n_derived - 1;
+      outvars.emplace_back("eta",i_derived,&(derived_var));
     }
 
     // mhd cell-centered magnetic fields

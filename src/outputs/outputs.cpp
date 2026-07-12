@@ -207,6 +207,7 @@ Outputs::Outputs(ParameterInput *pin, Mesh *pm) {
       if (opar.file_type.compare("pdf") == 0) {
         if (opar.variable.compare("mhd_w") == 0 ||
             opar.variable.compare("mhd_u") == 0 ||
+            opar.variable.compare("mhd_e") == 0 ||
             opar.variable.compare("hydro_w") == 0 ||
             opar.variable.compare("hydro_u") == 0) {
           std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__

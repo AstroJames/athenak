@@ -14,6 +14,7 @@
 #include "diffusion/resistivity.hpp"
 #include "diffusion/biermann.hpp"
 #include "eos/eos.hpp"
+#include "eos/resistive_srmhd.hpp"
 #include "mhd.hpp"
 
 #include "coordinates/coordinates.hpp"
@@ -64,8 +65,17 @@ TaskStatus MHD::CornerE(Driver *pdriver, int stage) {
     auto bcc_ = bcc0;
     auto e3cc_ = e3_cc;
 
+    // Resistive SRMHD evolves the physical electric field independently.  It must be
+    // the cell-centered reference for the GS07 face-to-edge correction; using the
+    // ideal-MHD value -v x B would erase the non-ideal part of E at corners.
+    if (is_resistive_rel) {
+      par_for("e_cc_2d_srr", DevExeSpace(), 0, nmb1, js-1, je+1, is-1, ie+1,
+      KOKKOS_LAMBDA(int m, int j, int i) {
+        e3cc_(m,ks,j,i) = w0_(m,srrmhd::IRE3,ks,j,i);
+      });
+
     // compute cell-centered EMF in dynamical GRMHD
-    if (pmy_pack->padm != nullptr) {
+    } else if (pmy_pack->padm != nullptr) {
       auto &adm = pmy_pack->padm->adm;
       par_for("e_cc_2d", DevExeSpace(), 0, nmb1, js-1, je+1, is-1, ie+1,
       KOKKOS_LAMBDA(int m, int j, int i) {
@@ -216,8 +226,16 @@ TaskStatus MHD::CornerE(Driver *pdriver, int stage) {
     auto e2cc_ = e2_cc;
     auto e3cc_ = e3_cc;
 
+    if (is_resistive_rel) {
+      par_for("e_cc_3d_srr", DevExeSpace(), 0, nmb1, ks-1, ke+1, js-1, je+1,
+              is-1, ie+1, KOKKOS_LAMBDA(int m, int k, int j, int i) {
+        e1cc_(m,k,j,i) = w0_(m,srrmhd::IRE1,k,j,i);
+        e2cc_(m,k,j,i) = w0_(m,srrmhd::IRE2,k,j,i);
+        e3cc_(m,k,j,i) = w0_(m,srrmhd::IRE3,k,j,i);
+      });
+
     // compute cell-centered EMFs in dynamical GRMHD
-    if (pmy_pack->padm != nullptr) {
+    } else if (pmy_pack->padm != nullptr) {
       auto &adm = pmy_pack->padm->adm;
       par_for("e_cc_3d", DevExeSpace(), 0, nmb1, ks-1, ke+1, js-1, je+1, is-1, ie+1,
       KOKKOS_LAMBDA(int m, int k, int j, int i) {

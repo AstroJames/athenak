@@ -47,6 +47,7 @@ TaskStatus MHD::NewTimeStep(Driver *pdriver, int stage) {
   auto &is_special_relativistic_ = pmy_pack->pcoord->is_special_relativistic;
   auto &is_general_relativistic_ = pmy_pack->pcoord->is_general_relativistic;
   auto &is_dynamical_relativistic_ = pmy_pack->pcoord->is_dynamical_relativistic;
+  const bool resistive_rel = is_resistive_rel;
   const int nmkji = (pmy_pack->nmb_thispack)*nx3*nx2*nx1;
   const int nkji = nx3*nx2*nx1;
   const int nji  = nx2*nx1;
@@ -82,8 +83,13 @@ TaskStatus MHD::NewTimeStep(Driver *pdriver, int stage) {
       j += js;
       Real max_dv1 = 0.0, max_dv2 = 0.0, max_dv3 = 0.0;
 
+      // Full resistive SRMHD contains Maxwell waves at c=1 in every direction.
+      if (resistive_rel) {
+        max_dv1 = 1.0;
+        max_dv2 = 1.0;
+        max_dv3 = 1.0;
       // timestep in GR MHD
-      if (is_general_relativistic_ || is_dynamical_relativistic_) {
+      } else if (is_general_relativistic_ || is_dynamical_relativistic_) {
         max_dv1 = 1.0;
         max_dv2 = 1.0;
         max_dv3 = 1.0;

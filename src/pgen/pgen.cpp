@@ -84,6 +84,14 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm) :
     Diffusion(pin, false);
   } else if (pgen_fun_name.compare("spectrum_modes") == 0) {
     SpectrumModes(pin, false);
+  } else if (pgen_fun_name.compare("rsrmhd_roundtrip") == 0) {
+    ResistiveSRMHDRoundTrip(pin, false);
+  } else if (pgen_fun_name.compare("rsrmhd_current_sheet") == 0) {
+    ResistiveSRMHDCurrentSheet(pin, false);
+  } else if (pgen_fun_name.compare("rsrmhd_charged_vortex") == 0) {
+    ResistiveSRMHDChargedVortex(pin, false);
+  } else if (pgen_fun_name.compare("rsrmhd_ect") == 0) {
+    ResistiveSRMHDECT(pin, false);
   // else, name not set on command line or input file, print warning and quit
   } else {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
@@ -268,6 +276,11 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
     data_size_ += (nout1+1)*nout2*nout3*sizeof(Real);    // mhd b0.x1f
     data_size_ += nout1*(nout2+1)*nout3*sizeof(Real);    // mhd b0.x2f
     data_size_ += nout1*nout2*(nout3+1)*sizeof(Real);    // mhd b0.x3f
+    if (pmhd->use_electric_ct) {
+      data_size_ += (nout1+1)*nout2*nout3*sizeof(Real);  // mhd e0.x1f
+      data_size_ += nout1*(nout2+1)*nout3*sizeof(Real);  // mhd e0.x2f
+      data_size_ += nout1*nout2*(nout3+1)*sizeof(Real);  // mhd e0.x3f
+    }
   }
   if (prad != nullptr) {
     data_size_ += nout1*nout2*nout3*nrad*sizeof(Real);   // rad i0
@@ -283,8 +296,9 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
 
   if (data_size_ != data_size) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-              << std::endl << "CC data size read from restart file not equal to size "
-              << "of Hydro, MHD, Rad, and/or Z4c arrays, restart file is broken."
+              << std::endl << "Variable data size read from restart file not equal to "
+              << "the size of Hydro, MHD, Rad, and/or Z4c arrays, restart file is "
+              << "incompatible or broken."
               << std::endl;
     exit(EXIT_FAILURE);
   }
@@ -296,6 +310,7 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
 
   HostArray5D<Real> ccin("rst-cc-in", 1, 1, 1, 1, 1);
   HostFaceFld4D<Real> fcin("rst-fc-in", 1, 1, 1, 1);
+  HostFaceFld4D<Real> efin("rst-efc-in", 1, 1, 1, 1);
 
   // calculate max/min number of MeshBlocks across all ranks
   int noutmbs_max = pm->nmb_eachrank[0];
@@ -473,6 +488,95 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
     offset_myrank += nout1*(nout2+1)*nout3*sizeof(Real);    // mhd b0.x2f
     offset_myrank += nout1*nout2*(nout3+1)*sizeof(Real);    // mhd b0.x3f
     myoffset = offset_myrank;
+
+    if (pmhd->use_electric_ct) {
+      Kokkos::realloc(efin.x1f, nmb, nout3, nout2, nout1+1);
+      Kokkos::realloc(efin.x2f, nmb, nout3, nout2+1, nout1);
+      Kokkos::realloc(efin.x3f, nmb, nout3+1, nout2, nout1);
+      for (int m=0; m<noutmbs_max; ++m) {
+        if (m < noutmbs_min) {
+          auto x1fptr = Kokkos::subview(efin.x1f, m, Kokkos::ALL,
+                                        Kokkos::ALL, Kokkos::ALL);
+          int fldcnt = x1fptr.size();
+          if (resfile.Read_Reals_at_all(x1fptr.data(), fldcnt, myoffset) != fldcnt) {
+            std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                      << std::endl << "Input e0.x1f field not read correctly from rst "
+                      << "file, restart file is broken." << std::endl;
+            exit(EXIT_FAILURE);
+          }
+          myoffset += fldcnt*sizeof(Real);
+
+          auto x2fptr = Kokkos::subview(efin.x2f, m, Kokkos::ALL,
+                                        Kokkos::ALL, Kokkos::ALL);
+          fldcnt = x2fptr.size();
+          if (resfile.Read_Reals_at_all(x2fptr.data(), fldcnt, myoffset) != fldcnt) {
+            std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                      << std::endl << "Input e0.x2f field not read correctly from rst "
+                      << "file, restart file is broken." << std::endl;
+            exit(EXIT_FAILURE);
+          }
+          myoffset += fldcnt*sizeof(Real);
+
+          auto x3fptr = Kokkos::subview(efin.x3f, m, Kokkos::ALL,
+                                        Kokkos::ALL, Kokkos::ALL);
+          fldcnt = x3fptr.size();
+          if (resfile.Read_Reals_at_all(x3fptr.data(), fldcnt, myoffset) != fldcnt) {
+            std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                      << std::endl << "Input e0.x3f field not read correctly from rst "
+                      << "file, restart file is broken." << std::endl;
+            exit(EXIT_FAILURE);
+          }
+          myoffset += fldcnt*sizeof(Real);
+          myoffset += data_size -
+              (x1fptr.size()+x2fptr.size()+x3fptr.size())*sizeof(Real);
+        } else if (m < pm->nmb_thisrank) {
+          auto x1fptr = Kokkos::subview(efin.x1f, m, Kokkos::ALL,
+                                        Kokkos::ALL, Kokkos::ALL);
+          int fldcnt = x1fptr.size();
+          if (resfile.Read_Reals_at(x1fptr.data(), fldcnt, myoffset) != fldcnt) {
+            std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                      << std::endl << "Input e0.x1f field not read correctly from rst "
+                      << "file, restart file is broken." << std::endl;
+            exit(EXIT_FAILURE);
+          }
+          myoffset += fldcnt*sizeof(Real);
+
+          auto x2fptr = Kokkos::subview(efin.x2f, m, Kokkos::ALL,
+                                        Kokkos::ALL, Kokkos::ALL);
+          fldcnt = x2fptr.size();
+          if (resfile.Read_Reals_at(x2fptr.data(), fldcnt, myoffset) != fldcnt) {
+            std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                      << std::endl << "Input e0.x2f field not read correctly from rst "
+                      << "file, restart file is broken." << std::endl;
+            exit(EXIT_FAILURE);
+          }
+          myoffset += fldcnt*sizeof(Real);
+
+          auto x3fptr = Kokkos::subview(efin.x3f, m, Kokkos::ALL,
+                                        Kokkos::ALL, Kokkos::ALL);
+          fldcnt = x3fptr.size();
+          if (resfile.Read_Reals_at(x3fptr.data(), fldcnt, myoffset) != fldcnt) {
+            std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                      << std::endl << "Input e0.x3f field not read correctly from rst "
+                      << "file, restart file is broken." << std::endl;
+            exit(EXIT_FAILURE);
+          }
+          myoffset += fldcnt*sizeof(Real);
+          myoffset += data_size -
+              (x1fptr.size()+x2fptr.size()+x3fptr.size())*sizeof(Real);
+        }
+      }
+      Kokkos::deep_copy(Kokkos::subview(pmhd->e0.x1f, std::make_pair(0,nmb),
+                        Kokkos::ALL, Kokkos::ALL, Kokkos::ALL), efin.x1f);
+      Kokkos::deep_copy(Kokkos::subview(pmhd->e0.x2f, std::make_pair(0,nmb),
+                        Kokkos::ALL, Kokkos::ALL, Kokkos::ALL), efin.x2f);
+      Kokkos::deep_copy(Kokkos::subview(pmhd->e0.x3f, std::make_pair(0,nmb),
+                        Kokkos::ALL, Kokkos::ALL, Kokkos::ALL), efin.x3f);
+      offset_myrank += (nout1+1)*nout2*nout3*sizeof(Real);  // mhd e0.x1f
+      offset_myrank += nout1*(nout2+1)*nout3*sizeof(Real);  // mhd e0.x2f
+      offset_myrank += nout1*nout2*(nout3+1)*sizeof(Real);  // mhd e0.x3f
+      myoffset = offset_myrank;
+    }
   }
 
   if (prad != nullptr) {
@@ -664,6 +768,16 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
     SphericalCollapse(pin, true);
   } else if (pgen_fun_name.compare("diffusion") == 0) {
     Diffusion(pin, true);
+  } else if (pgen_fun_name.compare("spectrum_modes") == 0) {
+    SpectrumModes(pin, true);
+  } else if (pgen_fun_name.compare("rsrmhd_roundtrip") == 0) {
+    ResistiveSRMHDRoundTrip(pin, true);
+  } else if (pgen_fun_name.compare("rsrmhd_current_sheet") == 0) {
+    ResistiveSRMHDCurrentSheet(pin, true);
+  } else if (pgen_fun_name.compare("rsrmhd_charged_vortex") == 0) {
+    ResistiveSRMHDChargedVortex(pin, true);
+  } else if (pgen_fun_name.compare("rsrmhd_ect") == 0) {
+    ResistiveSRMHDECT(pin, true);
   } else {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
         << "Problem generator name could not be found in <problem> block in input file"

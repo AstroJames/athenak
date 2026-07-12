@@ -96,6 +96,20 @@ void RestartOutput::LoadOutputData(Mesh *pm) {
     Kokkos::realloc(outfield.x3f, nmb, nout3+1, nout2, nout1);
     Kokkos::deep_copy(outfield.x3f, Kokkos::subview(pmhd->b0.x3f, std::make_pair(0,nmb),
                       Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+    if (pmhd->use_electric_ct) {
+      Kokkos::realloc(outfield_e.x1f, nmb, nout3, nout2, nout1+1);
+      Kokkos::deep_copy(outfield_e.x1f,
+                        Kokkos::subview(pmhd->e0.x1f, std::make_pair(0,nmb),
+                        Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+      Kokkos::realloc(outfield_e.x2f, nmb, nout3, nout2+1, nout1);
+      Kokkos::deep_copy(outfield_e.x2f,
+                        Kokkos::subview(pmhd->e0.x2f, std::make_pair(0,nmb),
+                        Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+      Kokkos::realloc(outfield_e.x3f, nmb, nout3+1, nout2, nout1);
+      Kokkos::deep_copy(outfield_e.x3f,
+                        Kokkos::subview(pmhd->e0.x3f, std::make_pair(0,nmb),
+                        Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+    }
   }
   if (prad != nullptr) {
     Kokkos::realloc(outarray_rad, nmb, nrad, nout3, nout2, nout1);
@@ -248,6 +262,11 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
     data_size += (nout1+1)*nout2*nout3*sizeof(Real);    // mhd b0.x1f
     data_size += nout1*(nout2+1)*nout3*sizeof(Real);    // mhd b0.x2f
     data_size += nout1*nout2*(nout3+1)*sizeof(Real);    // mhd b0.x3f
+    if (pmhd->use_electric_ct) {
+      data_size += (nout1+1)*nout2*nout3*sizeof(Real);  // mhd e0.x1f
+      data_size += nout1*(nout2+1)*nout3*sizeof(Real);  // mhd e0.x2f
+      data_size += nout1*nout2*(nout3+1)*sizeof(Real);  // mhd e0.x3f
+    }
   }
   if (prad != nullptr) {
     data_size += nout1*nout2*nout3*nrad*sizeof(Real);   // radiation i0
@@ -429,6 +448,95 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
     offset_myrank += nout1*(nout2+1)*nout3*sizeof(Real);    // mhd b0.x2f
     offset_myrank += nout1*nout2*(nout3+1)*sizeof(Real);    // mhd b0.x3f
     myoffset = offset_myrank;
+
+    // Dual CT evolves face-centered E as authoritative state.  Store it after B using
+    // the same per-MeshBlock face-field layout.  Ordinary MHD restart files are
+    // unchanged because this block is absent unless electric_ct=true.
+    if (pmhd->use_electric_ct) {
+      for (int m=0; m<noutmbs_max; ++m) {
+        if (m < noutmbs_min) {
+          auto x1fptr = Kokkos::subview(outfield_e.x1f, m, Kokkos::ALL,
+                                        Kokkos::ALL, Kokkos::ALL);
+          int fldcnt = x1fptr.size();
+          if (resfile.Write_any_type_at_all(x1fptr.data(), fldcnt, myoffset,
+                                            "Real") != fldcnt) {
+            std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                      << std::endl << "e0.x1f data not written correctly to rst file, "
+                      << "restart file is broken." << std::endl;
+            exit(EXIT_FAILURE);
+          }
+          myoffset += fldcnt*sizeof(Real);
+
+          auto x2fptr = Kokkos::subview(outfield_e.x2f, m, Kokkos::ALL,
+                                        Kokkos::ALL, Kokkos::ALL);
+          fldcnt = x2fptr.size();
+          if (resfile.Write_any_type_at_all(x2fptr.data(), fldcnt, myoffset,
+                                            "Real") != fldcnt) {
+            std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                      << std::endl << "e0.x2f data not written correctly to rst file, "
+                      << "restart file is broken." << std::endl;
+            exit(EXIT_FAILURE);
+          }
+          myoffset += fldcnt*sizeof(Real);
+
+          auto x3fptr = Kokkos::subview(outfield_e.x3f, m, Kokkos::ALL,
+                                        Kokkos::ALL, Kokkos::ALL);
+          fldcnt = x3fptr.size();
+          if (resfile.Write_any_type_at_all(x3fptr.data(), fldcnt, myoffset,
+                                            "Real") != fldcnt) {
+            std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                      << std::endl << "e0.x3f data not written correctly to rst file, "
+                      << "restart file is broken." << std::endl;
+            exit(EXIT_FAILURE);
+          }
+          myoffset += fldcnt*sizeof(Real);
+          myoffset += data_size -
+              (x1fptr.size()+x2fptr.size()+x3fptr.size())*sizeof(Real);
+        } else if (m < pm->nmb_thisrank) {
+          auto x1fptr = Kokkos::subview(outfield_e.x1f, m, Kokkos::ALL,
+                                        Kokkos::ALL, Kokkos::ALL);
+          int fldcnt = x1fptr.size();
+          if (resfile.Write_any_type_at(x1fptr.data(), fldcnt, myoffset,
+                                        "Real") != fldcnt) {
+            std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                      << std::endl << "e0.x1f data not written correctly to rst file, "
+                      << "restart file is broken." << std::endl;
+            exit(EXIT_FAILURE);
+          }
+          myoffset += fldcnt*sizeof(Real);
+
+          auto x2fptr = Kokkos::subview(outfield_e.x2f, m, Kokkos::ALL,
+                                        Kokkos::ALL, Kokkos::ALL);
+          fldcnt = x2fptr.size();
+          if (resfile.Write_any_type_at(x2fptr.data(), fldcnt, myoffset,
+                                        "Real") != fldcnt) {
+            std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                      << std::endl << "e0.x2f data not written correctly to rst file, "
+                      << "restart file is broken." << std::endl;
+            exit(EXIT_FAILURE);
+          }
+          myoffset += fldcnt*sizeof(Real);
+
+          auto x3fptr = Kokkos::subview(outfield_e.x3f, m, Kokkos::ALL,
+                                        Kokkos::ALL, Kokkos::ALL);
+          fldcnt = x3fptr.size();
+          if (resfile.Write_any_type_at(x3fptr.data(), fldcnt, myoffset,
+                                        "Real") != fldcnt) {
+            std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                      << std::endl << "e0.x3f data not written correctly to rst file, "
+                      << "restart file is broken." << std::endl;
+            exit(EXIT_FAILURE);
+          }
+          myoffset += fldcnt*sizeof(Real);
+          myoffset += data_size -
+              (x1fptr.size()+x2fptr.size()+x3fptr.size())*sizeof(Real);
+        }
+      }
+      offset_myrank += (nout1+1)*nout2*nout3*sizeof(Real);  // mhd e0.x1f
+      offset_myrank += nout1*(nout2+1)*nout3*sizeof(Real);  // mhd e0.x2f
+      offset_myrank += nout1*nout2*(nout3+1)*sizeof(Real);  // mhd e0.x3f
+      myoffset = offset_myrank;
+    }
   }
 
   if (prad != nullptr) {

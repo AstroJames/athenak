@@ -332,13 +332,16 @@ void Driver::Initialize(Mesh *pmesh, ParameterInput *pin, Outputs *pout, bool re
   run_time_.reset();
   nmb_updated_ = 0;
 
-  // allocate memory for stiff source terms with ImEx integrators
-  // only implemented for ion-neutral two fluid for now
+  // Allocate memory for stiff source terms with ImEx integrators.  The currently
+  // supported modules are mutually exclusive and use different component counts.
   ion_neutral::IonNeutral *pionn = pmesh->pmb_pack->pionn;
-  if (pionn != nullptr) {
+  const bool resistive_srmhd = (pmhd != nullptr) && pmhd->is_resistive_rel
+                               && !(pmhd->use_electric_ct)
+                               && time_evolution != TimeEvolution::tstatic;
+  if (pionn != nullptr || resistive_srmhd) {
     if (nimp_stages == 0) {
       std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-          << std::endl << "IonNetral MHD can only be run with ImEx integrators."
+          << std::endl << "Stiff-source physics requires an IMEX integrator."
           << std::endl;
       std::exit(EXIT_FAILURE);
     }
@@ -347,7 +350,8 @@ void Driver::Initialize(Mesh *pmesh, ParameterInput *pin, Outputs *pout, bool re
     int ncells1 = indcs.nx1 + 2*(indcs.ng);
     int ncells2 = (indcs.nx2 > 1)? (indcs.nx2 + 2*(indcs.ng)) : 1;
     int ncells3 = (indcs.nx3 > 1)? (indcs.nx3 + 2*(indcs.ng)) : 1;
-    Kokkos::realloc(impl_src, nimp_stages, nmb, 8, ncells3, ncells2, ncells1);
+    const int nstiff = resistive_srmhd ? 3 : 8;
+    Kokkos::realloc(impl_src, nimp_stages, nmb, nstiff, ncells3, ncells2, ncells1);
   }
 
   return;
@@ -590,10 +594,12 @@ void Driver::InitBoundaryValuesAndPrimitives(Mesh *pm) {
     (void) pmhd->InitRecv(this, -1);  // stage < 0 suppresses InitFluxRecv
     (void) pmhd->SendU(this, 0);
     (void) pmhd->SendB(this, 0);
-    (void) pmhd->ClearSend(this, -1); // stage = -1 only clear SendU, SendB
-    (void) pmhd->ClearRecv(this, -1); // stage = -1 only clear RecvU, RecvB
+    (void) pmhd->SendElectricFaces(this, 0);
+    (void) pmhd->ClearSend(this, -1); // stage = -1 clears SendU, SendB, SendElectricFaces
+    (void) pmhd->ClearRecv(this, -1); // stage = -1 clears RecvU, RecvB, RecvElectricFaces
     (void) pmhd->RecvU(this, 0);
     (void) pmhd->RecvB(this, 0);
+    (void) pmhd->RecvElectricFaces(this, 0);
     (void) pmhd->SendU_Shr(this, 0);
     (void) pmhd->SendB_Shr(this, 0);
     (void) pmhd->ClearSend(this, -4); // stage = -4 only clear SendU_Shr, SendB_Shr

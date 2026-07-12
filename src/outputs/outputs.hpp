@@ -21,7 +21,7 @@
     #error NHISTORY > NREDUCTION in outputs.hpp
 #endif
 
-#define NOUTPUT_CHOICES 152
+#define NOUTPUT_CHOICES 158
 // choices for output variables used in <ouput> blocks in input file
 // TO ADD MORE CHOICES:
 //   - add more strings to array below, change NOUTPUT_CHOICES above appropriately
@@ -96,7 +96,11 @@ static const char *var_choice[NOUTPUT_CHOICES] = {
   "tmunu",
 
   // Particles (150-151)
-  "prtcl_all", "prtcl_d"
+  "prtcl_all", "prtcl_d",
+
+  // Resistive special-relativistic MHD electric field, charge, and resistivity
+  // (152-157)
+  "mhd_e1", "mhd_e2", "mhd_e3", "mhd_e", "mhd_q", "mhd_eta"
 };
 
 
@@ -243,7 +247,8 @@ class BaseTypeOutput {
   HostArray5D<Real> outarray;
   HostArray5D<Real> outarray_hyd, outarray_mhd, outarray_rad,
                     outarray_force, outarray_z4c, outarray_adm;
-  HostFaceFld4D<Real> outfield;  // FC output field on host
+  HostFaceFld4D<Real> outfield;    // FC magnetic output field on host
+  HostFaceFld4D<Real> outfield_e;  // FC electric restart field on host
   std::vector<int> noutmbs;   // with MPI, number of output MBs across all ranks
   int noutmbs_min;            // with MPI, minimum number of output MBs across all ranks
   int noutmbs_max;            // with MPI, maximum number of output MBs across all ranks

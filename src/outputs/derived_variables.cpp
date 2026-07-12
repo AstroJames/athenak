@@ -23,8 +23,10 @@
 #include "geodesic-grid/geodesic_grid.hpp"
 #include "mesh/mesh.hpp"
 #include "eos/eos.hpp"
+#include "eos/resistive_srmhd.hpp"
 #include "hydro/hydro.hpp"
 #include "mhd/mhd.hpp"
+#include "mhd/dual_ct.hpp"
 #include "radiation/radiation.hpp"
 #include "radiation/radiation_tetrad.hpp"
 #include "particles/particles.hpp"
@@ -129,6 +131,53 @@ void BaseTypeOutput::ComputeDerivedVariable(std::string name, Mesh *pm) {
       }
     });
     i_dv += 1; // increment derived variable index
+  }
+
+  // Gauss-law charge for resistive SRMHD.  This is the same discrete operator used by
+  // the explicit q*v current in Ampere's equation.
+  if (name.compare("mhd_q") == 0) {
+    if (derived_var.extent(4) <= 1)
+      Kokkos::realloc(derived_var, nmb, n_dv, n3, n2, n1);
+    auto dv = derived_var;
+    auto &w = pm->pmb_pack->pmhd->w0;
+    auto ef = pm->pmb_pack->pmhd->e0;
+    const bool electric_ct = pm->pmb_pack->pmhd->use_electric_ct;
+    par_for("srrmhd_charge", DevExeSpace(), 0, (nmb-1), ks, ke, js, je, is, ie,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      const Real idx1 = 1.0/size.d_view(m).dx1;
+      const Real idx2 = multi_d ? 1.0/size.d_view(m).dx2 : 0.0;
+      const Real idx3 = three_d ? 1.0/size.d_view(m).dx3 : 0.0;
+      if (electric_ct) {
+        dv(m,i_dv,k,j,i) = srrmhd::FaceDivergence(
+            ef, m, k, j, i, idx1, idx2, idx3, multi_d, three_d);
+      } else {
+        dv(m,i_dv,k,j,i) = srrmhd::CellCenteredCharge(
+            w, m, k, j, i, idx1, idx2, idx3, multi_d, three_d);
+      }
+    });
+    i_dv += 1;
+  }
+
+  // Cell-centered effective resistivity evaluated from the accepted state.  The
+  // implicit update still uses its separately frozen cell/face coefficient; this
+  // branch is diagnostic only and never participates in IMEX.
+  if (name.compare("mhd_eta") == 0) {
+    if (derived_var.extent(4) <= 1)
+      Kokkos::realloc(derived_var, nmb, n_dv, n3, n2, n1);
+    auto dv = derived_var;
+    auto &pmhd = pm->pmb_pack->pmhd;
+    auto w = pmhd->w0;
+    auto bcc = pmhd->bcc0;
+    const auto eta_data = pmhd->resistivity_data;
+    par_for("srrmhd_resistivity", DevExeSpace(), 0, (nmb-1), ks, ke, js, je,
+            is, ie, KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      dv(m,i_dv,k,j,i) = srrmhd::EvaluateResistivity(
+          eta_data, w(m,IDN,k,j,i), w(m,IVX,k,j,i), w(m,IVY,k,j,i),
+          w(m,IVZ,k,j,i), w(m,srrmhd::IRE1,k,j,i),
+          w(m,srrmhd::IRE2,k,j,i), w(m,srrmhd::IRE3,k,j,i),
+          bcc(m,IBX,k,j,i), bcc(m,IBY,k,j,i), bcc(m,IBZ,k,j,i));
+    });
+    i_dv += 1;
   }
 
   // magnitude of current density.  Calculated from cell-centered fields.

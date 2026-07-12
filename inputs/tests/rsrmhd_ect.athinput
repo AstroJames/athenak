@@ -1,0 +1,47 @@
+# Manufactured compatible-operator test for charge-conserving dual CT
+
+<job>
+basename = rsrmhd_ect
+
+<mesh>
+nghost = 2
+nx1 = 8
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+nx2 = 8
+x2min = 0.0
+x2max = 1.0
+ix2_bc = periodic
+ox2_bc = periodic
+nx3 = 8
+x3min = 0.0
+x3max = 1.0
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 8
+nx2 = 8
+nx3 = 8
+
+<coord>
+special_rel = true
+
+<time>
+evolution = static
+integrator = imex2
+cfl_number = 0.4
+tlim = 0.0
+
+<mhd>
+eos = ideal
+gamma = 1.6666666666666667
+resistive_rel = true
+resistivity = 0.01
+electric_ct = true
+
+<problem>
+pgen_name = rsrmhd_ect
+operator_dt = 0.125

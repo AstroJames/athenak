@@ -60,6 +60,26 @@ def run(input_filename, arguments):
         os.chdir(current_dir)
 
 
+# Function for restarting AthenaK from a checkpoint
+def restart(restart_filename, arguments):
+    out_log = LogPipe('athena.restart', logging.INFO)
+    current_dir = os.getcwd()
+    exe_dir = current_dir + '/build/src/'
+    os.chdir(exe_dir)
+    try:
+        run_command = ['./athena', '-r', restart_filename]
+        try:
+            cmd = run_command + arguments
+            logging.getLogger('athena.restart').debug('Executing: '+' '.join(cmd))
+            subprocess.check_call(cmd, stdout=out_log)
+        except subprocess.CalledProcessError as err:
+            raise AthenaError('Return code {0} from command \'{1}\''
+                              .format(err.returncode, ' '.join(err.cmd)))
+    finally:
+        out_log.close()
+        os.chdir(current_dir)
+
+
 # Function for running AthenaK with MPI
 def mpirun(nproc, input_filename, arguments):
     out_log = LogPipe('athena.run', logging.INFO)

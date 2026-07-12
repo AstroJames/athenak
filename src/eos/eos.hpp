@@ -369,6 +369,27 @@ class IdealSRMHD : public EquationOfState {
 };
 
 //----------------------------------------------------------------------------------------
+//! \class IdealSRRMHD
+//! \brief Ideal-gas EOS and known-E recovery for resistive SRMHD
+
+class IdealSRRMHD : public EquationOfState {
+ public:
+  // Following suppress warnings that hydro versions are not over-ridden
+  using EquationOfState::ConsToPrim;
+  using EquationOfState::PrimToCons;
+
+  IdealSRRMHD(MeshBlockPack *pp, ParameterInput *pin);
+  void ConsToPrim(DvceArray5D<Real> &cons, const DvceFaceFld4D<Real> &b,
+                  DvceArray5D<Real> &prim, DvceArray5D<Real> &bcc,
+                  const bool only_testfloors,
+                  const int il, const int iu, const int jl, const int ju,
+                  const int kl, const int ku) override;
+  void PrimToCons(const DvceArray5D<Real> &prim, const DvceArray5D<Real> &bcc,
+                  DvceArray5D<Real> &cons, const int il, const int iu,
+                  const int jl, const int ju, const int kl, const int ku) override;
+};
+
+//----------------------------------------------------------------------------------------
 //! \class IdealGRMHD
 //! \brief Derived class for ideal gas EOS in general relativistic MHD
 

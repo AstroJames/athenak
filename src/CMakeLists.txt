@@ -50,6 +50,7 @@ add_executable(
         eos/ideal_srhyd.cpp
         eos/ideal_grhyd.cpp
         eos/ideal_srmhd.cpp
+        eos/ideal_srrmhd.cpp
         eos/ideal_grmhd.cpp
         eos/primitive-solver/eos_compose.cpp
         eos/primitive-solver/piecewise_polytrope.cpp
@@ -79,6 +80,7 @@ add_executable(
         mhd/mhd.cpp
         mhd/mhd_corner_e.cpp
         mhd/mhd_ct.cpp
+        mhd/mhd_dual_ct.cpp
         mhd/mhd_fluxes.cpp
         mhd/mhd_fofc.cpp
         mhd/mhd_newdt.cpp
@@ -121,6 +123,10 @@ add_executable(
         pgen/tests/rad_check_tetrad.cpp
         pgen/tests/rad_hohlraum.cpp
         pgen/tests/rad_linear_wave.cpp
+        pgen/tests/rsrmhd_current_sheet.cpp
+        pgen/tests/rsrmhd_charged_vortex.cpp
+        pgen/tests/rsrmhd_ect.cpp
+        pgen/tests/rsrmhd_roundtrip.cpp
         pgen/tests/z4c_linear_wave.cpp
         pgen/tests/spectrum_modes.cpp
 

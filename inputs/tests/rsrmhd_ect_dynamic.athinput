@@ -1,0 +1,51 @@
+# One-step dynamic charge-conserving dual-CT regression
+
+<job>
+basename = rsrmhd_ect_dynamic
+
+<mesh>
+nghost = 2
+nx1 = 64
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+nx2 = 1
+x2min = -0.5
+x2max = 0.5
+ix2_bc = periodic
+ox2_bc = periodic
+nx3 = 1
+x3min = -0.5
+x3max = 0.5
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 64
+nx2 = 1
+nx3 = 1
+
+<coord>
+special_rel = true
+
+<time>
+evolution = dynamic
+integrator = imex2
+cfl_number = 0.4
+nlim = 1
+tlim = 0.001
+
+<mhd>
+eos = ideal
+gamma = 1.6666666666666667
+resistive_rel = true
+resistivity = 0.000001
+electric_ct = true
+rsolver = llf
+reconstruct = plm
+fofc = false
+
+<problem>
+pgen_name = rsrmhd_ect
+electric_amplitude = 0.05

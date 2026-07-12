@@ -1,0 +1,69 @@
+# Exact two-dimensional resistive relativistic charged-vortex equilibrium
+
+<job>
+basename  = rsrmhd_charged_vortex
+
+<mesh>
+nghost    = 2
+nx1       = 32
+x1min     = -10.0
+x1max     = 10.0
+ix1_bc    = outflow
+ox1_bc    = outflow
+nx2       = 32
+x2min     = -10.0
+x2max     = 10.0
+ix2_bc    = outflow
+ox2_bc    = outflow
+nx3       = 1
+x3min     = -0.5
+x3max     = 0.5
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1       = 32
+nx2       = 32
+nx3       = 1
+
+<coord>
+special_rel = true
+
+<time>
+evolution  = dynamic
+integrator = imex2
+cfl_number = 0.5
+ndiag      = 100
+nlim       = 1
+tlim       = 5.0
+
+<mhd>
+eos            = ideal
+gamma          = 1.3333333333333333333
+resistive_rel  = true
+electric_ct    = false
+resistivity    = 1.0e-3
+resistivity_model = uniform
+eta_floor      = 1.0e-8
+eta_scale      = 1.0
+number_per_mass = 1.0
+rsolver        = llf
+reconstruct    = plm
+fofc           = false
+
+<problem>
+pgen_name = rsrmhd_charged_vortex
+q0        = 0.7
+p0        = 0.1
+rho       = 1.0
+nonideal_e_scale = 1.0
+interior_radius = 5.0
+
+<output1>
+file_type   = tab
+variable    = mhd_q
+id          = charge
+data_format = %20.12e
+dt          = -1.0
+slice_x2    = 0.0
+slice_x3    = 0.0

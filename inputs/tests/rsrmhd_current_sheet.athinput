@@ -1,0 +1,77 @@
+# Self-similar one-dimensional resistive relativistic current-sheet diffusion
+
+<job>
+basename  = rsrmhd_current_sheet
+
+<mesh>
+nghost    = 2
+nx1       = 128
+x1min     = -1.5
+x1max     = 1.5
+ix1_bc    = outflow
+ox1_bc    = outflow
+nx2       = 1
+x2min     = -0.5
+x2max     = 0.5
+ix2_bc    = periodic
+ox2_bc    = periodic
+nx3       = 1
+x3min     = -0.5
+x3max     = 0.5
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1       = 128
+nx2       = 1
+nx3       = 1
+
+<coord>
+special_rel = true
+
+<time>
+evolution  = dynamic
+integrator = imex2
+cfl_number = 0.5
+ndiag      = 128
+nlim       = -1
+tlim       = 9.0
+
+<mhd>
+eos            = ideal
+gamma          = 2.0
+resistive_rel  = true
+electric_ct    = false
+resistivity_model = uniform
+resistivity    = 0.01
+eta_floor      = 1.0e-8
+eta_scale      = 1.0
+number_per_mass = 1.0
+rsolver        = llf
+reconstruct    = plm
+fofc           = false
+
+<problem>
+pgen_name = rsrmhd_current_sheet
+t0        = 1.0
+rho       = 1.0
+pressure  = 5000.0
+initial_eta = 0.01
+
+<output1>
+file_type   = tab
+variable    = mhd_e
+id          = electric
+data_format = %20.12e
+dt          = 9.0
+slice_x2    = 0.0
+slice_x3    = 0.0
+
+<output2>
+file_type   = tab
+variable    = mhd_eta
+id          = eta
+data_format = %20.12e
+dt          = -1.0
+slice_x2    = 0.0
+slice_x3    = 0.0
