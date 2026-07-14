@@ -59,18 +59,32 @@ def summarize(args):
     second_half = turnover_time >= 0.5*turnover_time[-1]
     q_ohm = values('q_ohm')
     q_visc = values('q_visc')
+    mean_pressure = values('pgas')/volume
     ohmic_integral = trapezoid(q_ohm, time)
     viscous_integral = trapezoid(q_visc, time)
     heating_integral = ohmic_integral + viscous_integral
+    cooling_enabled = 'e_cool' in column
+    cooling_power = (values('cool_power') if cooling_enabled
+                     else np.zeros_like(time))
+    cooled_energy = (values('e_cool') if cooling_enabled
+                     else np.zeros_like(time))
+    cooled_momentum = np.column_stack([
+        values('p_cool1') if cooling_enabled else np.zeros_like(time),
+        values('p_cool2') if cooling_enabled else np.zeros_like(time),
+        values('p_cool3') if cooling_enabled else np.zeros_like(time),
+    ])
+    limited_cooling_energy = (values('e_cool_lim') if cooling_enabled
+                              else np.zeros_like(time))
 
     energy_residual = (
         values('etot') - values('etot')[0] - values('e_inj')
+        + cooled_energy
     )
     momentum = np.column_stack([
         values('mom1') - values('mom1')[0] - values('p_inj1'),
         values('mom2') - values('mom2')[0] - values('p_inj2'),
         values('mom3') - values('mom3')[0] - values('p_inj3'),
-    ])
+    ]) + cooled_momentum
 
     turnover = []
     nturn = int(round(time[-1]/args.eddy_time))
@@ -128,6 +142,10 @@ def summarize(args):
         'second_half_vrms_std': float(np.std(vrms[second_half])),
         'second_half_vrms_slope_per_turnover': linear_slope(
             vrms[second_half], turnover_time[second_half]),
+        'second_half_mean_pressure': float(np.mean(mean_pressure[second_half])),
+        'second_half_mean_pressure_std': float(np.std(mean_pressure[second_half])),
+        'second_half_mean_pressure_slope_per_turnover': linear_slope(
+            mean_pressure[second_half], turnover_time[second_half]),
         'second_half_mean_magnetization': float(np.mean(
             mean_magnetization[second_half])),
         'second_half_mean_alfven_speed': float(np.mean(
@@ -146,8 +164,23 @@ def summarize(args):
             (q_ohm + q_visc)[second_half])),
         'second_half_heating_estimator_slope_per_turnover': linear_slope(
             (q_ohm + q_visc)[second_half], turnover_time[second_half]),
+        'cooling_enabled': cooling_enabled,
+        'second_half_cooling_power_mean': float(np.mean(
+            cooling_power[second_half])),
+        'second_half_cooling_power_slope_per_turnover': linear_slope(
+            cooling_power[second_half], turnover_time[second_half]),
+        'second_half_drive_minus_cooling_power_mean': float(np.mean(
+            values('f_power')[second_half] - cooling_power[second_half])),
+        'second_half_drive_minus_cooling_power_std': float(np.std(
+            values('f_power')[second_half] - cooling_power[second_half])),
+        'second_half_cooling_minus_heating_mean': float(np.mean(
+            cooling_power[second_half]
+            - (q_ohm + q_visc)[second_half])),
         'injected_energy': float(values('e_inj')[-1]),
         'mean_injected_power': float(values('e_inj')[-1]/time[-1]),
+        'cooled_energy': float(cooled_energy[-1]),
+        'mean_cooling_power': float(cooled_energy[-1]/time[-1]),
+        'limited_cooling_energy': float(limited_cooling_energy[-1]),
         'internal_energy_change': float(values('eint')[-1] - values('eint')[0]),
         'magnetic_energy_initial': float(values('emag')[0]),
         'magnetic_energy_final': float(values('emag')[-1]),
@@ -155,6 +188,8 @@ def summarize(args):
             values('emag')[-1]/values('emag')[0]),
         'entropy_proxy_change': float(
             values('entropy')[-1] - values('entropy')[0]),
+        'second_half_entropy_proxy_slope_per_turnover': linear_slope(
+            values('entropy')[second_half], turnover_time[second_half]),
         'integrated_ohmic_heating_estimator': ohmic_integral,
         'integrated_viscous_heating_estimator': viscous_integral,
         'ohmic_heating_fraction': ohmic_integral/heating_integral,

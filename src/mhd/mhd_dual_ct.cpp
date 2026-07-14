@@ -20,6 +20,7 @@
 #include "globals.hpp"
 #include "mhd/dual_ct.hpp"
 #include "mhd/mhd.hpp"
+#include "mhd/relativistic_viscosity.hpp"
 
 namespace mhd {
 
@@ -591,8 +592,11 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
  auto bcc       = bcc0;
  auto u         = u0;
  auto w         = w0;
+ auto visc_u    = visc_u0;
+ auto visc_star = visc_ustar;
  auto uprev     = ect_u_prev;
  auto eta_f     = eta_face;
+ auto visc_src  = pdriver->impl_src;
  auto &a_twid   = pdriver->a_twid;
  auto &nghbr    = pmy_pack->pmb->nghbr;
  const bool multi_block = pmy_pack->pmesh->nmb_total > 1;
@@ -605,6 +609,38 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
  const bool nonuniform_eta =
    resistivity_data.model != srrmhd::ResistivityModel::uniform;
  const Real uniform_eta = resistivity;
+ const bool viscosity = relativistic_viscosity_data.enabled;
+ const auto viscosity_data = relativistic_viscosity_data;
+ const Real adt = pdriver->a_impl*dt;
+ const bool diagonal_solve = estage < pdriver->nexp_stages;
+
+ auto prepare_viscous_stage = [&]() {
+  if (!viscosity) return;
+  if (istage > 1) {
+   par_for(
+     "dual_ct_viscous_history", DevExeSpace(), 0, nmb1, 0, srrmhd::NVISC-1,
+     ks, ke, js, je, is, ie,
+     KOKKOS_LAMBDA(int m, int n, int k, int j, int i) {
+      for (int s = 0; s <= istage-2; ++s) {
+       visc_u(m, n, k, j, i) +=
+         a_twid[istage-2][s]*dt*visc_src(s, m, 3+n, k, j, i);
+      }
+     });
+  }
+  Kokkos::deep_copy(visc_star, visc_u);
+ };
+
+ auto store_viscous_source = [&]() {
+  if (!viscosity) return;
+  const int ss = istage - 1;
+  par_for(
+    "dual_ct_viscous_source", DevExeSpace(), 0, nmb1, 0, srrmhd::NVISC-1,
+    ks, ke, js, je, is, ie,
+    KOKKOS_LAMBDA(int m, int n, int k, int j, int i) {
+     visc_src(ss, m, 3+n, k, j, i) =
+       (visc_u(m, n, k, j, i) - visc_star(m, n, k, j, i))/adt;
+    });
+ };
 
  auto sync_active_e = [&]() {
   par_for(
@@ -619,15 +655,18 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
  };
 
  auto recover_lagged_state = [&]() {
+  if (viscosity) {
+   return RecoverViscousPrimitives(visc_u, 0.0, true, false,
+                                   0, n1-1, 0, n2-1, 0, n3-1);
+  }
   peos->ConsToPrim(u, b, w, bcc, false, 0, n1 - 1, 0, n2 - 1, 0, n3 - 1);
+  return TaskStatus::complete;
  };
 
  if (pmy_pack->pmesh->multi_d) {
   constexpr int max_iterations = 60;
   constexpr Real relaxation    = 0.5;
   const Real tolerance = (sizeof(Real) == sizeof(float)) ? 2.0e-6 : 2.0e-12;
-  const Real adt       = pdriver->a_impl * dt;
-  const bool diagonal_solve = estage < pdriver->nexp_stages;
   const bool three_d = pmy_pack->pmesh->three_d;
   const int e3ke = three_d ? ke + 1 : ks;
 
@@ -689,7 +728,13 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
       u(m, srrmhd::IRE2, k, j, i) = ec2;
       u(m, srrmhd::IRE3, k, j, i) = ec3;
      });
+   if (viscosity) {
+    return RecoverViscousPrimitives(
+        visc_star, adt/viscosity_data.tau, false, true,
+        is, ie, js, je, ks, ke);
+   }
    peos->ConsToPrim(u, b, w, bcc, false, is, ie, js, je, ks, ke);
+   return TaskStatus::complete;
   };
 
   auto measure_residual = [&]() {
@@ -790,6 +835,7 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
   auto check_iteration = [&]() {
    if (ect_global_residual < tolerance) {
     store_sources();
+    store_viscous_source();
     if (multi_block) {
      TaskStatus tstat = StartElectricFaceExchange(e);
      if (tstat != TaskStatus::complete) return tstat;
@@ -807,6 +853,7 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
   if (ect_impl_state == ECTImplicitState::idle) {
    ect_impl_estage = estage;
    ect_picard_iteration = 0;
+   prepare_viscous_stage();
    if (nonuniform_eta && diagonal_solve) {
     // Eta must sample an accepted, decomposition-independent cell state.  Refresh
     // active cell E from the primary face field, then communicate U before recovery.
@@ -817,7 +864,8 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
      ect_impl_state = ECTImplicitState::lagged_cell_recv;
      return TaskStatus::incomplete;
     }
-    recover_lagged_state();
+    TaskStatus tstat = recover_lagged_state();
+    if (tstat != TaskStatus::complete) return tstat;
    }
    assemble_star_faces();
    if (multi_block) {
@@ -971,7 +1019,8 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
     ect_impl_state = ECTImplicitState::picard_face_recv;
     return TaskStatus::incomplete;
    }
-   sync_interior();
+   TaskStatus tstat = sync_interior();
+   if (tstat != TaskStatus::complete) return tstat;
    ect_local_residual = measure_residual();
 #if MPI_PARALLEL_ENABLED
    ect_global_residual = 0.0;
@@ -990,7 +1039,8 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
   if (ect_impl_state == ECTImplicitState::picard_face_recv) {
    TaskStatus tstat = FinishSharedElectricAverage(e);
    if (tstat != TaskStatus::complete) return tstat;
-   sync_interior();
+   tstat = sync_interior();
+   if (tstat != TaskStatus::complete) return tstat;
    tstat = StartElectricCellExchange();
    if (tstat != TaskStatus::complete) return tstat;
    ect_impl_state = ECTImplicitState::picard_cell_recv;
@@ -1047,9 +1097,11 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
 
  // Assemble and freeze the explicit-plus-history right-hand side for this
  // stage.
+ prepare_viscous_stage();
  if (nonuniform_eta) {
   sync_active_e();
-  recover_lagged_state();
+  TaskStatus tstat = recover_lagged_state();
+  if (tstat != TaskStatus::complete) return tstat;
  }
  par_for(
    "dual_ct_imex_star_e1", DevExeSpace(), 0, nmb1, is, ie + 1,
@@ -1085,11 +1137,9 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
     e.x3f(m, ks + 1, js, i)  = value3;
    });
 
- const bool diagonal_solve = estage < pdriver->nexp_stages;
  if (diagonal_solve) {
   constexpr int max_iterations = 30;
   const Real tolerance = (sizeof(Real) == sizeof(float)) ? 2.0e-6 : 2.0e-12;
-  const Real a_dt      = pdriver->a_impl * dt;
   bool converged       = false;
 
   FreezeFaceResistivity();
@@ -1119,7 +1169,7 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
         0.5 * (es.x3f(m, ks, js, i - 1) + es.x3f(m, ks, js, i));
       const Real local_eta =
         nonuniform_eta ? eta_f.x1f(m, ks, js, i) : uniform_eta;
-      const Real kappa = a_dt/local_eta;
+      const Real kappa = adt/local_eta;
       Real ex_new, ey_new, ez_new;
       srrmhd::ImplicitElectricField(
         ux, uy, uz, es.x1f(m, ks, js, i), ey_star, ez_star, b.x1f(m, ks, js, i),
@@ -1134,7 +1184,7 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
         0.5 * (es.x1f(m, ks, js, i) + es.x1f(m, ks, js, i + 1));
       const Real local_eta =
         nonuniform_eta ? eta_f.x2f(m, ks, js, i) : uniform_eta;
-      const Real kappa = a_dt/local_eta;
+      const Real kappa = adt/local_eta;
       Real ex_new, ey_new, ez_new;
       srrmhd::ImplicitElectricField(
         w(m, IVX, ks, js, i), w(m, IVY, ks, js, i), w(m, IVZ, ks, js, i),
@@ -1156,7 +1206,15 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
       u(m, srrmhd::IRE2, ks, js, i) = ec2;
       u(m, srrmhd::IRE3, ks, js, i) = ec3;
      });
-   peos->ConsToPrim(u, b, w, bcc, false, is, ie, js, js, ks, ks);
+   TaskStatus tstat = viscosity
+       ? RecoverViscousPrimitives(
+           visc_star, adt/viscosity_data.tau, false, true,
+           is, ie, js, js, ks, ks)
+       : TaskStatus::complete;
+   if (!viscosity) {
+    peos->ConsToPrim(u, b, w, bcc, false, is, ie, js, js, ks, ks);
+   }
+   if (tstat != TaskStatus::complete) return tstat;
 
    Real max_change = 0.0;
    Kokkos::parallel_reduce(
@@ -1190,17 +1248,18 @@ TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
   }
 
   const int source_stage = istage - 1;
+  store_viscous_source();
   par_for(
     "dual_ct_store_source_e1", DevExeSpace(), 0, nmb1, is, ie + 1,
     KOKKOS_LAMBDA(int m, int i) {
      re.x1f(m, source_stage, ks, js, i) =
-       (e.x1f(m, ks, js, i) - es.x1f(m, ks, js, i)) / a_dt;
+       (e.x1f(m, ks, js, i) - es.x1f(m, ks, js, i)) / adt;
     });
   par_for(
     "dual_ct_store_source_e23", DevExeSpace(), 0, nmb1, is, ie,
     KOKKOS_LAMBDA(int m, int i) {
-     const Real r2 = (e.x2f(m, ks, js, i) - es.x2f(m, ks, js, i)) / a_dt;
-     const Real r3 = (e.x3f(m, ks, js, i) - es.x3f(m, ks, js, i)) / a_dt;
+     const Real r2 = (e.x2f(m, ks, js, i) - es.x2f(m, ks, js, i)) / adt;
+     const Real r3 = (e.x3f(m, ks, js, i) - es.x3f(m, ks, js, i)) / adt;
      re.x2f(m, source_stage, ks, js, i)     = r2;
      re.x2f(m, source_stage, ks, js + 1, i) = r2;
      re.x3f(m, source_stage, ks, js, i)     = r3;

@@ -15,6 +15,7 @@
 #include "mesh/mesh.hpp"
 #include "eos/eos.hpp"
 #include "ismcooling.hpp"
+#include "relativistic_cooling.hpp"
 #include "srcterms.hpp"
 #include "units/units.hpp"
 
@@ -79,7 +80,7 @@ void SourceTerms::NewTimeStep(const DvceArray5D<Real> &w0, const EOS_Data &eos_d
     }, Kokkos::Min<Real>(dtnew));
   }
 
-  if (rel_cooling) {
+  if (relativistic_cooling_model == RelativisticCoolingModel::legacy) {
     Real use_e = eos_data.use_e;
     Real gamma = eos_data.gamma;
     Real gm1 = gamma - 1.0;
@@ -122,6 +123,37 @@ void SourceTerms::NewTimeStep(const DvceArray5D<Real> &w0, const EOS_Data &eos_d
                              pow(temp*cooling_rate, cooling_power));
 
       min_dt = fmin((eint/cooling_heating), min_dt);
+    }, Kokkos::Min<Real>(dtnew));
+  }
+
+  if (relativistic_cooling_model == RelativisticCoolingModel::entropy) {
+    const Real gamma = eos_data.gamma;
+    const Real target_adiabat = cooling_adiabat_rel;
+    const Real cooling_time = cooling_time_rel;
+    const Real cooling_cfl = cooling_cfl_rel;
+    const Real eint_floor = eos_data.pfloor/(gamma - 1.0);
+
+    Kokkos::parallel_reduce("entropy_rel_cooling_newdt",
+                            Kokkos::RangePolicy<>(DevExeSpace(), 0, nmkji),
+    KOKKOS_LAMBDA(const int &idx, Real &min_dt) {
+      int m = idx/nkji;
+      int k = (idx - m*nkji)/nji;
+      int j = (idx - m*nkji - k*nji)/nx1;
+      int i = (idx - m*nkji - k*nji - j*nx1) + is;
+      k += ks;
+      j += js;
+
+      const Real u1 = w0(m,IVX,k,j,i);
+      const Real u2 = w0(m,IVY,k,j,i);
+      const Real u3 = w0(m,IVZ,k,j,i);
+      const Real eint = w0(m,IEN,k,j,i);
+      const auto rates = relativistic_cooling::EntropyRelaxation(
+          w0(m,IDN,k,j,i), eint, u1, u2, u3, gamma, target_adiabat,
+          cooling_time, 0.0, eint_floor);
+      const Real lorentz = sqrt(1.0 + u1*u1 + u2*u2 + u3*u3);
+      const Real cooling_dt = cooling_cfl*lorentz*eint
+                              /(FLT_MIN + rates.requested_lambda);
+      min_dt = fmin(cooling_dt, min_dt);
     }, Kokkos::Min<Real>(dtnew));
   }
 

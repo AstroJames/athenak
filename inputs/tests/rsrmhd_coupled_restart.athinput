@@ -1,35 +1,30 @@
-# Two-dimensional mechanically driven, resistive-viscous SRMHD turbulence.
-
-<comment>
-problem = 2D coupled SRMHD turbulence driven by enthalpy-weighted proper acceleration
+# Restart equivalence for cooled, mechanically driven, visco-resistive SRMHD.
 
 <job>
-basename = rsrmhd_driven_turbulence
+basename = rsrmhd_coupled_restart
 
 <mesh>
 nghost = 2
-nx1 = 64
+nx1 = 8
 x1min = 0.0
 x1max = 1.0
 ix1_bc = periodic
 ox1_bc = periodic
-
-nx2 = 64
+nx2 = 8
 x2min = 0.0
 x2max = 1.0
 ix2_bc = periodic
 ox2_bc = periodic
-
-nx3 = 1
-x3min = -0.5
-x3max = 0.5
+nx3 = 8
+x3min = 0.0
+x3max = 1.0
 ix3_bc = periodic
 ox3_bc = periodic
 
 <meshblock>
-nx1 = 32
-nx2 = 32
-nx3 = 1
+nx1 = 4
+nx2 = 4
+nx3 = 4
 
 <coord>
 special_rel = true
@@ -37,23 +32,24 @@ special_rel = true
 <time>
 evolution = dynamic
 integrator = imex2
-cfl_number = 0.4
-tlim = 0.5
-nlim = -1
-ndiag = 20
+cfl_number = 0.3
+tlim = 10.0
+nlim = 4
+ndiag = 1
 
 <mhd>
 eos = ideal
 gamma = 1.6666666666666667
 resistive_rel = true
+electric_ct = false
 resistivity_model = uniform
-resistivity = 0.002
+resistivity = 0.01
 relativistic_viscosity = true
 linearized_shear_target_1d = false
-shear_viscosity = 0.002
-shear_relaxation_time = 0.02
+shear_viscosity = 0.01
+shear_relaxation_time = 0.05
 shear_chi_max = 2.0
-relativistic_cooling = none
+relativistic_cooling = entropy
 cooling_time = 0.2
 cooling_adiabat = 1.0
 cooling_cfl = 0.1
@@ -66,12 +62,13 @@ fofc_force = false
 pgen_name = rsrmhd_decaying_turbulence
 user_hist = true
 density = 1.0
-pressure = 1.0
-velocity_rms = 0.02
-magnetic_configuration = random
-magnetic_rms = 0.05
+pressure = 1.2
+velocity_rms = 0.0
+magnetic_configuration = uniform_z
+magnetic_rms = 0.0
 plasma_beta = 1.0
-profile_name = rsrmhd_driven_turbulence
+profile_name = rsrmhd_coupled_restart
+restart_state_name = rsrmhd_coupled_restart_state
 
 <velocity_spectral_ic>
 nlow = 1
@@ -86,29 +83,42 @@ spectrum = parabolic
 iseed = 918273
 
 <turb_driving>
+num_components = 1
 relativistic_forcing = mechanical
 tcorr = 0.2
-accel_rms = 0.25
+accel_rms = 0.08
 nlow = 1
 nhigh = 2
 driving_geometry = isotropic
 driving_profile = band
 sol_weight = 1.0
 
+<turb_driving/component0>
+name = large_scale
+tcorr = 0.2
+accel_rms = 0.08
+nlow = 1
+nhigh = 2
+driving_geometry = isotropic
+driving_profile = band
+sol_weight = 1.0
+
+<turb_driving/component1>
+name = small_scale
+tcorr = 0.1
+accel_rms = 0.04
+nlow = 2
+nhigh = 3
+driving_geometry = isotropic
+driving_profile = band
+sol_weight = 1.0
+
 <output1>
 file_type = hst
-dt = 0.05
+dcycle = 1
 user_hist_only = true
 data_format = %20.12e
 
 <output2>
-file_type = bin
-variable = mhd_w_bcc
-id = prim
-dt = 0.25
-
-<output3>
-file_type = bin
-variable = turb_force
-id = force
-dt = 0.25
+file_type = rst
+dcycle = 2

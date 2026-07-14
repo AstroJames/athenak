@@ -24,6 +24,8 @@
 #include "z4c/compact_object_tracker.hpp"
 #include "z4c/z4c.hpp"
 #include "radiation/radiation.hpp"
+#include "outputs/restart_state.hpp"
+#include "srcterms/srcterms.hpp"
 #include "srcterms/turb_driver.hpp"
 #include "pgen.hpp"
 
@@ -173,6 +175,10 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
   z4c::Z4c* pz4c = pm->pmb_pack->pz4c;
   radiation::Radiation* prad=pm->pmb_pack->prad;
   TurbulenceDriver* pturb=pm->pmb_pack->pturb;
+  SourceTerms* psrc = (pmhd != nullptr) ? pmhd->psrc
+                       : ((phydro != nullptr) ? phydro->psrc : nullptr);
+  const int restart_version = pin->DoesParameterExist("restart", "state_version")
+      ? pin->GetInteger("restart", "state_version") : 0;
   int nrad = 0, nhydro = 0, nmhd = 0, nmhd_state = 0, nvisc = 0;
   int nforce = 3, nadm = 0, nz4c = 0;
   if (phydro != nullptr) {
@@ -185,6 +191,9 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
   }
   if (prad != nullptr) {
     nrad = prad->prgeo->nangles;
+  }
+  if (pturb != nullptr && restart_version >= 1) {
+    nforce = 3*(1 + pturb->num_components);
   }
   if (pz4c != nullptr) {
     nz4c = pz4c->nz4c;
@@ -243,6 +252,61 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
     MPI_Bcast(rng_data, sizeof(RNG_State), MPI_CHAR, 0, MPI_COMM_WORLD);
 #endif
     std::memcpy(&(pturb->rstate), &(rng_data[0]), sizeof(RNG_State));
+    delete[] rng_data;
+
+    if (restart_version >= 1) {
+      Real state[restart_state::turbulence_diagnostics];
+      if (global_variable::my_rank == 0) {
+        if (resfile.Read_Reals(state, restart_state::turbulence_diagnostics)
+            != restart_state::turbulence_diagnostics) {
+          std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                    << std::endl << "Turbulence diagnostic state read from restart "
+                    << "file is incorrect, restart file is broken." << std::endl;
+          exit(EXIT_FAILURE);
+        }
+      }
+#if MPI_PARALLEL_ENABLED
+      MPI_Bcast(state, restart_state::turbulence_diagnostics, MPI_ATHENA_REAL, 0,
+                MPI_COMM_WORLD);
+#endif
+      pturb->last_power = state[0];
+      pturb->last_accel_rms = state[1];
+      pturb->last_net_force1 = state[2];
+      pturb->last_net_force2 = state[3];
+      pturb->last_net_force3 = state[4];
+      pturb->injected_energy = state[5];
+      pturb->injected_momentum1 = state[6];
+      pturb->injected_momentum2 = state[7];
+      pturb->injected_momentum3 = state[8];
+    }
+  }
+
+  if (psrc != nullptr && restart_version >= 1
+      && psrc->relativistic_cooling_model == RelativisticCoolingModel::entropy) {
+    Real state[restart_state::cooling_diagnostics];
+    if (global_variable::my_rank == 0) {
+      if (resfile.Read_Reals(state, restart_state::cooling_diagnostics)
+          != restart_state::cooling_diagnostics) {
+        std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                  << std::endl << "Cooling diagnostic state read from restart file is "
+                  << "incorrect, restart file is broken." << std::endl;
+        exit(EXIT_FAILURE);
+      }
+    }
+#if MPI_PARALLEL_ENABLED
+    MPI_Bcast(state, restart_state::cooling_diagnostics, MPI_ATHENA_REAL, 0,
+              MPI_COMM_WORLD);
+#endif
+    psrc->last_cooling_power = state[0];
+    psrc->last_cooling_momentum1 = state[1];
+    psrc->last_cooling_momentum2 = state[2];
+    psrc->last_cooling_momentum3 = state[3];
+    psrc->last_limited_cooling_power = state[4];
+    psrc->cooled_energy = state[5];
+    psrc->cooled_momentum1 = state[6];
+    psrc->cooled_momentum2 = state[7];
+    psrc->cooled_momentum3 = state[8];
+    psrc->limited_cooling_energy = state[9];
   }
 
   // root process reads size of CC and FC data arrays from restart file
@@ -666,8 +730,20 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
         myoffset += data_size;
       }
     }
-    Kokkos::deep_copy(Kokkos::subview(pturb->force, std::make_pair(0,nmb), Kokkos::ALL,
-                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL), ccin);
+    Kokkos::deep_copy(Kokkos::subview(pturb->force, std::make_pair(0,nmb),
+                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
+                      Kokkos::subview(ccin, std::make_pair(0,nmb),
+                      std::make_pair(0,3), Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+    if (restart_version >= 1) {
+      for (int c=0; c<pturb->num_components; ++c) {
+        Kokkos::deep_copy(Kokkos::subview(pturb->force_component, c,
+                          std::make_pair(0,nmb), Kokkos::ALL, Kokkos::ALL,
+                          Kokkos::ALL, Kokkos::ALL),
+                          Kokkos::subview(ccin, std::make_pair(0,nmb),
+                          std::make_pair(3*(c+1),3*(c+2)), Kokkos::ALL,
+                          Kokkos::ALL, Kokkos::ALL));
+      }
+    }
     offset_myrank += nout1*nout2*nout3*nforce*sizeof(Real); // forcing
     myoffset = offset_myrank;
   }

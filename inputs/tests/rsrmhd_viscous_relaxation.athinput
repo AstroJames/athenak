@@ -39,6 +39,7 @@ tlim       = 0.1
 eos                       = ideal
 gamma                     = 1.6666666666666667
 resistive_rel             = true
+electric_ct               = false
 resistivity               = 1.0
 relativistic_viscosity    = true
 shear_viscosity           = 0.0
@@ -50,3 +51,4 @@ reconstruct               = plm
 <problem>
 pgen_name          = rsrmhd_roundtrip
 viscous_relaxation = true
+viscous_diagnostic_name = none

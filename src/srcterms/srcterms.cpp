@@ -25,6 +25,7 @@
 #include "athena.hpp"
 #include "coordinates/cartesian_ks.hpp"
 #include "coordinates/cell_locations.hpp"
+#include "driver/driver.hpp"
 #include "eos/eos.hpp"
 #include "geodesic-grid/geodesic_grid.hpp"
 #include "globals.hpp"
@@ -34,6 +35,7 @@
 #include "mhd/mhd.hpp"
 #include "parameter_input.hpp"
 #include "radiation/radiation.hpp"
+#include "relativistic_cooling.hpp"
 #include "turb_driver.hpp"
 #include "units/units.hpp"
 
@@ -73,10 +75,60 @@ SourceTerms::SourceTerms(std::string block, MeshBlockPack *pp, ParameterInput *p
   }
 
   // (4) cooling (relativistic)
-  rel_cooling = pin->GetOrAddBoolean(block, "rel_cooling", false);
-  if (rel_cooling) {
+  rel_cooling = false;
+  const bool has_cooling_model =
+      pin->DoesParameterExist(block, "relativistic_cooling");
+  const bool has_legacy_switch = pin->DoesParameterExist(block, "rel_cooling");
+  if (has_cooling_model && has_legacy_switch) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+              << std::endl << "Specify either <" << block
+              << ">/relativistic_cooling or the legacy <" << block
+              << ">/rel_cooling switch, not both" << std::endl;
+    std::exit(EXIT_FAILURE);
+  }
+
+  std::string cooling_model = "none";
+  if (has_cooling_model) {
+    cooling_model = pin->GetString(block, "relativistic_cooling");
+  } else if (has_legacy_switch) {
+    cooling_model = pin->GetBoolean(block, "rel_cooling") ? "legacy" : "none";
+  } else {
+    cooling_model = pin->GetOrAddString(block, "relativistic_cooling", "none");
+  }
+
+  if (cooling_model == "none") {
+    relativistic_cooling_model = RelativisticCoolingModel::none;
+  } else if (cooling_model == "legacy") {
+    relativistic_cooling_model = RelativisticCoolingModel::legacy;
+    rel_cooling = true;
     crate_rel = pin->GetReal(block, "crate_rel");
     cpower_rel = pin->GetOrAddReal(block, "cpower_rel", 1.);
+  } else if (cooling_model == "entropy") {
+    relativistic_cooling_model = RelativisticCoolingModel::entropy;
+    rel_cooling = true;
+    cooling_time_rel = pin->GetReal(block, "cooling_time");
+    cooling_adiabat_rel = pin->GetOrAddReal(block, "cooling_adiabat", 1.0);
+    cooling_cfl_rel = pin->GetOrAddReal(block, "cooling_cfl", 0.1);
+    const std::string eos = pin->GetString(block, "eos");
+    if (!pmy_pack->pcoord->is_special_relativistic || eos != "ideal") {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "Entropy-relaxation relativistic cooling requires "
+                << "special-relativistic coordinates and an ideal EOS" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    if (cooling_time_rel <= 0.0 || cooling_adiabat_rel <= 0.0
+        || cooling_cfl_rel <= 0.0 || cooling_cfl_rel > 1.0) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "Entropy cooling requires cooling_time > 0, "
+                << "cooling_adiabat > 0, and 0 < cooling_cfl <= 1" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+  } else {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+              << std::endl << "<" << block << ">/relativistic_cooling='"
+              << cooling_model << "' is invalid; choose none, legacy, or entropy"
+              << std::endl;
+    std::exit(EXIT_FAILURE);
   }
 
   // (5) stochastic supernova driving
@@ -252,39 +304,118 @@ void SourceTerms::ISMCooling(const DvceArray5D<Real> &w0, const EOS_Data &eos_da
 // NOTE source terms must be computed using primitive (w0) and NOT conserved (u0) vars
 
 void SourceTerms::RelCooling(const DvceArray5D<Real> &w0, const EOS_Data &eos_data,
-                             const Real bdt, DvceArray5D<Real> &u0) {
+                             const Real bdt, DvceArray5D<Real> &u0,
+                             Driver *pdrive, const int stage) {
   auto &indcs = pmy_pack->pmesh->mb_indcs;
   int is = indcs.is, ie = indcs.ie;
   int js = indcs.js, je = indcs.je;
   int ks = indcs.ks, ke = indcs.ke;
   int nmb1 = pmy_pack->nmb_thispack - 1;
-  Real use_e = eos_data.use_e;
-  Real gamma = eos_data.gamma;
-  Real gm1 = gamma - 1.0;
-  Real cooling_rate = crate_rel;
-  Real cooling_power = cpower_rel;
+  if (relativistic_cooling_model == RelativisticCoolingModel::legacy) {
+    const Real use_e = eos_data.use_e;
+    const Real gm1 = eos_data.gamma - 1.0;
+    const Real cooling_rate = crate_rel;
+    const Real cooling_power = cpower_rel;
 
-  par_for("cooling", DevExeSpace(), 0, nmb1, ks, ke, js, je, is, ie,
+    par_for("legacy_rel_cooling", DevExeSpace(), 0, nmb1, ks, ke, js, je, is, ie,
+    KOKKOS_LAMBDA(const int m, const int k, const int j, const int i) {
+      Real temp = 1.0;
+      if (use_e) {
+        temp = w0(m,IEN,k,j,i)/w0(m,IDN,k,j,i)*gm1;
+      } else {
+        temp = w0(m,ITM,k,j,i);
+      }
+
+      const Real u1 = w0(m,IVX,k,j,i);
+      const Real u2 = w0(m,IVY,k,j,i);
+      const Real u3 = w0(m,IVZ,k,j,i);
+      const Real lorentz = sqrt(1.0 + u1*u1 + u2*u2 + u3*u3);
+      const Real lambda = w0(m,IDN,k,j,i)
+                          *pow(temp*cooling_rate, cooling_power);
+      u0(m,IEN,k,j,i) -= bdt*lorentz*lambda;
+      u0(m,IM1,k,j,i) -= bdt*u1*lambda;
+      u0(m,IM2,k,j,i) -= bdt*u2*lambda;
+      u0(m,IM3,k,j,i) -= bdt*u3*lambda;
+    });
+    return;
+  }
+
+  auto &size = pmy_pack->pmb->mb_size;
+  const Real gamma = eos_data.gamma;
+  const Real target_adiabat = cooling_adiabat_rel;
+  const Real cooling_time = cooling_time_rel;
+  const Real eint_floor = eos_data.pfloor/(gamma - 1.0);
+  Real cooling_power = 0.0;
+  Real cooling_momentum1 = 0.0;
+  Real cooling_momentum2 = 0.0;
+  Real cooling_momentum3 = 0.0;
+  Real limited_power = 0.0;
+  Kokkos::parallel_reduce("entropy_rel_cooling_diagnostics",
+      Kokkos::MDRangePolicy<DevExeSpace, Kokkos::Rank<4>>(
+      {0,ks,js,is}, {nmb1+1,ke+1,je+1,ie+1}),
+  KOKKOS_LAMBDA(const int m, const int k, const int j, const int i,
+                Real &sum_e, Real &sum_p1, Real &sum_p2, Real &sum_p3,
+                Real &sum_limited) {
+    const Real u1 = w0(m,IVX,k,j,i);
+    const Real u2 = w0(m,IVY,k,j,i);
+    const Real u3 = w0(m,IVZ,k,j,i);
+    const auto rates = relativistic_cooling::EntropyRelaxation(
+        w0(m,IDN,k,j,i), w0(m,IEN,k,j,i), u1, u2, u3, gamma,
+        target_adiabat, cooling_time, bdt, eint_floor);
+    const Real volume = size.d_view(m).dx1*size.d_view(m).dx2
+                        *size.d_view(m).dx3;
+    const Real lorentz = sqrt(1.0 + u1*u1 + u2*u2 + u3*u3);
+    sum_e += volume*rates.g0;
+    sum_p1 += volume*rates.g1;
+    sum_p2 += volume*rates.g2;
+    sum_p3 += volume*rates.g3;
+    sum_limited += volume*lorentz*rates.limited_lambda;
+  }, Kokkos::Sum<Real>(cooling_power), Kokkos::Sum<Real>(cooling_momentum1),
+     Kokkos::Sum<Real>(cooling_momentum2),
+     Kokkos::Sum<Real>(cooling_momentum3), Kokkos::Sum<Real>(limited_power));
+
+  Real diagnostics[5] = {cooling_power, cooling_momentum1, cooling_momentum2,
+                         cooling_momentum3, limited_power};
+#if MPI_PARALLEL_ENABLED
+  MPI_Allreduce(MPI_IN_PLACE, diagnostics, 5, MPI_ATHENA_REAL, MPI_SUM,
+                MPI_COMM_WORLD);
+#endif
+  last_cooling_power = diagnostics[0];
+  last_cooling_momentum1 = diagnostics[1];
+  last_cooling_momentum2 = diagnostics[2];
+  last_cooling_momentum3 = diagnostics[3];
+  last_limited_cooling_power = diagnostics[4];
+
+  if (stage == 1) {
+    cooled_energy_start_ = cooled_energy;
+    cooled_momentum1_start_ = cooled_momentum1;
+    cooled_momentum2_start_ = cooled_momentum2;
+    cooled_momentum3_start_ = cooled_momentum3;
+    limited_cooling_energy_start_ = limited_cooling_energy;
+  }
+  const Real gam0 = pdrive->gam0[stage-1];
+  const Real gam1 = pdrive->gam1[stage-1];
+  cooled_energy = gam0*cooled_energy + gam1*cooled_energy_start_
+                  + bdt*last_cooling_power;
+  cooled_momentum1 = gam0*cooled_momentum1 + gam1*cooled_momentum1_start_
+                     + bdt*last_cooling_momentum1;
+  cooled_momentum2 = gam0*cooled_momentum2 + gam1*cooled_momentum2_start_
+                     + bdt*last_cooling_momentum2;
+  cooled_momentum3 = gam0*cooled_momentum3 + gam1*cooled_momentum3_start_
+                     + bdt*last_cooling_momentum3;
+  limited_cooling_energy = gam0*limited_cooling_energy
+      + gam1*limited_cooling_energy_start_ + bdt*last_limited_cooling_power;
+
+  par_for("entropy_rel_cooling", DevExeSpace(), 0, nmb1, ks, ke, js, je, is, ie,
   KOKKOS_LAMBDA(const int m, const int k, const int j, const int i) {
-    // temperature in cgs unit
-    Real temp = 1.0;
-    if (use_e) {
-      temp = w0(m,IEN,k,j,i)/w0(m,IDN,k,j,i)*gm1;
-    } else {
-      temp = w0(m,ITM,k,j,i);
-    }
-
-    auto &ux = w0(m,IVX,k,j,i);
-    auto &uy = w0(m,IVY,k,j,i);
-    auto &uz = w0(m,IVZ,k,j,i);
-
-    auto ut = 1.0 + ux*ux + uy*uy + uz*uz;
-    ut = sqrt(ut);
-
-    u0(m,IEN,k,j,i) -= bdt*w0(m,IDN,k,j,i)*ut*pow((temp*cooling_rate), cooling_power);
-    u0(m,IM1,k,j,i) -= bdt*w0(m,IDN,k,j,i)*ux*pow((temp*cooling_rate), cooling_power);
-    u0(m,IM2,k,j,i) -= bdt*w0(m,IDN,k,j,i)*uy*pow((temp*cooling_rate), cooling_power);
-    u0(m,IM3,k,j,i) -= bdt*w0(m,IDN,k,j,i)*uz*pow((temp*cooling_rate), cooling_power);
+    const auto rates = relativistic_cooling::EntropyRelaxation(
+        w0(m,IDN,k,j,i), w0(m,IEN,k,j,i), w0(m,IVX,k,j,i),
+        w0(m,IVY,k,j,i), w0(m,IVZ,k,j,i), gamma, target_adiabat,
+        cooling_time, bdt, eint_floor);
+    u0(m,IEN,k,j,i) -= bdt*rates.g0;
+    u0(m,IM1,k,j,i) -= bdt*rates.g1;
+    u0(m,IM2,k,j,i) -= bdt*rates.g2;
+    u0(m,IM3,k,j,i) -= bdt*rates.g3;
   });
 
   return;

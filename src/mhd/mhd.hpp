@@ -158,6 +158,8 @@ class MHD {
   // following only used for time-evolving flow
   DvceArray5D<Real> u1;       // conserved variables, second register
   DvceArray5D<Real> visc_u1;  // conservative shear, second register
+  DvceArray5D<Real> visc_ustar;  // fixed shear RHS during face-E Picard iteration
+  DvceArray5D<Real> ect_cell_state;  // combined U/shear state for Picard exchange
   DvceFaceFld4D<Real> b1;     // face-centered magnetic fields, second register
   DvceFaceFld4D<Real> e1;     // face-centered electric fields, second register
   DvceFaceFld4D<Real> jfc;    // face-centered current used by dual CT
@@ -257,6 +259,12 @@ class MHD {
   TaskStatus ApplyPhysicalBCs(Driver* pdrive, int stage);
   TaskStatus Prolongate(Driver* pdrive, int stage);
   TaskStatus ConToPrim(Driver *d, int stage);
+  TaskStatus RecoverViscousPrimitives(const DvceArray5D<Real> &visc_star,
+                                      Real shear_dt_over_tau,
+                                      bool fixed_spatial_shear,
+                                      bool update_conserved_shear,
+                                      int il, int iu, int jl, int ju,
+                                      int kl, int ku);
   TaskStatus NewTimeStep(Driver *d, int stage);
   // ...in "after_stagen_tl" task list
   TaskStatus ClearSend(Driver *d, int stage);

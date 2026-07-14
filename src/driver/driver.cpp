@@ -332,13 +332,15 @@ void Driver::Initialize(Mesh *pmesh, ParameterInput *pin, Outputs *pout, bool re
   run_time_.reset();
   nmb_updated_ = 0;
 
-  // Allocate memory for stiff source terms with ImEx integrators.  The currently
-  // supported modules are mutually exclusive and use different component counts.
+  // Allocate memory for cell-centered stiff source histories.  Face-centered E stores
+  // its Ohmic history on faces, but coupled viscosity still uses this cell history.
   ion_neutral::IonNeutral *pionn = pmesh->pmb_pack->pionn;
   const bool resistive_srmhd = (pmhd != nullptr) && pmhd->is_resistive_rel
-                               && !(pmhd->use_electric_ct)
                                && time_evolution != TimeEvolution::tstatic;
-  if (pionn != nullptr || resistive_srmhd) {
+  const bool cell_e_srmhd = resistive_srmhd && !(pmhd->use_electric_ct);
+  const bool face_e_viscosity = resistive_srmhd && pmhd->use_electric_ct
+      && pmhd->relativistic_viscosity_data.enabled;
+  if (pionn != nullptr || cell_e_srmhd || face_e_viscosity) {
     if (nimp_stages == 0) {
       std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
           << std::endl << "Stiff-source physics requires an IMEX integrator."
@@ -352,7 +354,8 @@ void Driver::Initialize(Mesh *pmesh, ParameterInput *pin, Outputs *pout, bool re
     int ncells3 = (indcs.nx3 > 1)? (indcs.nx3 + 2*(indcs.ng)) : 1;
     const bool viscous_srmhd = resistive_srmhd
         && pmhd->relativistic_viscosity_data.enabled;
-    const int nstiff = resistive_srmhd ? (viscous_srmhd ? 9 : 3) : 8;
+    const int nstiff = (cell_e_srmhd || face_e_viscosity)
+        ? (viscous_srmhd ? 9 : 3) : 8;
     Kokkos::realloc(impl_src, nimp_stages, nmb, nstiff, ncells3, ncells2, ncells1);
   }
 

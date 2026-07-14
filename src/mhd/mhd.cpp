@@ -45,6 +45,8 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
     coarse_e0("cE_fc",1,1,1,1),
     u1("cons1",1,1,1,1,1),
     visc_u1("visc_cons1",1,1,1,1,1),
+    visc_ustar("visc_cons_star",1,1,1,1,1),
+    ect_cell_state("ect_cell_state",1,1,1,1,1),
     b1("B_fc1",1,1,1,1),
     e1("E_fc1",1,1,1,1),
     jfc("J_fc",1,1,1,1),
@@ -305,12 +307,6 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
                 << "one-dimensional meshes" << std::endl;
       std::exit(EXIT_FAILURE);
     }
-    if (relativistic_viscosity_data.enabled && use_electric_ct) {
-      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-                << std::endl << "Relativistic viscosity is not yet coupled to the "
-                << "face-centered electric-CT implicit solver" << std::endl;
-      std::exit(EXIT_FAILURE);
-    }
     std::string integrator = pin->GetOrAddString("time", "integrator", "rk2");
     if (use_electric_ct) {
       if (pmy_pack->pmesh->one_d && pmy_pack->pmesh->nmb_total != 1) {
@@ -423,7 +419,9 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
     pbval_ect_face = new MeshBoundaryValuesFC(ppack, pin);
     pbval_ect_face->InitializeBuffers(3);
     pbval_ect_u = new MeshBoundaryValuesCC(ppack, pin, false);
-    pbval_ect_u->InitializeBuffers(nmhd + nscalars);
+    const int nect = nmhd + nscalars
+                     + (relativistic_viscosity_data.enabled ? srrmhd::NVISC : 0);
+    pbval_ect_u->InitializeBuffers(nect);
   }
 
   // Orbital advection and shearing box BCs (if requested in input file)
@@ -600,6 +598,12 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
       Kokkos::realloc(u1,     nmb, (nmhd+nscalars), ncells3, ncells2, ncells1);
       if (relativistic_viscosity_data.enabled) {
         Kokkos::realloc(visc_u1, nmb, srrmhd::NVISC, ncells3, ncells2, ncells1);
+        if (use_electric_ct) {
+          Kokkos::realloc(visc_ustar, nmb, srrmhd::NVISC,
+                          ncells3, ncells2, ncells1);
+          Kokkos::realloc(ect_cell_state, nmb, nmhd+nscalars+srrmhd::NVISC,
+                          ncells3, ncells2, ncells1);
+        }
       }
       Kokkos::realloc(b1.x1f, nmb, ncells3, ncells2, ncells1+1);
       Kokkos::realloc(b1.x2f, nmb, ncells3, ncells2+1, ncells1);

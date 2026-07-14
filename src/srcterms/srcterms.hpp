@@ -27,6 +27,8 @@
 class TurbulenceDriver;
 class Driver;
 
+enum class RelativisticCoolingModel { none, legacy, entropy };
+
 //----------------------------------------------------------------------------------------
 //! \class SourceTerms
 //! \brief data and functions for physical source terms
@@ -56,8 +58,25 @@ class SourceTerms {
   Real hrate;
 
   // cooling rate used with relativistic cooling
-  Real crate_rel;
-  Real cpower_rel;
+  RelativisticCoolingModel relativistic_cooling_model =
+      RelativisticCoolingModel::none;
+  Real crate_rel = 0.0;
+  Real cpower_rel = 1.0;
+  Real cooling_time_rel = 0.0;
+  Real cooling_adiabat_rel = 1.0;
+  Real cooling_cfl_rel = 0.1;
+
+  // volume-integrated entropy-cooling diagnostics (energy positive, momenta signed)
+  Real last_cooling_power = 0.0;
+  Real last_cooling_momentum1 = 0.0;
+  Real last_cooling_momentum2 = 0.0;
+  Real last_cooling_momentum3 = 0.0;
+  Real last_limited_cooling_power = 0.0;
+  Real cooled_energy = 0.0;
+  Real cooled_momentum1 = 0.0;
+  Real cooled_momentum2 = 0.0;
+  Real cooled_momentum3 = 0.0;
+  Real limited_cooling_energy = 0.0;
 
   // stochastic supernova driving
   Real sn_rate;        // target events per unit code time
@@ -89,7 +108,8 @@ class SourceTerms {
   void ISMCooling(const DvceArray5D<Real> &w0, const EOS_Data &eos,
                   const Real dt, DvceArray5D<Real> &u0);
   void RelCooling(const DvceArray5D<Real> &w0, const EOS_Data &eos,
-                  const Real dt, DvceArray5D<Real> &u0);
+                  const Real dt, DvceArray5D<Real> &u0, Driver *pdrive,
+                  const int stage);
   void SupernovaDriving(const DvceArray5D<Real> &w0, const EOS_Data &eos,
                         const Real dt, DvceArray5D<Real> &u0);
   void BeamSource(DvceArray5D<Real> &i0, const Real dt);
@@ -108,6 +128,11 @@ class SourceTerms {
   long long sn_event_count_;
   Real sn_event_accum_;
   bool sn_rinj_warned_;
+  Real cooled_energy_start_ = 0.0;
+  Real cooled_momentum1_start_ = 0.0;
+  Real cooled_momentum2_start_ = 0.0;
+  Real cooled_momentum3_start_ = 0.0;
+  Real limited_cooling_energy_start_ = 0.0;
 };
 
 #endif  // SRCTERMS_SRCTERMS_HPP_

@@ -25,6 +25,7 @@
 #include "mhd/relativistic_viscosity.hpp"
 #include "outputs/outputs.hpp"
 #include "pgen/pgen.hpp"
+#include "srcterms/srcterms.hpp"
 #include "srcterms/turb_driver.hpp"
 #include "utils/spectral_ic_gen.hpp"
 
@@ -142,6 +143,12 @@ void ProblemGenerator::ResistiveSRMHDDecayingTurbulence(ParameterInput *pin,
   const Real rho0 = pin->GetOrAddReal("problem", "density", 1.0);
   const Real pressure0 = pin->GetOrAddReal("problem", "pressure", 1.0);
   const Real velocity_rms = pin->GetOrAddReal("problem", "velocity_rms", 0.15);
+  const Real uniform_velocity1 = pin->GetOrAddReal(
+      "problem", "uniform_velocity1", 0.0);
+  const Real uniform_velocity2 = pin->GetOrAddReal(
+      "problem", "uniform_velocity2", 0.0);
+  const Real uniform_velocity3 = pin->GetOrAddReal(
+      "problem", "uniform_velocity3", 0.0);
   const std::string magnetic_configuration = pin->GetOrAddString(
       "problem", "magnetic_configuration", "random");
   const Real magnetic_rms = pin->GetOrAddReal("problem", "magnetic_rms", 0.15);
@@ -151,6 +158,13 @@ void ProblemGenerator::ResistiveSRMHDDecayingTurbulence(ParameterInput *pin,
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
               << std::endl << "Decaying turbulence requires positive density, "
               << "and pressure, with velocity_rms and magnetic_rms >= 0"
+              << std::endl;
+    std::exit(EXIT_FAILURE);
+  }
+  if (SQR(uniform_velocity1) + SQR(uniform_velocity2)
+      + SQR(uniform_velocity3) >= 0.81) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+              << std::endl << "The uniform initial velocity must have |v| < 0.9"
               << std::endl;
     std::exit(EXIT_FAILURE);
   }
@@ -197,10 +211,12 @@ void ProblemGenerator::ResistiveSRMHDDecayingTurbulence(ParameterInput *pin,
   Kokkos::parallel_reduce("pgen_srr_turb_prim", Kokkos::MDRangePolicy<DevExeSpace,
       Kokkos::Rank<4>>({0,ks,js,is}, {nmb,ke+1,je+1,ie+1}),
   KOKKOS_LAMBDA(int m, int k, int j, int i, int &sum) {
-    const Real vx = 0.5*(velocity.x1f(m,k,j,i) + velocity.x1f(m,k,j,i+1));
-    const Real vy = 0.5*(velocity.x2f(m,k,j,i) + velocity.x2f(m,k,j+1,i));
-    const Real vz = three_d
-        ? 0.5*(velocity.x3f(m,k,j,i) + velocity.x3f(m,k+1,j,i)) : 0.0;
+    const Real vx = uniform_velocity1
+        + 0.5*(velocity.x1f(m,k,j,i) + velocity.x1f(m,k,j,i+1));
+    const Real vy = uniform_velocity2
+        + 0.5*(velocity.x2f(m,k,j,i) + velocity.x2f(m,k,j+1,i));
+    const Real vz = uniform_velocity3 + (three_d
+        ? 0.5*(velocity.x3f(m,k,j,i) + velocity.x3f(m,k+1,j,i)) : 0.0);
     const Real v2 = SQR(vx) + SQR(vy) + SQR(vz);
     if (v2 >= 0.81) ++sum;
     const Real lor = 1.0/sqrt(1.0 - fmin(v2, 0.81));
@@ -243,7 +259,11 @@ namespace {
 
 void SRRMHDDecayingTurbulenceHistory(HistoryData *pdata, Mesh *pm) {
   const bool driven = (pm->pmb_pack->pturb != nullptr);
-  pdata->nhist = driven ? 36 : 10;
+  auto *pmhd = pm->pmb_pack->pmhd;
+  const bool entropy_cooling =
+      (pmhd->psrc->relativistic_cooling_model == RelativisticCoolingModel::entropy);
+  const int cooling_offset = driven ? 36 : 17;
+  pdata->nhist = entropy_cooling ? cooling_offset + 10 : (driven ? 36 : 10);
   pdata->label[0] = "volume";
   pdata->label[1] = "ekin";
   pdata->label[2] = "emag";
@@ -281,9 +301,28 @@ void SRRMHDDecayingTurbulenceHistory(HistoryData *pdata, Mesh *pm) {
     pdata->label[33] = "q_ohm";
     pdata->label[34] = "q_visc";
     pdata->label[35] = "v_alfven";
+  } else if (entropy_cooling) {
+    pdata->label[10] = "mom1";
+    pdata->label[11] = "mom2";
+    pdata->label[12] = "mom3";
+    pdata->label[13] = "etot";
+    pdata->label[14] = "mass";
+    pdata->label[15] = "eint";
+    pdata->label[16] = "entropy";
+  }
+  if (entropy_cooling) {
+    pdata->label[cooling_offset] = "cool_power";
+    pdata->label[cooling_offset+1] = "cool_mom1";
+    pdata->label[cooling_offset+2] = "cool_mom2";
+    pdata->label[cooling_offset+3] = "cool_mom3";
+    pdata->label[cooling_offset+4] = "e_cool";
+    pdata->label[cooling_offset+5] = "p_cool1";
+    pdata->label[cooling_offset+6] = "p_cool2";
+    pdata->label[cooling_offset+7] = "p_cool3";
+    pdata->label[cooling_offset+8] = "cool_limit";
+    pdata->label[cooling_offset+9] = "e_cool_lim";
   }
 
-  auto *pmhd = pm->pmb_pack->pmhd;
   auto w = pmhd->w0;
   auto u = pmhd->u0;
   auto b = pmhd->b0;
@@ -447,6 +486,14 @@ void SRRMHDDecayingTurbulenceHistory(HistoryData *pdata, Mesh *pm) {
       cell.the_array[33]=volume*q_ohm;
       cell.the_array[34]=volume*q_visc;
       cell.the_array[35]=volume*sqrt(fmax(0.0, bcom2)/(enthalpy + bcom2));
+    } else if (entropy_cooling) {
+      cell.the_array[10]=volume*u(m,IM1,k,j,i);
+      cell.the_array[11]=volume*u(m,IM2,k,j,i);
+      cell.the_array[12]=volume*u(m,IM3,k,j,i);
+      cell.the_array[13]=volume*u(m,IEN,k,j,i);
+      cell.the_array[14]=volume*d;
+      cell.the_array[15]=volume*eint;
+      cell.the_array[16]=volume*entropy;
     }
     sum += cell;
   }, Kokkos::Sum<array_sum::GlobalSum>(total));
@@ -463,6 +510,19 @@ void SRRMHDDecayingTurbulenceHistory(HistoryData *pdata, Mesh *pm) {
     total.the_array[21] = pturb->injected_momentum2;
     total.the_array[22] = pturb->injected_momentum3;
     total.the_array[23] = static_cast<Real>(pm->ncycle);
+  }
+  if (entropy_cooling && global_variable::my_rank == 0) {
+    auto *psrc = pmhd->psrc;
+    total.the_array[cooling_offset] = psrc->last_cooling_power;
+    total.the_array[cooling_offset+1] = psrc->last_cooling_momentum1;
+    total.the_array[cooling_offset+2] = psrc->last_cooling_momentum2;
+    total.the_array[cooling_offset+3] = psrc->last_cooling_momentum3;
+    total.the_array[cooling_offset+4] = psrc->cooled_energy;
+    total.the_array[cooling_offset+5] = psrc->cooled_momentum1;
+    total.the_array[cooling_offset+6] = psrc->cooled_momentum2;
+    total.the_array[cooling_offset+7] = psrc->cooled_momentum3;
+    total.the_array[cooling_offset+8] = psrc->last_limited_cooling_power;
+    total.the_array[cooling_offset+9] = psrc->limited_cooling_energy;
   }
   for (int n=0; n<NHISTORY_VARIABLES; ++n) pdata->hdata[n]=total.the_array[n];
 }
@@ -558,6 +618,74 @@ void SRRMHDDecayingTurbulenceFinal(ParameterInput *pin, Mesh *pm) {
     }
   }
   file.close();
+
+  // Optional cell-wise state dump used by continuous-versus-restart regressions.
+  // Store conserved fluid/E variables, conservative shear, one representative value
+  // per face family, and both summed and independent OU forcing states.
+  if (pin->DoesParameterExist("problem", "restart_state_name")) {
+    const std::string state_base = pin->GetString("problem", "restart_state_name");
+    if (state_base.compare("none") != 0 && pm->pmb_pack->pturb != nullptr) {
+      auto u = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->u0);
+      auto visc_u = Kokkos::create_mirror_view_and_copy(
+          HostMemSpace(), pmhd->visc_u0);
+      auto b1f = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->b0.x1f);
+      auto b2f = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->b0.x2f);
+      auto b3f = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->b0.x3f);
+      auto e1f = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->e0.x1f);
+      auto e2f = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->e0.x2f);
+      auto e3f = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->e0.x3f);
+      auto *pturb = pm->pmb_pack->pturb;
+      auto force = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pturb->force);
+      auto force_component = Kokkos::create_mirror_view_and_copy(
+          HostMemSpace(), pturb->force_component);
+      std::string state_name = state_base;
+      if (global_variable::nranks > 1) {
+        state_name += "-rank" + std::to_string(global_variable::my_rank);
+      }
+      std::ofstream state_file(state_name + ".dat");
+      state_file << std::setprecision(17);
+      for (int m=0; m<pm->pmb_pack->nmb_thispack; ++m) {
+        const int kend = three_d ? indcs.ke : indcs.ks;
+        for (int k=indcs.ks; k<=kend; ++k) {
+          for (int j=indcs.js; j<=indcs.je; ++j) {
+            for (int i=indcs.is; i<=indcs.ie; ++i) {
+              const Real x=size(m).x1min+(i-indcs.is+0.5)*size(m).dx1;
+              const Real y=size(m).x2min+(j-indcs.js+0.5)*size(m).dx2;
+              const Real z=size(m).x3min+(k-indcs.ks+0.5)*size(m).dx3;
+              state_file << x << " " << y << " " << z;
+              for (int n=0; n<pmhd->nmhd; ++n) {
+                state_file << " " << u(m,n,k,j,i);
+              }
+              for (int n=0; n<srrmhd::NVISC; ++n) {
+                state_file << " " << visc_u(m,n,k,j,i);
+              }
+              state_file << " " << b1f(m,k,j,i)
+                         << " " << b2f(m,k,j,i)
+                         << " " << b3f(m,k,j,i);
+              if (pmhd->use_electric_ct) {
+                state_file << " " << e1f(m,k,j,i)
+                           << " " << e2f(m,k,j,i)
+                           << " " << e3f(m,k,j,i);
+              } else {
+                state_file << " " << u(m,srrmhd::IRE1,k,j,i)
+                           << " " << u(m,srrmhd::IRE2,k,j,i)
+                           << " " << u(m,srrmhd::IRE3,k,j,i);
+              }
+              for (int n=0; n<3; ++n) {
+                state_file << " " << force(m,n,k,j,i);
+              }
+              for (int c=0; c<pturb->num_components; ++c) {
+                for (int n=0; n<3; ++n) {
+                  state_file << " " << force_component(c,m,n,k,j,i);
+                }
+              }
+              state_file << "\n";
+            }
+          }
+        }
+      }
+    }
+  }
 
   if (pm->pmb_pack->pturb != nullptr) {
     Real local_bounds[3] = {min_rho, min_eint, max_lorentz};

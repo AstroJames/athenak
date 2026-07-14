@@ -28,6 +28,8 @@
 #include "z4c/compact_object_tracker.hpp"
 #include "z4c/z4c.hpp"
 #include "radiation/radiation.hpp"
+#include "outputs/restart_state.hpp"
+#include "srcterms/srcterms.hpp"
 #include "srcterms/turb_driver.hpp"
 //#include "outputs.hpp"
 
@@ -78,6 +80,9 @@ void RestartOutput::LoadOutputData(Mesh *pm) {
   // if the spacetime is evolved, we do not need to checkpoint/recover the ADM variables
   if (prad != nullptr) {
     nrad = prad->prgeo->nangles;
+  }
+  if (pturb != nullptr) {
+    nforce = 3*(1 + pturb->num_components);
   }
 
   // Note for restarts, outarrays are dimensioned (m,n,k,j,i)
@@ -131,8 +136,18 @@ void RestartOutput::LoadOutputData(Mesh *pm) {
   }
   if (pturb != nullptr) {
     Kokkos::realloc(outarray_force, nmb, nforce, nout3, nout2, nout1);
-    Kokkos::deep_copy(outarray_force, Kokkos::subview(pturb->force, std::make_pair(0,nmb),
+    Kokkos::deep_copy(Kokkos::subview(outarray_force, std::make_pair(0,nmb),
+                      std::make_pair(0,3), Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
+                      Kokkos::subview(pturb->force, std::make_pair(0,nmb),
                       Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+    for (int c=0; c<pturb->num_components; ++c) {
+      Kokkos::deep_copy(Kokkos::subview(outarray_force, std::make_pair(0,nmb),
+                        std::make_pair(3*(c+1),3*(c+2)), Kokkos::ALL, Kokkos::ALL,
+                        Kokkos::ALL),
+                        Kokkos::subview(pturb->force_component, c,
+                        std::make_pair(0,nmb), Kokkos::ALL, Kokkos::ALL,
+                        Kokkos::ALL, Kokkos::ALL));
+    }
   }
   if (pz4c != nullptr) {
     Kokkos::realloc(outarray_z4c, nmb, nz4c, nout3, nout2, nout1);
@@ -167,6 +182,8 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
   mhd::MHD* pmhd = pm->pmb_pack->pmhd;
   radiation::Radiation* prad = pm->pmb_pack->prad;
   TurbulenceDriver* pturb=pm->pmb_pack->pturb;
+  SourceTerms* psrc = (pmhd != nullptr) ? pmhd->psrc
+                       : ((phydro != nullptr) ? phydro->psrc : nullptr);
   z4c::Z4c* pz4c = pm->pmb_pack->pz4c;
   adm::ADM* padm = pm->pmb_pack->padm;
   int nhydro=0, nmhd=0, nrad=0, nforce=3, nz4c=0, nadm=0, nco=0;
@@ -179,6 +196,9 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
   }
   if (prad != nullptr) {
     nrad = prad->prgeo->nangles;
+  }
+  if (pturb != nullptr) {
+    nforce = 3*(1 + pturb->num_components);
   }
   if (pz4c != nullptr) {
     nz4c = pz4c->nz4c;
@@ -207,6 +227,7 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
   }
   pin->SetInteger(out_params.block_name, "file_number", out_params.file_number);
   pin->SetReal(out_params.block_name, "last_time", out_params.last_time);
+  pin->SetInteger("restart", "state_version", restart_state::version);
 
   // create string holding input parameters (copy of input file)
   std::stringstream ost;
@@ -259,6 +280,22 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
     // turbulence driver internal RNG
     if (pturb != nullptr) {
       resfile.Write_any_type(&(pturb->rstate), sizeof(RNG_State), "byte");
+      const Real state[restart_state::turbulence_diagnostics] = {
+          pturb->last_power, pturb->last_accel_rms, pturb->last_net_force1,
+          pturb->last_net_force2, pturb->last_net_force3, pturb->injected_energy,
+          pturb->injected_momentum1, pturb->injected_momentum2,
+          pturb->injected_momentum3};
+      resfile.Write_any_type(state, sizeof(state), "byte");
+    }
+    if (psrc != nullptr && psrc->relativistic_cooling_model
+        == RelativisticCoolingModel::entropy) {
+      const Real state[restart_state::cooling_diagnostics] = {
+          psrc->last_cooling_power, psrc->last_cooling_momentum1,
+          psrc->last_cooling_momentum2, psrc->last_cooling_momentum3,
+          psrc->last_limited_cooling_power, psrc->cooled_energy,
+          psrc->cooled_momentum1, psrc->cooled_momentum2,
+          psrc->cooled_momentum3, psrc->limited_cooling_energy};
+      resfile.Write_any_type(state, sizeof(state), "byte");
     }
   }
 
@@ -304,7 +341,14 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
 
   IOWrapperSizeT step3size = 3*nco*sizeof(Real);
   if (pz4c != nullptr) step3size += sizeof(Real);
-  if (pturb != nullptr) step3size += sizeof(RNG_State);
+  if (pturb != nullptr) {
+    step3size += sizeof(RNG_State)
+                 + restart_state::turbulence_diagnostics*sizeof(Real);
+  }
+  if (psrc != nullptr && psrc->relativistic_cooling_model
+      == RelativisticCoolingModel::entropy) {
+    step3size += restart_state::cooling_diagnostics*sizeof(Real);
+  }
 
   // write cell-centered variables in parallel
   IOWrapperSizeT offset_myrank  = step1size + step2size + step3size +

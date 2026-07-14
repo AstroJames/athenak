@@ -56,6 +56,15 @@ def panel_label(axis, label):
     )
 
 
+def legend_above(axis, ncol):
+    """Place a panel legend in reserved space above the data rectangle."""
+    return axis.legend(
+        loc="lower center", bbox_to_anchor=(0.5, 1.015),
+        frameon=False, ncol=ncol, columnspacing=0.8,
+        handlelength=2.2, borderaxespad=0.0,
+    )
+
+
 def configure_axes(axes, x_max):
     for axis in axes.flat:
         axis.axvspan(0.0, 1.0, color="0.92", zorder=-20)
@@ -89,20 +98,31 @@ def plot_histories(history, output_base, eddy_time, drive_scale,
     delta_entropy = history["entropy"] - history["entropy"][0]
     cumulative_ohmic = cumulative_trapezoid(history["q_ohm"], time)
     cumulative_viscous = cumulative_trapezoid(history["q_visc"], time)
+    cooling_enabled = "e_cool" in history
+    cooling_power = history.get("cool_power", np.zeros_like(time))
+    cooled_energy = history.get("e_cool", np.zeros_like(time))
+    cooled_momentum1 = history.get("p_cool1", np.zeros_like(time))
+    cooled_momentum2 = history.get("p_cool2", np.zeros_like(time))
+    cooled_momentum3 = history.get("p_cool3", np.zeros_like(time))
+    limited_cooling = history.get("e_cool_lim", np.zeros_like(time))
 
     energy_residual = (
         history["etot"] - history["etot"][0] - history["e_inj"]
+        + cooled_energy
     )
     momentum_residual = np.sqrt(
-        (history["mom1"] - history["mom1"][0] - history["p_inj1"])**2
-        + (history["mom2"] - history["mom2"][0] - history["p_inj2"])**2
-        + (history["mom3"] - history["mom3"][0] - history["p_inj3"])**2
+        (history["mom1"] - history["mom1"][0] - history["p_inj1"]
+         + cooled_momentum1)**2
+        + (history["mom2"] - history["mom2"][0] - history["p_inj2"]
+           + cooled_momentum2)**2
+        + (history["mom3"] - history["mom3"][0] - history["p_inj3"]
+           + cooled_momentum3)**2
     )
 
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     x_max = float(np.ceil(x[-1]))
     fig, axes = plt.subplots(
-        2, 3, figsize=(7.2, 4.6), sharex=True, layout="constrained",
+        2, 3, figsize=(7.2, 5.2), sharex=True, layout="constrained",
     )
     configure_axes(axes, x_max)
 
@@ -116,17 +136,17 @@ def plot_histories(history, output_base, eddy_time, drive_scale,
     mach_pad = max(0.005, 0.06*(mach_max - mach_min))
     axis.set_ylim(max(0.0, mach_min - mach_pad), mach_max + mach_pad)
     axis.set_ylabel(r"$\mathcal{M}_{\rm turb}$")
-    axis.legend(loc="lower right", frameon=False, handlelength=2.2)
+    legend_above(axis, ncol=2)
     post = x >= 0.5*x[-1]
     axis.text(
-        0.98, 0.95,
+        0.98, 0.035,
         (r"$\langle\mathcal{M}_{\rm turb}\rangle_{t>5t_0}=%.3f$" "\n"
          r"$\langle{\rm Re}\rangle=\langle{\rm Rm}\rangle=%.1f$" "\n"
          r"$\langle\mathcal{M}_{A,{\rm target}}\rangle=%.3f$" "\n"
          r"$\langle\sigma\rangle=%.3f$")
         % (np.mean(mach[post]), np.mean(reynolds[post]),
            np.mean(target_alfven_mach[post]), np.mean(mean_magnetization[post])),
-        transform=axis.transAxes, ha="right", va="top", fontsize=6.7,
+        transform=axis.transAxes, ha="right", va="bottom", fontsize=6.7,
         bbox={"facecolor": "white", "alpha": 0.78,
               "edgecolor": "none", "pad": 0.8},
     )
@@ -136,6 +156,9 @@ def plot_histories(history, output_base, eddy_time, drive_scale,
     axis.axhline(0.0, color="0.65", linewidth=0.6)
     axis.plot(x, history["e_inj"], color="0.15", linewidth=1.5,
               label=r"$E_{\rm inj}$")
+    if cooling_enabled:
+        axis.plot(x, cooled_energy, color=colors[2], linewidth=1.4,
+                  label=r"$E_{\rm cool}$")
     axis.plot(x, delta_internal, color=colors[3], linewidth=1.4,
               linestyle="--", label=r"$\Delta E_{\rm int}$")
     axis.plot(x, delta_kinetic, color=colors[0], linewidth=1.4,
@@ -143,9 +166,7 @@ def plot_histories(history, output_base, eddy_time, drive_scale,
     axis.plot(x, delta_electromagnetic, color=colors[4], linewidth=1.4,
               linestyle=":", label=r"$\Delta E_{\rm EM}$")
     axis.set_ylabel(r"volume-integrated energy")
-    axis.legend(loc="upper left", bbox_to_anchor=(0.0, 0.92),
-                frameon=False, ncol=2, columnspacing=0.8,
-                handlelength=2.2)
+    legend_above(axis, ncol=2)
     panel_label(axis, r"\textbf{(b)}")
 
     axis = axes[0, 2]
@@ -154,17 +175,21 @@ def plot_histories(history, output_base, eddy_time, drive_scale,
     axis.plot(x, positive(history["q_ohm"]), color=colors[1],
               linewidth=1.4, linestyle="--",
               label=r"$\mathcal{Q}_{\rm Ohm}$")
+    if cooling_enabled:
+        axis.plot(x, positive(cooling_power), color=colors[2],
+                  linewidth=1.4, linestyle=":",
+                  label=r"$P_{\rm cool}$")
     axis.set_yscale("log")
     positive_heating = np.concatenate([
         history["q_visc"][history["q_visc"] > 0.0],
         history["q_ohm"][history["q_ohm"] > 0.0],
+        cooling_power[cooling_power > 0.0],
     ])
     heating_max = float(np.max(positive_heating))
     heating_min = max(float(np.min(positive_heating)), heating_max*1.0e-7)
     axis.set_ylim(0.8*heating_min, 1.5*heating_max)
-    axis.set_ylabel(r"heating rate")
-    axis.legend(loc="lower left", bbox_to_anchor=(0.53, 0.02),
-                frameon=False, handlelength=2.2)
+    axis.set_ylabel(r"volume-integrated rate")
+    legend_above(axis, ncol=3)
     panel_label(axis, r"\textbf{(c)}")
 
     axis = axes[1, 0]
@@ -178,10 +203,11 @@ def plot_histories(history, output_base, eddy_time, drive_scale,
               label=r"$\int\mathcal{Q}_{\rm Ohm}\,\mathrm{d}t$")
     axis.plot(x, delta_entropy, color=colors[2], linewidth=1.4,
               linestyle=":", label=r"$\Delta S_{\rm proxy}$")
+    if cooling_enabled:
+        axis.plot(x, cooled_energy, color="0.15", linewidth=1.3,
+                  label=r"$E_{\rm cool}$")
     axis.set_ylabel(r"cumulative integral or change")
-    axis.legend(loc="upper left", bbox_to_anchor=(0.0, 0.92),
-                frameon=False, ncol=2, columnspacing=0.7,
-                handlelength=2.2)
+    legend_above(axis, ncol=2)
     panel_label(axis, r"\textbf{(d)}")
 
     axis = axes[1, 1]
@@ -202,8 +228,7 @@ def plot_histories(history, output_base, eddy_time, drive_scale,
         )
     axis.set_ylim(-0.03, 1.06)
     axis.set_ylabel(r"$\mathcal{I}/\max(\mathcal{I})$")
-    axis.legend(loc="upper right", frameon=False, ncol=1,
-                handlelength=2.2)
+    legend_above(axis, ncol=2)
     panel_label(axis, r"\textbf{(e)}")
 
     axis = axes[1, 2]
@@ -211,20 +236,24 @@ def plot_histories(history, output_base, eddy_time, drive_scale,
     axis.plot(
         x, np.maximum(np.abs(energy_residual), audit_floor),
         color=colors[0], linewidth=1.4,
-        label=r"$|\Delta E_{\rm tot}-E_{\rm inj}|$",
+        label=(r"$|\Delta E_{\rm tot}-E_{\rm inj}+E_{\rm cool}|$"
+               if cooling_enabled else
+               r"$|\Delta E_{\rm tot}-E_{\rm inj}|$"),
     )
     axis.plot(
         x, np.maximum(momentum_residual, audit_floor),
         color=colors[1], linewidth=1.4, linestyle="--",
-        label=r"$\|\Delta\bm{P}-\bm{P}_{\rm inj}\|_2$",
+        label=(r"$\|\Delta\bm{P}-\bm{P}_{\rm inj}"
+               r"+\bm{P}_{\rm cool}\|_2$"
+               if cooling_enabled else
+               r"$\|\Delta\bm{P}-\bm{P}_{\rm inj}\|_2$"),
     )
     axis.set_yscale("log")
     audit_max = max(float(np.max(np.abs(energy_residual))),
                     float(np.max(momentum_residual)), 10.0*audit_floor)
     axis.set_ylim(0.7*audit_floor, 2.0*audit_max)
     axis.set_ylabel(r"conservation residual")
-    axis.legend(loc="upper left", bbox_to_anchor=(0.0, 0.92),
-                frameon=False, handlelength=2.2)
+    legend_above(axis, ncol=1)
     panel_label(axis, r"\textbf{(f)}")
 
     figure_metadata = {
@@ -250,13 +279,14 @@ def plot_histories(history, output_base, eddy_time, drive_scale,
         history["q_ohm"], history["q_visc"], cumulative_ohmic,
         cumulative_viscous, delta_entropy, energy_residual,
         momentum_residual, mean_alfven_speed, target_alfven_mach,
-        mean_magnetization,
+        mean_magnetization, cooling_power, cooled_energy, limited_cooling,
     ])
     header = (
         "t_over_t0 mach_turb re rm e_inj delta_eint delta_ekin "
         "delta_electromagnetic q_ohm q_visc int_q_ohm_dt "
         "int_q_visc_dt delta_entropy energy_residual momentum_residual "
-        "mean_alfven_speed target_alfven_mach mean_magnetization"
+        "mean_alfven_speed target_alfven_mach mean_magnetization "
+        "cool_power e_cool e_cool_limited"
     )
     np.savetxt(output_base.with_suffix(".csv"), columns, header=header)
     return pdf_path, png_path

@@ -325,7 +325,12 @@ void SRRMHDViscousRelaxationErrors(ParameterInput *pin, Mesh *pm) {
     }
   }
   if (global_variable::my_rank == 0) {
-    std::ofstream file("rsrmhd_viscous_relaxation-errs.dat");
+    std::string filename = "rsrmhd_viscous_relaxation-errs.dat";
+    if (pin->DoesParameterExist("problem", "viscous_diagnostic_name")) {
+      const std::string name = pin->GetString("problem", "viscous_diagnostic_name");
+      if (name.compare("none") != 0) filename = name + "-errs.dat";
+    }
+    std::ofstream file(filename);
     file << std::setprecision(17) << stress_error << " " << fluid_error << " "
          << exact << std::endl;
   }

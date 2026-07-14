@@ -1,0 +1,85 @@
+# Homogeneous entropy-relaxation cooling in special-relativistic MHD.
+
+<job>
+basename = rsrmhd_entropy_cooling
+
+<mesh>
+nghost = 2
+nx1 = 16
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+nx2 = 16
+x2min = 0.0
+x2max = 1.0
+ix2_bc = periodic
+ox2_bc = periodic
+nx3 = 1
+x3min = -0.5
+x3max = 0.5
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 16
+nx2 = 16
+nx3 = 1
+
+<coord>
+special_rel = true
+
+<time>
+evolution = dynamic
+integrator = imex2
+cfl_number = 0.4
+tlim = 0.05
+nlim = -1
+ndiag = 1
+
+<mhd>
+eos = ideal
+gamma = 1.6666666666666667
+resistive_rel = true
+resistivity_model = uniform
+resistivity = 0.01
+relativistic_viscosity = false
+relativistic_cooling = entropy
+cooling_time = 0.1
+cooling_adiabat = 1.0
+cooling_cfl = 0.02
+rsolver = llf
+reconstruct = plm
+fofc = false
+fofc_force = false
+
+<problem>
+pgen_name = rsrmhd_decaying_turbulence
+user_hist = true
+density = 1.0
+pressure = 2.0
+velocity_rms = 0.0
+uniform_velocity1 = 0.0
+uniform_velocity2 = 0.0
+uniform_velocity3 = 0.0
+magnetic_configuration = random
+magnetic_rms = 0.0
+profile_name = rsrmhd_entropy_cooling
+
+<velocity_spectral_ic>
+nlow = 1
+nhigh = 2
+spectrum = parabolic
+iseed = 1837
+
+<magnetic_spectral_ic>
+nlow = 1
+nhigh = 2
+spectrum = parabolic
+iseed = 918273
+
+<output1>
+file_type = hst
+dt = 0.01
+user_hist_only = true
+data_format = %20.12e
