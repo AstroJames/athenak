@@ -32,6 +32,8 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
     pmy_pack(ppack),
     u0("cons",1,1,1,1,1),
     w0("prim",1,1,1,1,1),
+    visc_u0("visc_cons",1,1,1,1,1),
+    visc_w0("visc_prim",1,1,1,1,1),
     b0("B_fc",1,1,1,1),
     e0("E_fc",1,1,1,1),
     bcc0("B_cc",1,1,1,1,1),
@@ -42,6 +44,7 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
     coarse_b0("cB_fc",1,1,1,1),
     coarse_e0("cE_fc",1,1,1,1),
     u1("cons1",1,1,1,1,1),
+    visc_u1("visc_cons1",1,1,1,1,1),
     b1("B_fc1",1,1,1,1),
     e1("E_fc1",1,1,1,1),
     jfc("J_fc",1,1,1,1),
@@ -50,6 +53,7 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
     ect_src("E_fc_src",1,1,1,1,1),
     ect_u_prev("ect_u_prev",1,1,1,1,1),
     uflx("uflx",1,1,1,1,1),
+    visc_flx("visc_flx",1,1,1,1,1),
     efld("efld",1,1,1,1),
     bfld("bfld",1,1,1,1),
     wsaved("wsaved",1,1,1,1,1),
@@ -65,6 +69,7 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
     e3_cc("e3_cc",1,1,1,1),
     utest("utest",1,1,1,1,1),
     bcctest("bcctest",1,1,1,1,1),
+    visc_utest("visc_utest",1,1,1,1,1),
     fofc("fofc",1,1,1,1),
     eta1("eta1",1,1,1,1),
     eta2("eta2",1,1,1,1),
@@ -75,7 +80,15 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
   // (1) construct EOS object (no default)
   std::string eqn_of_state = pin->GetString("mhd","eos");
   is_resistive_rel = pin->GetOrAddBoolean("mhd", "resistive_rel", false);
+  relativistic_viscosity_data.enabled =
+      pin->GetOrAddBoolean("mhd", "relativistic_viscosity", false);
   use_electric_ct = pin->GetOrAddBoolean("mhd", "electric_ct", false);
+  if (relativistic_viscosity_data.enabled && !is_resistive_rel) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+              << std::endl << "<mhd>/relativistic_viscosity=true requires "
+              << "<mhd>/resistive_rel=true" << std::endl;
+    std::exit(EXIT_FAILURE);
+  }
   if (use_electric_ct && !is_resistive_rel) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
               << std::endl << "<mhd>/electric_ct=true requires "
@@ -107,10 +120,18 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
                 << "ion-neutral coupling" << std::endl;
       std::exit(EXIT_FAILURE);
     }
-    if (pin->DoesBlockExist("shearing_box") || pin->DoesBlockExist("turb_driving")) {
+    if (pin->DoesBlockExist("shearing_box")) {
       std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
                 << std::endl << "Resistive SRMHD does not yet support shearing-box "
-                << "or turbulence-driver coupling" << std::endl;
+                << "coupling" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    if (pin->DoesBlockExist("turb_driving") &&
+        pin->GetOrAddString("turb_driving", "relativistic_forcing", "legacy")
+            != "mechanical") {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "Resistive SRMHD turbulence driving requires "
+                << "<turb_driving>/relativistic_forcing=mechanical" << std::endl;
       std::exit(EXIT_FAILURE);
     }
     if (pin->DoesParameterExist("mhd", "ohmic_resistivity") ||
@@ -159,6 +180,35 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
                 << std::endl << "Unknown <mhd>/resistivity_model='" << eta_model
                 << "' (expected uniform or charge_starvation)" << std::endl;
       std::exit(EXIT_FAILURE);
+    }
+    if (relativistic_viscosity_data.enabled) {
+      relativistic_viscosity_data.nu = pin->GetReal("mhd", "shear_viscosity");
+      relativistic_viscosity_data.tau =
+          pin->GetReal("mhd", "shear_relaxation_time");
+      relativistic_viscosity_data.linearized_target_1d = pin->GetOrAddBoolean(
+          "mhd", "linearized_shear_target_1d", false);
+      relativistic_viscosity_data.chi_max =
+          pin->GetOrAddReal("mhd", "shear_chi_max", 2.0);
+      if (relativistic_viscosity_data.nu < 0.0 ||
+          relativistic_viscosity_data.tau <= 0.0 ||
+          relativistic_viscosity_data.chi_max <= 0.0) {
+        std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                  << std::endl << "Relativistic viscosity requires "
+                  << "<mhd>/shear_viscosity >= 0, shear_relaxation_time > 0, "
+                  << "and shear_chi_max > 0"
+                  << std::endl;
+        std::exit(EXIT_FAILURE);
+      }
+      const Real gamma = pin->GetReal("mhd", "gamma");
+      const Real causal_margin = srrmhd::LinearViscosityCausalityMargin(
+          gamma, relativistic_viscosity_data);
+      if (causal_margin < -1.0e-12) {
+        std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                  << std::endl << "Relativistic viscosity violates the conservative "
+                  << "linear causality gate: (gamma-1) + 4*shear_viscosity/"
+                  << "(3*shear_relaxation_time) must be <= 1" << std::endl;
+        std::exit(EXIT_FAILURE);
+      }
     }
   }
   // ideal gas EOS
@@ -242,6 +292,25 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
   // Then initialize memory and algorithms for reconstruction and Riemann solvers
   std::string evolution_t = pin->GetString("time","evolution");
   if (is_resistive_rel && evolution_t.compare("static") != 0) {
+    if (relativistic_viscosity_data.enabled && pmy_pack->pmesh->multilevel) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "Dynamic relativistic viscosity does not yet support "
+                << "mesh refinement" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    if (relativistic_viscosity_data.enabled && pmy_pack->pmesh->multi_d
+        && relativistic_viscosity_data.linearized_target_1d) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "linearized_shear_target_1d is only valid on "
+                << "one-dimensional meshes" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    if (relativistic_viscosity_data.enabled && use_electric_ct) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "Relativistic viscosity is not yet coupled to the "
+                << "face-centered electric-CT implicit solver" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
     std::string integrator = pin->GetOrAddString("time", "integrator", "rk2");
     if (use_electric_ct) {
       if (pmy_pack->pmesh->one_d && pmy_pack->pmesh->nmb_total != 1) {
@@ -263,12 +332,6 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
                 << "<time>/integrator=imex2" << std::endl;
       std::exit(EXIT_FAILURE);
     }
-    if (pin->GetOrAddBoolean("mhd", "fofc", false)) {
-      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-                << std::endl << "Resistive SRMHD does not yet support FOFC"
-                << std::endl;
-      std::exit(EXIT_FAILURE);
-    }
   }
 
   // allocate memory for conserved and primitive variables
@@ -281,6 +344,12 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
     int ncells3 = (indcs.nx3 > 1)? (indcs.nx3 + 2*(indcs.ng)) : 1;
     Kokkos::realloc(u0,   nmb, (nmhd+nscalars), ncells3, ncells2, ncells1);
     Kokkos::realloc(w0,   nmb, (nmhd+nscalars), ncells3, ncells2, ncells1);
+    if (relativistic_viscosity_data.enabled) {
+      Kokkos::realloc(visc_u0, nmb, srrmhd::NVISC, ncells3, ncells2, ncells1);
+      Kokkos::realloc(visc_w0, nmb, srrmhd::NVISC, ncells3, ncells2, ncells1);
+      Kokkos::deep_copy(visc_u0, 0.0);
+      Kokkos::deep_copy(visc_w0, 0.0);
+    }
 
     // allocate memory for face-centered and cell-centered magnetic fields
     Kokkos::realloc(bcc0,   nmb, 3, ncells3, ncells2, ncells1);
@@ -342,6 +411,10 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
   // allocate boundary buffers for conserved (cell-centered) and face-centered variables
   pbval_u = new MeshBoundaryValuesCC(ppack, pin, false);
   pbval_u->InitializeBuffers((nmhd+nscalars));
+  if (relativistic_viscosity_data.enabled) {
+    pbval_visc = new MeshBoundaryValuesCC(ppack, pin, false);
+    pbval_visc->InitializeBuffers(srrmhd::NVISC);
+  }
   pbval_b = new MeshBoundaryValuesFC(ppack, pin);
   pbval_b->InitializeBuffers(3);
   if (use_electric_ct) {
@@ -370,6 +443,13 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
   if (evolution_t.compare("static") != 0) {
     // determine if FOFC is enabled
     use_fofc = pin->GetOrAddBoolean("mhd","fofc",false);
+    force_fofc = pin->GetOrAddBoolean("mhd", "fofc_force", false);
+    if (force_fofc && !use_fofc) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "<mhd>/fofc_force=true requires <mhd>/fofc=true"
+                << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
 
     // determine if h-correction is enabled (Sanders, Morano & Druguet 1998)
     use_hcorr = pin->GetOrAddBoolean("mhd","h_correction",false);
@@ -518,6 +598,9 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
       int ncells2 = (indcs.nx2 > 1)? (indcs.nx2 + 2*(indcs.ng)) : 1;
       int ncells3 = (indcs.nx3 > 1)? (indcs.nx3 + 2*(indcs.ng)) : 1;
       Kokkos::realloc(u1,     nmb, (nmhd+nscalars), ncells3, ncells2, ncells1);
+      if (relativistic_viscosity_data.enabled) {
+        Kokkos::realloc(visc_u1, nmb, srrmhd::NVISC, ncells3, ncells2, ncells1);
+      }
       Kokkos::realloc(b1.x1f, nmb, ncells3, ncells2, ncells1+1);
       Kokkos::realloc(b1.x2f, nmb, ncells3, ncells2+1, ncells1);
       Kokkos::realloc(b1.x3f, nmb, ncells3+1, ncells2, ncells1);
@@ -526,6 +609,14 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
       Kokkos::realloc(uflx.x1f, nmb, (nmhd+nscalars), ncells3, ncells2, ncells1+1);
       Kokkos::realloc(uflx.x2f, nmb, (nmhd+nscalars), ncells3, ncells2+1, ncells1);
       Kokkos::realloc(uflx.x3f, nmb, (nmhd+nscalars), ncells3+1, ncells2, ncells1);
+      if (relativistic_viscosity_data.enabled) {
+        Kokkos::realloc(visc_flx.x1f, nmb, srrmhd::NVISC, ncells3, ncells2,
+                        ncells1+1);
+        Kokkos::realloc(visc_flx.x2f, nmb, srrmhd::NVISC, ncells3, ncells2+1,
+                        ncells1);
+        Kokkos::realloc(visc_flx.x3f, nmb, srrmhd::NVISC, ncells3+1, ncells2,
+                        ncells1);
+      }
       Kokkos::realloc(efld.x1e, nmb, ncells3+1, ncells2+1, ncells1);
       Kokkos::realloc(efld.x2e, nmb, ncells3+1, ncells2, ncells1+1);
       Kokkos::realloc(efld.x3e, nmb, ncells3, ncells2+1, ncells1+1);
@@ -547,6 +638,10 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
         Kokkos::realloc(fofc,    nmb, ncells3, ncells2, ncells1);
         Kokkos::realloc(utest,   nmb, nvars, ncells3, ncells2, ncells1);
         Kokkos::realloc(bcctest, nmb, 3,    ncells3, ncells2, ncells1);
+        if (relativistic_viscosity_data.enabled) {
+          Kokkos::realloc(visc_utest, nmb, srrmhd::NVISC,
+                          ncells3, ncells2, ncells1);
+        }
         Kokkos::deep_copy(fofc, false);
       }
 
@@ -566,6 +661,9 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
 MHD::~MHD() {
   delete peos;
   delete pbval_u;
+  if (pbval_visc != nullptr) {
+    delete pbval_visc;
+  }
   delete pbval_b;
   if (pbval_e != nullptr) {delete pbval_e;}
   if (pbval_ect_face != nullptr) {delete pbval_ect_face;}

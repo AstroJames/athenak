@@ -86,6 +86,7 @@ add_executable(
         mhd/mhd_newdt.cpp
         mhd/mhd_tasks.cpp
         mhd/mhd_update.cpp
+        mhd/mhd_viscosity.cpp
 
         outputs/io_wrapper.cpp
         outputs/outputs.cpp
@@ -124,9 +125,12 @@ add_executable(
         pgen/tests/rad_hohlraum.cpp
         pgen/tests/rad_linear_wave.cpp
         pgen/tests/rsrmhd_current_sheet.cpp
+        pgen/tests/rsrmhd_ohmic_decay.cpp
         pgen/tests/rsrmhd_charged_vortex.cpp
         pgen/tests/rsrmhd_ect.cpp
+        pgen/tests/rsrmhd_decaying_turbulence.cpp
         pgen/tests/rsrmhd_roundtrip.cpp
+        pgen/tests/rsrmhd_viscosity.cpp
         pgen/tests/z4c_linear_wave.cpp
         pgen/tests/spectrum_modes.cpp
 

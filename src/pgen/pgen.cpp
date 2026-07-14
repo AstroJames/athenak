@@ -88,10 +88,14 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm) :
     ResistiveSRMHDRoundTrip(pin, false);
   } else if (pgen_fun_name.compare("rsrmhd_current_sheet") == 0) {
     ResistiveSRMHDCurrentSheet(pin, false);
+  } else if (pgen_fun_name.compare("rsrmhd_ohmic_decay") == 0) {
+    ResistiveSRMHDOhmicDecay(pin, false);
   } else if (pgen_fun_name.compare("rsrmhd_charged_vortex") == 0) {
     ResistiveSRMHDChargedVortex(pin, false);
   } else if (pgen_fun_name.compare("rsrmhd_ect") == 0) {
     ResistiveSRMHDECT(pin, false);
+  } else if (pgen_fun_name.compare("rsrmhd_decaying_turbulence") == 0) {
+    ResistiveSRMHDDecayingTurbulence(pin, false);
   // else, name not set on command line or input file, print warning and quit
   } else {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
@@ -169,12 +173,15 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
   z4c::Z4c* pz4c = pm->pmb_pack->pz4c;
   radiation::Radiation* prad=pm->pmb_pack->prad;
   TurbulenceDriver* pturb=pm->pmb_pack->pturb;
-  int nrad = 0, nhydro = 0, nmhd = 0, nforce = 3, nadm = 0, nz4c = 0;
+  int nrad = 0, nhydro = 0, nmhd = 0, nmhd_state = 0, nvisc = 0;
+  int nforce = 3, nadm = 0, nz4c = 0;
   if (phydro != nullptr) {
     nhydro = phydro->nhydro + phydro->nscalars;
   }
   if (pmhd != nullptr) {
-    nmhd = pmhd->nmhd + pmhd->nscalars;
+    nmhd_state = pmhd->nmhd + pmhd->nscalars;
+    nvisc = pmhd->relativistic_viscosity_data.enabled ? srrmhd::NVISC : 0;
+    nmhd = nmhd_state + nvisc;
   }
   if (prad != nullptr) {
     nrad = prad->prgeo->nangles;
@@ -390,7 +397,17 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
       }
     }
     Kokkos::deep_copy(Kokkos::subview(pmhd->u0, std::make_pair(0,nmb), Kokkos::ALL,
-                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL), ccin);
+                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
+                      Kokkos::subview(ccin, std::make_pair(0,nmb),
+                      std::make_pair(0,nmhd_state), Kokkos::ALL, Kokkos::ALL,
+                      Kokkos::ALL));
+    if (nvisc > 0) {
+      Kokkos::deep_copy(Kokkos::subview(pmhd->visc_u0, std::make_pair(0,nmb),
+                        Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
+                        Kokkos::subview(ccin, std::make_pair(0,nmb),
+                        std::make_pair(nmhd_state,nmhd), Kokkos::ALL, Kokkos::ALL,
+                        Kokkos::ALL));
+    }
     offset_myrank += nout1*nout2*nout3*nmhd*sizeof(Real);   // mhd u0
     myoffset = offset_myrank;
 
@@ -774,10 +791,14 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
     ResistiveSRMHDRoundTrip(pin, true);
   } else if (pgen_fun_name.compare("rsrmhd_current_sheet") == 0) {
     ResistiveSRMHDCurrentSheet(pin, true);
+  } else if (pgen_fun_name.compare("rsrmhd_ohmic_decay") == 0) {
+    ResistiveSRMHDOhmicDecay(pin, true);
   } else if (pgen_fun_name.compare("rsrmhd_charged_vortex") == 0) {
     ResistiveSRMHDChargedVortex(pin, true);
   } else if (pgen_fun_name.compare("rsrmhd_ect") == 0) {
     ResistiveSRMHDECT(pin, true);
+  } else if (pgen_fun_name.compare("rsrmhd_decaying_turbulence") == 0) {
+    ResistiveSRMHDDecayingTurbulence(pin, true);
   } else {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
         << "Problem generator name could not be found in <problem> block in input file"

@@ -60,12 +60,15 @@ void RestartOutput::LoadOutputData(Mesh *pm) {
   z4c::Z4c* pz4c = pm->pmb_pack->pz4c;
   radiation::Radiation* prad = pm->pmb_pack->prad;
   TurbulenceDriver* pturb=pm->pmb_pack->pturb;
-  int nhydro=0, nmhd=0, nrad=0, nforce=3, nadm=0, nz4c=0;
+  int nhydro=0, nmhd=0, nmhd_state=0, nvisc=0;
+  int nrad=0, nforce=3, nadm=0, nz4c=0;
   if (phydro != nullptr) {
     nhydro = phydro->nhydro + phydro->nscalars;
   }
   if (pmhd != nullptr) {
-    nmhd = pmhd->nmhd + pmhd->nscalars;
+    nmhd_state = pmhd->nmhd + pmhd->nscalars;
+    nvisc = pmhd->relativistic_viscosity_data.enabled ? srrmhd::NVISC : 0;
+    nmhd = nmhd_state + nvisc;
   }
   if (pz4c != nullptr) {
     nz4c = pz4c->nz4c;
@@ -85,8 +88,18 @@ void RestartOutput::LoadOutputData(Mesh *pm) {
   }
   if (pmhd != nullptr) {
     Kokkos::realloc(outarray_mhd, nmb, nmhd, nout3, nout2, nout1);
-    Kokkos::deep_copy(outarray_mhd, Kokkos::subview(pmhd->u0, std::make_pair(0,nmb),
-                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+    Kokkos::deep_copy(Kokkos::subview(outarray_mhd, std::make_pair(0,nmb),
+                      std::make_pair(0,nmhd_state), Kokkos::ALL, Kokkos::ALL,
+                      Kokkos::ALL),
+                      Kokkos::subview(pmhd->u0, std::make_pair(0,nmb), Kokkos::ALL,
+                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+    if (nvisc > 0) {
+      Kokkos::deep_copy(Kokkos::subview(outarray_mhd, std::make_pair(0,nmb),
+                        std::make_pair(nmhd_state,nmhd), Kokkos::ALL, Kokkos::ALL,
+                        Kokkos::ALL),
+                        Kokkos::subview(pmhd->visc_u0, std::make_pair(0,nmb),
+                        Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+    }
     Kokkos::realloc(outfield.x1f, nmb, nout3, nout2, nout1+1);
     Kokkos::deep_copy(outfield.x1f, Kokkos::subview(pmhd->b0.x1f, std::make_pair(0,nmb),
                       Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
@@ -162,6 +175,7 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
   }
   if (pmhd != nullptr) {
     nmhd = pmhd->nmhd + pmhd->nscalars;
+    if (pmhd->relativistic_viscosity_data.enabled) nmhd += srrmhd::NVISC;
   }
   if (prad != nullptr) {
     nrad = prad->prgeo->nangles;

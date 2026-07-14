@@ -89,7 +89,7 @@ def mpirun(nproc, input_filename, arguments):
     try:
         input_filename_full = '../../' + athena_rel_path + \
                               'inputs/' + input_filename
-        run_command = ['mpiexec -n', str(nproc), './athena', '-i',
+        run_command = ['mpirun', '-n', str(nproc), './athena', '-i',
                        input_filename_full]
         try:
             cmd = run_command + arguments
@@ -99,6 +99,28 @@ def mpirun(nproc, input_filename, arguments):
             raise AthenaError('Return code {0} from command \'{1}\''
                               .format(err.returncode, ' '.join(err.cmd)))
 
+    finally:
+        out_log.close()
+        os.chdir(current_dir)
+
+
+# Function for restarting AthenaK with MPI
+def mpirestart(nproc, restart_filename, arguments):
+    out_log = LogPipe('athena.restart', logging.INFO)
+    current_dir = os.getcwd()
+    exe_dir = current_dir + '/build/src/'
+    os.chdir(exe_dir)
+    try:
+        run_command = ['mpirun', '-n', str(nproc), './athena', '-r',
+                       restart_filename]
+        try:
+            cmd = run_command + arguments
+            logging.getLogger('athena.restart').debug(
+                'Executing: '+' '.join(cmd))
+            subprocess.check_call(cmd, stdout=out_log)
+        except subprocess.CalledProcessError as err:
+            raise AthenaError('Return code {0} from command \'{1}\''
+                              .format(err.returncode, ' '.join(err.cmd)))
     finally:
         out_log.close()
         os.chdir(current_dir)

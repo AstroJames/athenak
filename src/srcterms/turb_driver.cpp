@@ -27,6 +27,7 @@
 #include "eos/eos.hpp"
 #include "eos/ideal_c2p_hyd.hpp"
 #include "eos/ideal_c2p_mhd.hpp"
+#include "relativistic_forcing.hpp"
 #include "turb_driver.hpp"
 
 namespace {
@@ -205,13 +206,16 @@ int ParseWindow(ParameterInput *pin, const std::string &block, const std::string
   std::exit(EXIT_FAILURE);
 }
 
-int CountDrivingModes(int nlow, int nhigh, int driving_geometry) {
+int CountDrivingModes(int nlow, int nhigh, int driving_geometry,
+                      bool multi_d, bool three_d) {
   int nlow_sqr = SQR(nlow);
   int nhigh_sqr = SQR(nhigh);
+  int nky_max = multi_d ? nhigh : 0;
+  int nkz_max = three_d ? nhigh : 0;
   int count = 0;
   for (int nkx = 0; nkx <= nhigh; nkx++) {
-    for (int nky = 0; nky <= nhigh; nky++) {
-      for (int nkz = 0; nkz <= nhigh; nkz++) {
+    for (int nky = 0; nky <= nky_max; nky++) {
+      for (int nkz = 0; nkz <= nkz_max; nkz++) {
         if (nkx == 0 && nky == 0 && nkz == 0) continue;
         int nsqr = 0;
         bool flag_prl = true;
@@ -268,12 +272,48 @@ TurbulenceDriver::TurbulenceDriver(MeshBlockPack *pp, ParameterInput *pin) :
               << std::endl << "num_components must be >= 1" << std::endl;
     std::exit(EXIT_FAILURE);
   }
+  std::string relativistic_model =
+      pin->GetOrAddString("turb_driving", "relativistic_forcing", "legacy");
+  if (relativistic_model == "legacy") {
+    relativistic_forcing_model = RelativisticForcingModel::legacy;
+  } else if (relativistic_model == "mechanical") {
+    relativistic_forcing_model = RelativisticForcingModel::mechanical;
+  } else {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+              << std::endl << "relativistic_forcing must be legacy or mechanical"
+              << std::endl;
+    std::exit(EXIT_FAILURE);
+  }
+  if (relativistic_forcing_model == RelativisticForcingModel::mechanical) {
+    if (!pmy_pack->pcoord->is_special_relativistic) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "relativistic_forcing = mechanical requires special "
+                << "relativistic coordinates" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    if (pmy_pack->pionn != nullptr) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "relativistic_forcing = mechanical does not yet "
+                << "support ion-neutral two-fluid systems" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    EquationOfState *forcing_eos = nullptr;
+    if (pmy_pack->phydro != nullptr) forcing_eos = pmy_pack->phydro->peos;
+    if (pmy_pack->pmhd != nullptr) forcing_eos = pmy_pack->pmhd->peos;
+    if (forcing_eos == nullptr || !forcing_eos->eos_data.is_ideal) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "relativistic_forcing = mechanical requires an ideal "
+                << "gas hydro or MHD system" << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+  }
   component_name.resize(num_components);
   nlow.resize(num_components);
   nhigh.resize(num_components);
   mode_count.resize(num_components);
   tcorr.resize(num_components);
   dedt.resize(num_components);
+  accel_rms.resize(num_components);
   expo.resize(num_components);
   exp_prp.resize(num_components);
   exp_prl.resize(num_components);
@@ -397,9 +437,35 @@ TurbulenceDriver::TurbulenceDriver(MeshBlockPack *pp, ParameterInput *pin) :
     transverse_window_transition[c] = std::min(transverse_window_transition[c],
                                               transverse_window_radius[c]);
 
-    dedt[c] = pin->GetOrAddReal(block, "dedt", 0.0);
+    if (relativistic_forcing_model == RelativisticForcingModel::mechanical) {
+      if (pin->DoesParameterExist(block, "dedt")) {
+        std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                  << std::endl << "Use accel_rms, not dedt, with relativistic_forcing "
+                  << "= mechanical in <" << block << ">" << std::endl;
+        std::exit(EXIT_FAILURE);
+      }
+      if (!pin->DoesParameterExist(block, "accel_rms")) {
+        std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                  << std::endl << "Missing required accel_rms in <" << block << ">"
+                  << std::endl;
+        std::exit(EXIT_FAILURE);
+      }
+      accel_rms[c] = pin->GetReal(block, "accel_rms");
+      if (accel_rms[c] <= 0.0) {
+        std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                  << std::endl << "accel_rms must be positive in <" << block << ">"
+                  << std::endl;
+        std::exit(EXIT_FAILURE);
+      }
+      dedt[c] = 0.0;
+    } else {
+      dedt[c] = pin->GetOrAddReal(block, "dedt", 0.0);
+      accel_rms[c] = 0.0;
+    }
     tcorr[c] = pin->GetOrAddReal(block, "tcorr", 0.0);
-    mode_count[c] = CountDrivingModes(nlow[c], nhigh[c], driving_geometry[c]);
+    mode_count[c] = CountDrivingModes(nlow[c], nhigh[c], driving_geometry[c],
+                                      pmy_pack->pmesh->multi_d,
+                                      pmy_pack->pmesh->three_d);
     if (mode_count[c] <= 0) {
       std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
                 << std::endl << "No active forcing modes in <" << block << ">"
@@ -533,9 +599,11 @@ void TurbulenceDriver::Initialize() {
     int nmode = 0;
     int nlow_sqr = SQR(nlow[c]);
     int nhigh_sqr = SQR(nhigh[c]);
+    int nky_max = pm->multi_d ? nhigh[c] : 0;
+    int nkz_max = pm->three_d ? nhigh[c] : 0;
     for (int nkx = 0; nkx <= nhigh[c]; nkx++) {
-      for (int nky = 0; nky <= nhigh[c]; nky++) {
-        for (int nkz = 0; nkz <= nhigh[c]; nkz++) {
+      for (int nky = 0; nky <= nky_max; nky++) {
+        for (int nkz = 0; nkz <= nkz_max; nkz++) {
           if (nkx == 0 && nky == 0 && nkz == 0) continue;
           int nsqr = 0;
           bool flag_prl = true;
@@ -738,11 +806,13 @@ TaskStatus TurbulenceDriver::InitializeModes(Driver *pdrive, int stage) {
     Real parabola_width_ = parabola_width[c];
     int driving_profile_ = driving_profile[c];
     int driving_geometry_ = driving_geometry[c];
+    int nky_max = pm->multi_d ? nhigh[c] : 0;
+    int nkz_max = pm->three_d ? nhigh[c] : 0;
 
     int nmode = 0;
     for (int nkx = 0; nkx <= nhigh[c]; nkx++) {
-      for (int nky = 0; nky <= nhigh[c]; nky++) {
-        for (int nkz = 0; nkz <= nhigh[c]; nkz++) {
+      for (int nky = 0; nky <= nky_max; nky++) {
+        for (int nkz = 0; nkz <= nkz_max; nkz++) {
           if (nkx == 0 && nky == 0 && nkz == 0) continue;
           norm = 0.0;
           int nsqr = 0;
@@ -1138,6 +1208,11 @@ TaskStatus TurbulenceDriver::UpdateForcing(Driver *pdrive, int stage) {
       force_norm_(c,m,2,k,j,i) = force_(c,m,2,k,j,i);
     });
 
+    // Mechanical relativistic forcing retains the raw windowed OU realization.
+    // Its enthalpy-weighted mean and RMS scale depend on the RK stage primitives
+    // and are therefore computed in AddForcing().
+    if (relativistic_forcing_model == RelativisticForcingModel::mechanical) continue;
+
     Real t0 = 0.0, t1 = 0.0, t2 = 0.0, t3 = 0.0;
     int vertical_window_ = vertical_window[c];
     Real vertical_window_width_ = vertical_window_width[c];
@@ -1211,7 +1286,8 @@ TaskStatus TurbulenceDriver::UpdateForcing(Driver *pdrive, int stage) {
 
     t0 = 0.0;
     t1 = 0.0;
-    Kokkos::parallel_reduce("force_dedt_norm", Kokkos::RangePolicy<>(DevExeSpace(),0,nmkji),
+    Kokkos::parallel_reduce("force_dedt_norm",
+        Kokkos::RangePolicy<>(DevExeSpace(),0,nmkji),
     KOKKOS_LAMBDA(const int &idx, Real &sum_t0, Real &sum_t1) {
       int m = (idx)/nkji;
       int k = (idx - m*nkji)/nji;
@@ -1280,6 +1356,211 @@ TaskStatus TurbulenceDriver::UpdateForcing(Driver *pdrive, int stage) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn normalize mechanical acceleration
+//! \brief Remove the enthalpy-weighted source mean and impose the requested RMS.
+
+void TurbulenceDriver::NormalizeMechanicalAcceleration(
+    const DvceArray5D<Real> &prim, Real gamma) {
+  auto &indcs = pmy_pack->pmesh->mb_indcs;
+  int is = indcs.is, ie = indcs.ie;
+  int js = indcs.js, je = indcs.je;
+  int ks = indcs.ks, ke = indcs.ke;
+  int &nmb = pmy_pack->nmb_thispack;
+  int &nx1 = indcs.nx1;
+  int &nx2 = indcs.nx2;
+  int &nx3 = indcs.nx3;
+  auto &size = pmy_pack->pmb->mb_size;
+
+  auto force_raw_ = force_component;
+  auto force_norm_ = force_norm_component;
+  auto force_total_ = force;
+  const int nmkji = nmb*nx3*nx2*nx1;
+  const int nkji = nx3*nx2*nx1;
+  const int nji = nx2*nx1;
+
+  for (int c = 0; c < num_components; ++c) {
+    int vertical_window_ = vertical_window[c];
+    Real vertical_window_width_ = vertical_window_width[c];
+    Real vertical_window_transition_ = vertical_window_transition[c];
+    int transverse_window_ = transverse_window[c];
+    Real transverse_window_radius_ = transverse_window_radius[c];
+    Real transverse_window_transition_ = transverse_window_transition[c];
+
+    Real sum_weight = 0.0, sum_a1 = 0.0, sum_a2 = 0.0, sum_a3 = 0.0;
+    Kokkos::parallel_reduce("mechanical_acceleration_mean",
+        Kokkos::RangePolicy<>(DevExeSpace(), 0, nmkji),
+    KOKKOS_LAMBDA(const int &idx, Real &weight_sum, Real &a1_sum,
+                  Real &a2_sum, Real &a3_sum) {
+      int m = idx/nkji;
+      int k = (idx - m*nkji)/nji;
+      int j = (idx - m*nkji - k*nji)/nx1;
+      int i = (idx - m*nkji - k*nji - j*nx1) + is;
+      k += ks;
+      j += js;
+
+      Real &x1min = size.d_view(m).x1min;
+      Real &x1max = size.d_view(m).x1max;
+      Real &x2min = size.d_view(m).x2min;
+      Real &x2max = size.d_view(m).x2max;
+      Real &x3min = size.d_view(m).x3min;
+      Real &x3max = size.d_view(m).x3max;
+      Real x = CellCenterX(i - is, nx1, x1min, x1max);
+      Real y = CellCenterX(j - js, nx2, x2min, x2max);
+      Real z = CellCenterX(k - ks, nx3, x3min, x3max);
+      Real rperp = sqrt(x*x + y*y);
+      Real window = SpatialWindowWeight(z, vertical_window_, vertical_window_width_,
+                                        vertical_window_transition_);
+      window *= SpatialWindowWeight(rperp, transverse_window_,
+                                    transverse_window_radius_,
+                                    transverse_window_transition_);
+      Real enthalpy = prim(m,IDN,k,j,i) + gamma*prim(m,IEN,k,j,i);
+      Real vol = size.d_view(m).dx1*size.d_view(m).dx2*size.d_view(m).dx3;
+      weight_sum += enthalpy*window*vol;
+      a1_sum += enthalpy*force_raw_(c,m,0,k,j,i)*vol;
+      a2_sum += enthalpy*force_raw_(c,m,1,k,j,i)*vol;
+      a3_sum += enthalpy*force_raw_(c,m,2,k,j,i)*vol;
+    }, Kokkos::Sum<Real>(sum_weight), Kokkos::Sum<Real>(sum_a1),
+       Kokkos::Sum<Real>(sum_a2), Kokkos::Sum<Real>(sum_a3));
+
+#if MPI_PARALLEL_ENABLED
+    Real local_mean[4] = {sum_weight, sum_a1, sum_a2, sum_a3};
+    Real global_mean[4];
+    MPI_Allreduce(local_mean, global_mean, 4, MPI_ATHENA_REAL, MPI_SUM,
+                  MPI_COMM_WORLD);
+    sum_weight = global_mean[0];
+    sum_a1 = global_mean[1];
+    sum_a2 = global_mean[2];
+    sum_a3 = global_mean[3];
+#endif
+
+    const Real mean1 = (sum_weight > 0.0) ? sum_a1/sum_weight : 0.0;
+    const Real mean2 = (sum_weight > 0.0) ? sum_a2/sum_weight : 0.0;
+    const Real mean3 = (sum_weight > 0.0) ? sum_a3/sum_weight : 0.0;
+    par_for("mechanical_acceleration_remove_mean", DevExeSpace(), 0, nmb-1,
+            ks, ke, js, je, is, ie,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      Real &x1min = size.d_view(m).x1min;
+      Real &x1max = size.d_view(m).x1max;
+      Real &x2min = size.d_view(m).x2min;
+      Real &x2max = size.d_view(m).x2max;
+      Real &x3min = size.d_view(m).x3min;
+      Real &x3max = size.d_view(m).x3max;
+      Real x = CellCenterX(i - is, nx1, x1min, x1max);
+      Real y = CellCenterX(j - js, nx2, x2min, x2max);
+      Real z = CellCenterX(k - ks, nx3, x3min, x3max);
+      Real rperp = sqrt(x*x + y*y);
+      Real window = SpatialWindowWeight(z, vertical_window_, vertical_window_width_,
+                                        vertical_window_transition_);
+      window *= SpatialWindowWeight(rperp, transverse_window_,
+                                    transverse_window_radius_,
+                                    transverse_window_transition_);
+      force_norm_(c,m,0,k,j,i) = force_raw_(c,m,0,k,j,i) - window*mean1;
+      force_norm_(c,m,1,k,j,i) = force_raw_(c,m,1,k,j,i) - window*mean2;
+      force_norm_(c,m,2,k,j,i) = force_raw_(c,m,2,k,j,i) - window*mean3;
+    });
+
+    Real sum_enthalpy = 0.0, sum_acceleration2 = 0.0;
+    Kokkos::parallel_reduce("mechanical_acceleration_rms",
+        Kokkos::RangePolicy<>(DevExeSpace(), 0, nmkji),
+    KOKKOS_LAMBDA(const int &idx, Real &enthalpy_sum, Real &acceleration2_sum) {
+      int m = idx/nkji;
+      int k = (idx - m*nkji)/nji;
+      int j = (idx - m*nkji - k*nji)/nx1;
+      int i = (idx - m*nkji - k*nji - j*nx1) + is;
+      k += ks;
+      j += js;
+      Real enthalpy = prim(m,IDN,k,j,i) + gamma*prim(m,IEN,k,j,i);
+      Real a1 = force_norm_(c,m,0,k,j,i);
+      Real a2 = force_norm_(c,m,1,k,j,i);
+      Real a3 = force_norm_(c,m,2,k,j,i);
+      Real vol = size.d_view(m).dx1*size.d_view(m).dx2*size.d_view(m).dx3;
+      enthalpy_sum += enthalpy*vol;
+      acceleration2_sum += enthalpy*(a1*a1 + a2*a2 + a3*a3)*vol;
+    }, Kokkos::Sum<Real>(sum_enthalpy), Kokkos::Sum<Real>(sum_acceleration2));
+
+#if MPI_PARALLEL_ENABLED
+    Real local_norm[2] = {sum_enthalpy, sum_acceleration2};
+    Real global_norm[2];
+    MPI_Allreduce(local_norm, global_norm, 2, MPI_ATHENA_REAL, MPI_SUM,
+                  MPI_COMM_WORLD);
+    sum_enthalpy = global_norm[0];
+    sum_acceleration2 = global_norm[1];
+#endif
+
+    Real scale = 0.0;
+    const Real rms_floor = 100.0*std::numeric_limits<Real>::epsilon();
+    if (sum_enthalpy > 0.0 && sum_acceleration2 > 0.0) {
+      Real unscaled_rms = sqrt(sum_acceleration2/sum_enthalpy);
+      if (unscaled_rms > rms_floor) scale = accel_rms[c]/unscaled_rms;
+    }
+    par_for("mechanical_acceleration_scale", DevExeSpace(), 0, nmb-1, ks, ke,
+            js, je, is, ie,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      force_norm_(c,m,0,k,j,i) *= scale;
+      force_norm_(c,m,1,k,j,i) *= scale;
+      force_norm_(c,m,2,k,j,i) *= scale;
+    });
+  }
+
+  par_for("mechanical_acceleration_total_zero", DevExeSpace(), 0, nmb-1, 0, 2,
+          ks, ke, js, je, is, ie,
+  KOKKOS_LAMBDA(int m, int n, int k, int j, int i) {
+    force_total_(m,n,k,j,i) = 0.0;
+  });
+  for (int c = 0; c < num_components; ++c) {
+    par_for("mechanical_acceleration_total_sum", DevExeSpace(), 0, nmb-1, 0, 2,
+            ks, ke, js, je, is, ie,
+    KOKKOS_LAMBDA(int m, int n, int k, int j, int i) {
+      force_total_(m,n,k,j,i) += force_norm_(c,m,n,k,j,i);
+    });
+  }
+
+  Real sum_enthalpy = 0.0, sum_acceleration2 = 0.0;
+  Real net_force1 = 0.0, net_force2 = 0.0, net_force3 = 0.0;
+  Kokkos::parallel_reduce("mechanical_acceleration_diagnostics",
+      Kokkos::RangePolicy<>(DevExeSpace(), 0, nmkji),
+  KOKKOS_LAMBDA(const int &idx, Real &enthalpy_sum, Real &acceleration2_sum,
+                Real &force1_sum, Real &force2_sum, Real &force3_sum) {
+    int m = idx/nkji;
+    int k = (idx - m*nkji)/nji;
+    int j = (idx - m*nkji - k*nji)/nx1;
+    int i = (idx - m*nkji - k*nji - j*nx1) + is;
+    k += ks;
+    j += js;
+    Real enthalpy = prim(m,IDN,k,j,i) + gamma*prim(m,IEN,k,j,i);
+    Real a1 = force_total_(m,0,k,j,i);
+    Real a2 = force_total_(m,1,k,j,i);
+    Real a3 = force_total_(m,2,k,j,i);
+    Real vol = size.d_view(m).dx1*size.d_view(m).dx2*size.d_view(m).dx3;
+    enthalpy_sum += enthalpy*vol;
+    acceleration2_sum += enthalpy*(a1*a1 + a2*a2 + a3*a3)*vol;
+    force1_sum += enthalpy*a1*vol;
+    force2_sum += enthalpy*a2*vol;
+    force3_sum += enthalpy*a3*vol;
+  }, Kokkos::Sum<Real>(sum_enthalpy), Kokkos::Sum<Real>(sum_acceleration2),
+     Kokkos::Sum<Real>(net_force1), Kokkos::Sum<Real>(net_force2),
+     Kokkos::Sum<Real>(net_force3));
+
+#if MPI_PARALLEL_ENABLED
+  Real local_diagnostics[5] = {sum_enthalpy, sum_acceleration2, net_force1,
+                               net_force2, net_force3};
+  Real global_diagnostics[5];
+  MPI_Allreduce(local_diagnostics, global_diagnostics, 5, MPI_ATHENA_REAL, MPI_SUM,
+                MPI_COMM_WORLD);
+  sum_enthalpy = global_diagnostics[0];
+  sum_acceleration2 = global_diagnostics[1];
+  net_force1 = global_diagnostics[2];
+  net_force2 = global_diagnostics[3];
+  net_force3 = global_diagnostics[4];
+#endif
+  last_accel_rms = (sum_enthalpy > 0.0)
+      ? sqrt(sum_acceleration2/sum_enthalpy) : 0.0;
+  last_net_force1 = net_force1;
+  last_net_force2 = net_force2;
+  last_net_force3 = net_force3;
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn apply forcing
 
 TaskStatus TurbulenceDriver::AddForcing(Driver *pdrive, int stage) {
@@ -1304,17 +1585,20 @@ TaskStatus TurbulenceDriver::AddForcing(Driver *pdrive, int stage) {
   DvceFaceFld4D<Real> *bcc0;
   bool primary_is_ideal = false;
   bool secondary_is_ideal = false;
+  Real primary_gamma = 0.0;
   if (pmy_pack->phydro != nullptr) {
     u0 = (pmy_pack->phydro->u0);
     w0 = (pmy_pack->phydro->w0);
     peos = (pmy_pack->phydro->peos);
     primary_is_ideal = pmy_pack->phydro->peos->eos_data.is_ideal;
+    primary_gamma = pmy_pack->phydro->peos->eos_data.gamma;
   }
   if (pmy_pack->pmhd != nullptr) {
     u0 = (pmy_pack->pmhd->u0);
     w0 = (pmy_pack->pmhd->w0);
     peos = pmy_pack->pmhd->peos;
     primary_is_ideal = pmy_pack->pmhd->peos->eos_data.is_ideal;
+    primary_gamma = pmy_pack->pmhd->peos->eos_data.gamma;
   }
   if (pmy_pack->pmhd != nullptr) bcc0 = &(pmy_pack->pmhd->b0);
   bool flag_twofl = false;
@@ -1326,10 +1610,17 @@ TaskStatus TurbulenceDriver::AddForcing(Driver *pdrive, int stage) {
     peos = pmy_pack->phydro->peos;
     primary_is_ideal = pmy_pack->phydro->peos->eos_data.is_ideal;
     secondary_is_ideal = pmy_pack->pmhd->peos->eos_data.is_ideal;
+    primary_gamma = pmy_pack->phydro->peos->eos_data.gamma;
     flag_twofl = true;
   }
 
   bool flag_relativistic = pmy_pack->pcoord->is_special_relativistic;
+  bool mechanical_relativistic_forcing =
+      (relativistic_forcing_model == RelativisticForcingModel::mechanical);
+
+  if (mechanical_relativistic_forcing) {
+    NormalizeMechanicalAcceleration(w0, primary_gamma);
+  }
 
   auto force_ = force;
   const int nmkji = nmb*nx3*nx2*nx1;
@@ -1350,7 +1641,6 @@ TaskStatus TurbulenceDriver::AddForcing(Driver *pdrive, int stage) {
     Real a1 = force_(m,0,k,j,i);
     Real a2 = force_(m,1,k,j,i);
     Real a3 = force_(m,2,k,j,i);
-    Real a2sum = a1*a1 + a2*a2 + a3*a3;
     Real vol = size.d_view(m).dx1*size.d_view(m).dx2*size.d_view(m).dx3;
 
     if (primary_is_ideal) {
@@ -1358,13 +1648,21 @@ TaskStatus TurbulenceDriver::AddForcing(Driver *pdrive, int stage) {
       Real ux = w0(m,IVX,k,j,i);
       Real uy = w0(m,IVY,k,j,i);
       Real uz = w0(m,IVZ,k,j,i);
-      Real Fv = a1*ux + a2*uy + a3*uz;
-      if (flag_relativistic) {
-        Real ut = sqrt(1.0 + ux*ux + uy*uy + uz*uz);
-        den /= ut;
-        Fv /= ut;
+      if (mechanical_relativistic_forcing) {
+        Real enthalpy_density = den + primary_gamma*w0(m,IEN,k,j,i);
+        auto source = srrmhd::MechanicalForcingSource(
+            ux, uy, uz, enthalpy_density, 1.0, a1, a2, a3);
+        sum += source.g0*vol;
+      } else {
+        Real Fv = a1*ux + a2*uy + a3*uz;
+        if (flag_relativistic) {
+          Real ut = sqrt(1.0 + ux*ux + uy*uy + uz*uz);
+          den /= ut;
+          Fv /= ut;
+        }
+        Real a2sum = a1*a1 + a2*a2 + a3*a3;
+        sum += den*(Fv + 0.5*a2sum*bdt)*vol;
       }
-      sum += den*(Fv + 0.5*a2sum*bdt)*vol;
     }
 
     if (flag_twofl && secondary_is_ideal) {
@@ -1378,6 +1676,7 @@ TaskStatus TurbulenceDriver::AddForcing(Driver *pdrive, int stage) {
         den /= ut;
         Fv /= ut;
       }
+      Real a2sum = a1*a1 + a2*a2 + a3*a3;
       sum += den*(Fv + 0.5*a2sum*bdt)*vol;
     }
   }, Kokkos::Sum<Real>(forcing_power));
@@ -1387,6 +1686,24 @@ TaskStatus TurbulenceDriver::AddForcing(Driver *pdrive, int stage) {
                 MPI_COMM_WORLD);
 #endif
   last_power = forcing_power;
+  if (mechanical_relativistic_forcing) {
+    if (stage == 1) {
+      injected_energy_start = injected_energy;
+      injected_momentum1_start = injected_momentum1;
+      injected_momentum2_start = injected_momentum2;
+      injected_momentum3_start = injected_momentum3;
+    }
+    Real gam0 = pdrive->gam0[stage-1];
+    Real gam1 = pdrive->gam1[stage-1];
+    injected_energy = gam0*injected_energy + gam1*injected_energy_start
+                      + bdt*forcing_power;
+    injected_momentum1 = gam0*injected_momentum1 + gam1*injected_momentum1_start
+                         + bdt*last_net_force1;
+    injected_momentum2 = gam0*injected_momentum2 + gam1*injected_momentum2_start
+                         + bdt*last_net_force2;
+    injected_momentum3 = gam0*injected_momentum3 + gam1*injected_momentum3_start
+                         + bdt*last_net_force3;
+  }
 
   par_for("push",DevExeSpace(),0,nmb-1,ks,ke,js,je,is,ie,
   KOKKOS_LAMBDA(int m, int k, int j, int i) {
@@ -1398,44 +1715,57 @@ TaskStatus TurbulenceDriver::AddForcing(Driver *pdrive, int stage) {
     Real ux = w0(m,IVX,k,j,i);
     Real uy = w0(m,IVY,k,j,i);
     Real uz = w0(m,IVZ,k,j,i);
-    Real Fv = a1*ux + a2*uy + a3*uz;
-    if (flag_relativistic) {
-      // Compute Lorentz factor
-      Real ut = 1. + ux*ux + uy*uy + uz*uz;
-      ut = sqrt(ut);
-      den /= ut;
-      Fv /= ut;
-    }
-    u0(m,IM1,k,j,i) += den*a1*bdt;
-    u0(m,IM2,k,j,i) += den*a2*bdt;
-    u0(m,IM3,k,j,i) += den*a3*bdt;
-    if (primary_is_ideal) {
-      u0(m,IEN,k,j,i) += (Fv + 0.5*(a1*a1 + a2*a2 + a3*a3)*bdt)*den*bdt;
-    }
-
-    if (flag_twofl) {
-      den = w0_(m,IDN,k,j,i);
-      ux = w0_(m,IVX,k,j,i);
-      uy = w0_(m,IVY,k,j,i);
-      uz = w0_(m,IVZ,k,j,i);
-      Fv = a1*ux + a2*uy + a3*uz;
+    if (mechanical_relativistic_forcing) {
+      Real enthalpy_density = den + primary_gamma*w0(m,IEN,k,j,i);
+      auto source = srrmhd::MechanicalForcingSource(
+          ux, uy, uz, enthalpy_density, 1.0, a1, a2, a3);
+      u0(m,IM1,k,j,i) += source.g1*bdt;
+      u0(m,IM2,k,j,i) += source.g2*bdt;
+      u0(m,IM3,k,j,i) += source.g3*bdt;
+      u0(m,IEN,k,j,i) += source.g0*bdt;
+    } else {
+      Real Fv = a1*ux + a2*uy + a3*uz;
       if (flag_relativistic) {
+        // Compute Lorentz factor
         Real ut = 1. + ux*ux + uy*uy + uz*uz;
         ut = sqrt(ut);
         den /= ut;
         Fv /= ut;
       }
-      u0_(m,IM1,k,j,i) += den*a1*bdt;
-      u0_(m,IM2,k,j,i) += den*a2*bdt;
-      u0_(m,IM3,k,j,i) += den*a3*bdt;
-      if (secondary_is_ideal) {
-        u0_(m,IEN,k,j,i) += (Fv + 0.5*(a1*a1 + a2*a2 + a3*a3)*bdt)*den*bdt;
+      u0(m,IM1,k,j,i) += den*a1*bdt;
+      u0(m,IM2,k,j,i) += den*a2*bdt;
+      u0(m,IM3,k,j,i) += den*a3*bdt;
+      if (primary_is_ideal) {
+        u0(m,IEN,k,j,i) +=
+            (Fv + 0.5*(a1*a1 + a2*a2 + a3*a3)*bdt)*den*bdt;
+      }
+
+      if (flag_twofl) {
+        den = w0_(m,IDN,k,j,i);
+        ux = w0_(m,IVX,k,j,i);
+        uy = w0_(m,IVY,k,j,i);
+        uz = w0_(m,IVZ,k,j,i);
+        Fv = a1*ux + a2*uy + a3*uz;
+        if (flag_relativistic) {
+          Real ut = 1. + ux*ux + uy*uy + uz*uz;
+          ut = sqrt(ut);
+          den /= ut;
+          Fv /= ut;
+        }
+        u0_(m,IM1,k,j,i) += den*a1*bdt;
+        u0_(m,IM2,k,j,i) += den*a2*bdt;
+        u0_(m,IM3,k,j,i) += den*a3*bdt;
+        if (secondary_is_ideal) {
+          u0_(m,IEN,k,j,i) +=
+              (Fv + 0.5*(a1*a1 + a2*a2 + a3*a3)*bdt)*den*bdt;
+        }
       }
     }
   });
 
-  // Relativistic case will require a Lorentz transformation
-  if (flag_relativistic) {
+  // Retain the historical post-kick recovery/boost only in legacy mode.  Mechanical
+  // forcing leaves recovery to the ordinary hydro/MHD task sequence.
+  if (flag_relativistic && !mechanical_relativistic_forcing) {
     if (pmy_pack->pmhd != nullptr) {
       auto &b = *bcc0;
       auto &eos = peos->eos_data;
@@ -1671,7 +2001,7 @@ TaskStatus TurbulenceDriver::AddForcing(Driver *pdrive, int stage) {
       });
     }
 
-  } else {
+  } else if (!flag_relativistic) {
     // remove net momentum
     Real t0 = 0.0, t1 = 0.0, t2 = 0.0, t3 = 0.0;
     Kokkos::parallel_reduce("net_mom_3", Kokkos::RangePolicy<>(DevExeSpace(), 0, nmkji),

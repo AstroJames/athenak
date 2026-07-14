@@ -21,6 +21,8 @@
 //----------------------------------------------------------------------------------------
 //! \class TurbulenceDriver
 
+enum class RelativisticForcingModel { legacy, mechanical };
+
 class TurbulenceDriver {
  public:
   TurbulenceDriver(MeshBlockPack *pp, ParameterInput *pin);
@@ -39,9 +41,19 @@ class TurbulenceDriver {
   // parameters of driving
   int num_components, max_mode_count;
   Real last_power = 0.0;
+  Real last_accel_rms = 0.0;
+  Real last_net_force1 = 0.0;
+  Real last_net_force2 = 0.0;
+  Real last_net_force3 = 0.0;
+  Real injected_energy = 0.0;
+  Real injected_momentum1 = 0.0;
+  Real injected_momentum2 = 0.0;
+  Real injected_momentum3 = 0.0;
+  RelativisticForcingModel relativistic_forcing_model =
+      RelativisticForcingModel::legacy;
   std::vector<std::string> component_name;
   std::vector<int> nlow, nhigh, mode_count;
-  std::vector<Real> tcorr, dedt;
+  std::vector<Real> tcorr, dedt, accel_rms;
   std::vector<Real> expo, exp_prl, exp_prp;
   std::vector<Real> sol_weight;
   std::vector<Real> parabola_peak, parabola_width;
@@ -59,6 +71,12 @@ class TurbulenceDriver {
   void Initialize();
 
  private:
+  void NormalizeMechanicalAcceleration(const DvceArray5D<Real> &prim,
+                                       Real gamma);
+  Real injected_energy_start = 0.0;
+  Real injected_momentum1_start = 0.0;
+  Real injected_momentum2_start = 0.0;
+  Real injected_momentum3_start = 0.0;
   bool first_time = true;   // flag to enable initialization on first call
   MeshBlockPack *pmy_pack;  // ptr to MeshBlockPack containing this TurbulenceDriver
 };

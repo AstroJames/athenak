@@ -124,10 +124,12 @@ SpectralICGenerator::SpectralICGenerator(MeshBlockPack *pmbp, ParameterInput *pi
 void SpectralICGenerator::CountModes() {
   Real nlow_sqr  = static_cast<Real>(nlow)  * static_cast<Real>(nlow);
   Real nhigh_sqr = static_cast<Real>(nhigh) * static_cast<Real>(nhigh);
+  int nky_max = pmy_pack->pmesh->multi_d ? nhigh : 0;
+  int nkz_max = pmy_pack->pmesh->three_d ? nhigh : 0;
   mode_count = 0;
   for (int nkx = 0; nkx <= nhigh; nkx++) {
-    for (int nky = 0; nky <= nhigh; nky++) {
-      for (int nkz = 0; nkz <= nhigh; nkz++) {
+    for (int nky = 0; nky <= nky_max; nky++) {
+      for (int nkz = 0; nkz <= nkz_max; nkz++) {
         if (nkx == 0 && nky == 0 && nkz == 0) continue;
         Real nsqr = static_cast<Real>(SQR(nkx) + SQR(nky) + SQR(nkz));
         if (nsqr >= nlow_sqr && nsqr <= nhigh_sqr) mode_count++;
@@ -188,9 +190,11 @@ void SpectralICGenerator::GenerateModeCoefficients() {
   Real nhigh_sqr = static_cast<Real>(nhigh) * static_cast<Real>(nhigh);
 
   int n = 0;  // current mode index
+  int nky_max = pm->multi_d ? nhigh : 0;
+  int nkz_max = pm->three_d ? nhigh : 0;
   for (int nkx = 0; nkx <= nhigh; nkx++) {
-    for (int nky = 0; nky <= nhigh; nky++) {
-      for (int nkz = 0; nkz <= nhigh; nkz++) {
+    for (int nky = 0; nky <= nky_max; nky++) {
+      for (int nkz = 0; nkz <= nkz_max; nkz++) {
         if (nkx == 0 && nky == 0 && nkz == 0) continue;
         Real nsqr = static_cast<Real>(SQR(nkx) + SQR(nky) + SQR(nkz));
         if (nsqr < nlow_sqr || nsqr > nhigh_sqr) continue;
@@ -376,12 +380,18 @@ void SpectralICGenerator::GenerateVectorPotential(DvceArray4D<Real> &ax,
   int mode_count_ = mode_count;
 
   // Capture device views of coefficient arrays
-  auto ax_ccc_ = ax_ccc; auto ax_ccs_ = ax_ccs; auto ax_csc_ = ax_csc; auto ax_css_ = ax_css;
-  auto ax_scc_ = ax_scc; auto ax_scs_ = ax_scs; auto ax_ssc_ = ax_ssc; auto ax_sss_ = ax_sss;
-  auto ay_ccc_ = ay_ccc; auto ay_ccs_ = ay_ccs; auto ay_csc_ = ay_csc; auto ay_css_ = ay_css;
-  auto ay_scc_ = ay_scc; auto ay_scs_ = ay_scs; auto ay_ssc_ = ay_ssc; auto ay_sss_ = ay_sss;
-  auto az_ccc_ = az_ccc; auto az_ccs_ = az_ccs; auto az_csc_ = az_csc; auto az_css_ = az_css;
-  auto az_scc_ = az_scc; auto az_scs_ = az_scs; auto az_ssc_ = az_ssc; auto az_sss_ = az_sss;
+  auto ax_ccc_ = ax_ccc; auto ax_ccs_ = ax_ccs;
+  auto ax_csc_ = ax_csc; auto ax_css_ = ax_css;
+  auto ax_scc_ = ax_scc; auto ax_scs_ = ax_scs;
+  auto ax_ssc_ = ax_ssc; auto ax_sss_ = ax_sss;
+  auto ay_ccc_ = ay_ccc; auto ay_ccs_ = ay_ccs;
+  auto ay_csc_ = ay_csc; auto ay_css_ = ay_css;
+  auto ay_scc_ = ay_scc; auto ay_scs_ = ay_scs;
+  auto ay_ssc_ = ay_ssc; auto ay_sss_ = ay_sss;
+  auto az_ccc_ = az_ccc; auto az_ccs_ = az_ccs;
+  auto az_csc_ = az_csc; auto az_css_ = az_css;
+  auto az_scc_ = az_scc; auto az_scs_ = az_scs;
+  auto az_ssc_ = az_ssc; auto az_sss_ = az_sss;
   auto xcos_f_ = xcos_f; auto xsin_f_ = xsin_f;
   auto ycos_f_ = ycos_f; auto ysin_f_ = ysin_f;
   auto zcos_f_ = zcos_f; auto zsin_f_ = zsin_f;
@@ -527,21 +537,24 @@ std::string SpectralICGenerator::GenerateVectorPotentialFFT(DvceArray4D<Real> &a
             if (!is_canon) continue;  // conjugate already processed; no RNG draw
 
             if (in_band) {
-              const Real n_mag = std::sqrt(static_cast<Real>(kx*kx + ky*ky + kz*kz));
+              const Real n_mag =
+                  std::sqrt(static_cast<Real>(kx*kx + ky*ky + kz*kz));
               const Real amp = ModeAmplitude(n_mag);
               const Real Gr_x = amp * RanGaussianSt(&rng);
               const Real Gr_y = amp * RanGaussianSt(&rng);
               const Real Gr_z = amp * RanGaussianSt(&rng);
 
               if (participates && gx >= slab_x0 && gx <= slab_x1) {
-                const int64_t id = (static_cast<int64_t>(gx - slab_x0) * ny + gy) * nzp1 + gz;
+                const int64_t id =
+                    (static_cast<int64_t>(gx - slab_x0)*ny + gy)*nzp1 + gz;
                 ax_hat[id] = {Gr_x, 0.0};
                 ay_hat[id] = {Gr_y, 0.0};
                 az_hat[id] = {Gr_z, 0.0};
               }
               if (!self_conj) {
                 if (participates && gx_c >= slab_x0 && gx_c <= slab_x1) {
-                  const int64_t id_c = (static_cast<int64_t>(gx_c - slab_x0) * ny + gy_c) * nzp1 + gz;
+                  const int64_t id_c =
+                      (static_cast<int64_t>(gx_c - slab_x0)*ny + gy_c)*nzp1 + gz;
                   ax_hat[id_c] = {Gr_x, 0.0};   // conj of (Gr_x+0i) = same
                   ay_hat[id_c] = {Gr_y, 0.0};
                   az_hat[id_c] = {Gr_z, 0.0};
@@ -551,7 +564,8 @@ std::string SpectralICGenerator::GenerateVectorPotentialFFT(DvceArray4D<Real> &a
           } else {
             // Generic complex mode: 0 < kz < nz/2
             if (in_band) {
-              const Real n_mag = std::sqrt(static_cast<Real>(kx*kx + ky*ky + kz*kz));
+              const Real n_mag =
+                  std::sqrt(static_cast<Real>(kx*kx + ky*ky + kz*kz));
               const Real amp = ModeAmplitude(n_mag);
               const Real Gr_x = amp * RanGaussianSt(&rng);
               const Real Gi_x = amp * RanGaussianSt(&rng);
@@ -561,7 +575,8 @@ std::string SpectralICGenerator::GenerateVectorPotentialFFT(DvceArray4D<Real> &a
               const Real Gi_z = amp * RanGaussianSt(&rng);
 
               if (participates && gx >= slab_x0 && gx <= slab_x1) {
-                const int64_t id = (static_cast<int64_t>(gx - slab_x0) * ny + gy) * nzp1 + gz;
+                const int64_t id =
+                    (static_cast<int64_t>(gx - slab_x0)*ny + gy)*nzp1 + gz;
                 ax_hat[id] = {Gr_x, Gi_x};
                 ay_hat[id] = {Gr_y, Gi_y};
                 az_hat[id] = {Gr_z, Gi_z};

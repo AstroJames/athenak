@@ -71,9 +71,11 @@ class ProblemGenerator {
   void Diffusion(ParameterInput *pin, const bool restart);
   void SpectrumModes(ParameterInput *pin, const bool restart);
   void ResistiveSRMHDCurrentSheet(ParameterInput *pin, const bool restart);
+  void ResistiveSRMHDOhmicDecay(ParameterInput *pin, const bool restart);
   void ResistiveSRMHDChargedVortex(ParameterInput *pin, const bool restart);
   void ResistiveSRMHDECT(ParameterInput *pin, const bool restart);
   void ResistiveSRMHDRoundTrip(ParameterInput *pin, const bool restart);
+  void ResistiveSRMHDDecayingTurbulence(ParameterInput *pin, const bool restart);
 
   // template for user-specified problem generator
   void UserProblem(ParameterInput *pin, const bool restart);

@@ -45,6 +45,9 @@ eos            = ideal
 gamma          = 1.6666666666666667
 resistive_rel  = true
 resistivity    = 0.01
+relativistic_viscosity = true
+shear_viscosity = 0.01
+shear_relaxation_time = 0.1
 
 <problem>
 pgen_name = rsrmhd_roundtrip

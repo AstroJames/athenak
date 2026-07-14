@@ -80,6 +80,32 @@ TaskStatus MHD::RKUpdate(Driver *pdriver, int stage) {
       u0_(m,n,k,j,i) = gam0*u0_(m,n,k,j,i) + gam1*u1_(m,n,k,j,i) - beta_dt*divf(i);
     });
   });
+  if (relativistic_viscosity_data.enabled) {
+    auto visc_u0_ = visc_u0;
+    auto visc_u1_ = visc_u1;
+    auto visc_flx1 = visc_flx.x1f;
+    auto visc_flx2 = visc_flx.x2f;
+    auto visc_flx3 = visc_flx.x3f;
+    const bool multi_d = pmy_pack->pmesh->multi_d;
+    const bool three_d = pmy_pack->pmesh->three_d;
+    par_for("viscous_update", DevExeSpace(), 0, nmb1, 0, srrmhd::NVISC-1,
+            ks, ke, js, je, is, ie,
+    KOKKOS_LAMBDA(int m, int n, int k, int j, int i) {
+      Real divergence = (visc_flx1(m, n, k, j, i+1)
+                           - visc_flx1(m, n, k, j, i))/mbsize.d_view(m).dx1;
+      if (multi_d) {
+        divergence += (visc_flx2(m, n, k, j+1, i)
+                         - visc_flx2(m, n, k, j, i))/mbsize.d_view(m).dx2;
+      }
+      if (three_d) {
+        divergence += (visc_flx3(m, n, k+1, j, i)
+                         - visc_flx3(m, n, k, j, i))/mbsize.d_view(m).dx3;
+      }
+      visc_u0_(m, n, k, j, i) = gam0*visc_u0_(m, n, k, j, i)
+                                  + gam1*visc_u1_(m, n, k, j, i)
+                                  - beta_dt*divergence;
+    });
+  }
   return TaskStatus::complete;
 }
 } // namespace mhd

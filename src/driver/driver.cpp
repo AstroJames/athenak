@@ -350,7 +350,9 @@ void Driver::Initialize(Mesh *pmesh, ParameterInput *pin, Outputs *pout, bool re
     int ncells1 = indcs.nx1 + 2*(indcs.ng);
     int ncells2 = (indcs.nx2 > 1)? (indcs.nx2 + 2*(indcs.ng)) : 1;
     int ncells3 = (indcs.nx3 > 1)? (indcs.nx3 + 2*(indcs.ng)) : 1;
-    const int nstiff = resistive_srmhd ? 3 : 8;
+    const bool viscous_srmhd = resistive_srmhd
+        && pmhd->relativistic_viscosity_data.enabled;
+    const int nstiff = resistive_srmhd ? (viscous_srmhd ? 9 : 3) : 8;
     Kokkos::realloc(impl_src, nimp_stages, nmb, nstiff, ncells3, ncells2, ncells1);
   }
 

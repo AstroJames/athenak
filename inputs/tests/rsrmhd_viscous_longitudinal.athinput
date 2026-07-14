@@ -1,0 +1,54 @@
+# AthenaK input for a linear longitudinal Israel--Stewart sound mode
+
+<job>
+basename  = rsrmhd_viscous_longitudinal
+
+<mesh>
+nghost    = 2
+nx1       = 256
+x1min     = 0.0
+x1max     = 1.0
+ix1_bc    = periodic
+ox1_bc    = periodic
+nx2       = 1
+x2min     = -0.5
+x2max     = 0.5
+ix2_bc    = periodic
+ox2_bc    = periodic
+nx3       = 1
+x3min     = -0.5
+x3max     = 0.5
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1       = 128
+nx2       = 1
+nx3       = 1
+
+<coord>
+special_rel = true
+
+<time>
+evolution  = dynamic
+integrator = imex2
+cfl_number = 0.4
+tlim       = 0.4
+
+<mhd>
+eos                        = ideal
+gamma                      = 1.6666666666666667
+resistive_rel              = true
+resistivity                = 1.0
+relativistic_viscosity     = true
+linearized_shear_target_1d = true
+shear_viscosity            = 0.03
+shear_relaxation_time      = 0.2
+shear_chi_max              = 2.0
+rsolver                    = llf
+reconstruct                = plm
+
+<problem>
+pgen_name             = rsrmhd_roundtrip
+viscous_longitudinal  = true
+amplitude             = 1.0e-4

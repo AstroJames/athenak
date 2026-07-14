@@ -1,0 +1,70 @@
+# One-step mechanical-forcing smoke test with resistivity and viscosity enabled
+
+<comment>
+problem = coupled resistive-viscous SRMHD recovery after a mechanical forcing source
+
+<job>
+basename = rsrmhd_forcing_mechanical_coupled
+
+<mesh>
+nghost = 2
+nx1 = 16
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+
+nx2 = 1
+x2min = -0.5
+x2max = 0.5
+ix2_bc = periodic
+ox2_bc = periodic
+
+nx3 = 1
+x3min = -0.5
+x3max = 0.5
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 16
+nx2 = 1
+nx3 = 1
+
+<coord>
+special_rel = true
+
+<time>
+evolution = dynamic
+integrator = imex2
+cfl_number = 0.4
+nlim = -1
+tlim = 0.0001
+
+<mhd>
+eos = ideal
+gamma = 1.6666666666666667
+resistive_rel = true
+resistivity = 0.01
+relativistic_viscosity = true
+linearized_shear_target_1d = false
+shear_viscosity = 0.01
+shear_relaxation_time = 0.1
+shear_chi_max = 2.0
+rsolver = llf
+reconstruct = plm
+fofc = false
+fofc_force = false
+
+<problem>
+pgen_name = rsrmhd_roundtrip
+
+<turb_driving>
+relativistic_forcing = mechanical
+tcorr = 0.1
+accel_rms = 0.01
+nlow = 1
+nhigh = 1
+driving_geometry = isotropic
+driving_profile = band
+sol_weight = 1.0

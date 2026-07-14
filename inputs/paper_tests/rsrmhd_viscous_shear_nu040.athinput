@@ -1,0 +1,58 @@
+# Paper test: causal one-dimensional viscous shear wave, nu_sh=0.040.
+
+<job>
+basename  = shear_nu040
+
+<mesh>
+nghost    = 2
+nx1       = 256
+x1min     = 0.0
+x1max     = 1.0
+ix1_bc    = periodic
+ox1_bc    = periodic
+nx2       = 1
+x2min     = -0.5
+x2max     = 0.5
+ix2_bc    = periodic
+ox2_bc    = periodic
+nx3       = 1
+x3min     = -0.5
+x3max     = 0.5
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1       = 128
+nx2       = 1
+nx3       = 1
+
+<coord>
+special_rel = true
+
+<time>
+evolution  = dynamic
+integrator = imex2
+cfl_number = 0.4
+tlim       = 0.4
+nlim       = -1
+
+<mhd>
+eos                        = ideal
+gamma                      = 1.6666666666666667
+resistive_rel              = true
+resistivity_model          = uniform
+resistivity                = 1.0
+relativistic_viscosity     = true
+linearized_shear_target_1d = false
+shear_viscosity            = 0.040
+shear_relaxation_time      = 0.2
+shear_chi_max              = 2.0
+rsolver                    = llf
+reconstruct                = plm
+
+<problem>
+pgen_name                = rsrmhd_roundtrip
+viscous_shear_layer      = true
+viscous_diagnostic_name  = shear_nu040
+viscous_profile_name     = shear_nu040
+amplitude                = 0.5

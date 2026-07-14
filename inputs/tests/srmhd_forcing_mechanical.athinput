@@ -1,0 +1,100 @@
+# One-step special-relativistic MHD mechanical-forcing smoke test
+
+<comment>
+problem = uniform SRMHD state driven by enthalpy-weighted mechanical forcing
+
+<job>
+basename = srmhd_forcing_mechanical
+
+<mesh>
+nghost = 2
+nx1 = 32
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+
+nx2 = 1
+x2min = 0.0
+x2max = 1.0
+ix2_bc = periodic
+ox2_bc = periodic
+
+nx3 = 1
+x3min = 0.0
+x3max = 1.0
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 32
+nx2 = 1
+nx3 = 1
+
+<coord>
+special_rel = true
+
+<time>
+evolution = dynamic
+integrator = rk2
+cfl_number = 0.3
+nlim = -1
+tlim = 0.0001
+ndiag = 1
+
+<mhd>
+eos = ideal
+gamma = 1.6666666666666667
+reconstruct = plm
+rsolver = hlle
+
+<problem>
+pgen_name = shock_tube
+shock_dir = 1
+xshock = 0.5
+
+dl = 1.0
+pl = 1.0
+ul = 0.2
+vl = 0.0
+wl = 0.0
+bxl = 0.0
+byl = 0.0
+bzl = 0.0
+
+dr = 1.0
+pr = 1.0
+ur = 0.2
+vr = 0.0
+wr = 0.0
+bxr = 0.0
+byr = 0.0
+bzr = 0.0
+
+<turb_driving>
+relativistic_forcing = mechanical
+tcorr = 0.1
+accel_rms = 0.05
+nlow = 1
+nhigh = 1
+driving_geometry = isotropic
+driving_profile = band
+sol_weight = 1.0
+
+<output1>
+file_type = tab
+variable = mhd_w_bcc
+id = primitive
+data_format = %20.12e
+dt = 0.0001
+slice_x2 = 0.0
+slice_x3 = 0.0
+
+<output2>
+file_type = tab
+variable = turb_force
+id = force
+data_format = %20.12e
+dt = 0.0001
+slice_x2 = 0.0
+slice_x3 = 0.0

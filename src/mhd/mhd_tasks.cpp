@@ -134,6 +134,10 @@ TaskStatus MHD::InitRecv(Driver *pdrive, int stage) {
   // post receives for U
   TaskStatus tstat = pbval_u->InitRecv(nmhd+nscalars);
   if (tstat != TaskStatus::complete) return tstat;
+  if (relativistic_viscosity_data.enabled) {
+    tstat = pbval_visc->InitRecv(srrmhd::NVISC);
+    if (tstat != TaskStatus::complete) return tstat;
+  }
   // post receives for B
   tstat = pbval_b->InitRecv(3);
   if (tstat != TaskStatus::complete) return tstat;
@@ -190,6 +194,9 @@ TaskStatus MHD::InitRecv(Driver *pdrive, int stage) {
 TaskStatus MHD::CopyCons(Driver *pdrive, int stage) {
   if (stage == 1) {
     Kokkos::deep_copy(DevExeSpace(), u1, u0);
+    if (relativistic_viscosity_data.enabled) {
+      Kokkos::deep_copy(DevExeSpace(), visc_u1, visc_u0);
+    }
     Kokkos::deep_copy(DevExeSpace(), b1.x1f, b0.x1f);
     Kokkos::deep_copy(DevExeSpace(), b1.x2f, b0.x2f);
     Kokkos::deep_copy(DevExeSpace(), b1.x3f, b0.x3f);
@@ -216,6 +223,9 @@ TaskStatus MHD::FirstTwoImpRK(Driver *pdrive, int stage) {
   if (use_electric_ct) {
     if (ect_leading_stage == -2) {
       Kokkos::deep_copy(DevExeSpace(), u1, u0);
+      if (relativistic_viscosity_data.enabled) {
+        Kokkos::deep_copy(DevExeSpace(), visc_u1, visc_u0);
+      }
       Kokkos::deep_copy(DevExeSpace(), b1.x1f, b0.x1f);
       Kokkos::deep_copy(DevExeSpace(), b1.x2f, b0.x2f);
       Kokkos::deep_copy(DevExeSpace(), b1.x3f, b0.x3f);
@@ -240,6 +250,9 @@ TaskStatus MHD::FirstTwoImpRK(Driver *pdrive, int stage) {
   }
 
   Kokkos::deep_copy(DevExeSpace(), u1, u0);
+  if (relativistic_viscosity_data.enabled) {
+    Kokkos::deep_copy(DevExeSpace(), visc_u1, visc_u0);
+  }
   Kokkos::deep_copy(DevExeSpace(), b1.x1f, b0.x1f);
   Kokkos::deep_copy(DevExeSpace(), b1.x2f, b0.x2f);
   Kokkos::deep_copy(DevExeSpace(), b1.x3f, b0.x3f);
@@ -271,10 +284,14 @@ TaskStatus MHD::ImpRKUpdate(Driver *pdriver, int estage) {
   auto w = w0;
   auto b = b0;
   auto bcc = bcc0;
+  auto visc_u = visc_u0;
+  auto visc_w = visc_w0;
   auto ru = pdriver->impl_src;
   auto eta = eta_cell;
+  auto &mbsize = pmy_pack->pmb->mb_size;
   const auto eta_data = resistivity_data;
   const Real uniform_eta = resistivity;
+  const auto viscosity_data = relativistic_viscosity_data;
 
   if (istage > 1) {
     auto &a_twid = pdriver->a_twid;
@@ -285,6 +302,11 @@ TaskStatus MHD::ImpRKUpdate(Driver *pdriver, int estage) {
         u(m, srrmhd::IRE1, k, j, i) += adt*ru(s, m, 0, k, j, i);
         u(m, srrmhd::IRE2, k, j, i) += adt*ru(s, m, 1, k, j, i);
         u(m, srrmhd::IRE3, k, j, i) += adt*ru(s, m, 2, k, j, i);
+        if (viscosity_data.enabled) {
+          for (int n = 0; n < srrmhd::NVISC; ++n) {
+            visc_u(m, n, k, j, i) += adt*ru(s, m, 3+n, k, j, i);
+          }
+        }
       }
     });
   }
@@ -345,9 +367,48 @@ TaskStatus MHD::ImpRKUpdate(Driver *pdriver, int estage) {
       const Real local_eta = nonuniform_eta ? eta(m, k, j, i) : uniform_eta;
       const Real kappa = a_dt/local_eta;
       srrmhd::SRRMHDPrim1D recovered = guess;
+      srrmhd::ShearStress recovered_pi;
       int iterations = 0;
-      const bool success = srrmhd::SingleC2P_IdealSRRMHDImplicit(
-          state, eos, ex_star, ey_star, ez_star, kappa, guess, recovered, iterations);
+      bool success;
+      srrmhd::ShearStress pi_star;
+      if (viscosity_data.enabled) {
+        pi_star.p11 = visc_u(m, srrmhd::IVP11, k, j, i)/state.d;
+        pi_star.p22 = visc_u(m, srrmhd::IVP22, k, j, i)/state.d;
+        pi_star.p33 = visc_u(m, srrmhd::IVP33, k, j, i)/state.d;
+        pi_star.p12 = visc_u(m, srrmhd::IVP12, k, j, i)/state.d;
+        pi_star.p13 = visc_u(m, srrmhd::IVP13, k, j, i)/state.d;
+        pi_star.p23 = visc_u(m, srrmhd::IVP23, k, j, i)/state.d;
+        srrmhd::ShearStress pi_ns;
+        if (viscosity_data.linearized_target_1d) {
+          const int im = (i > 0) ? i - 1 : i;
+          const int ip = (i < n1 - 1) ? i + 1 : i;
+          const Real inv_length = (ip > im)
+              ? 1.0/(static_cast<Real>(ip - im)*mbsize.d_view(m).dx1) : 0.0;
+          const Real du1_dx = (w(m, IVX, k, j, ip) - w(m, IVX, k, j, im))
+                              *inv_length;
+          const Real du2_dx = (w(m, IVY, k, j, ip) - w(m, IVY, k, j, im))
+                              *inv_length;
+          const Real du3_dx = (w(m, IVZ, k, j, ip) - w(m, IVZ, k, j, im))
+                              *inv_length;
+          const Real wgas = w(m, IDN, k, j, i) + eos.gamma*w(m, IEN, k, j, i);
+          const Real eta_shear = wgas*viscosity_data.nu;
+          pi_ns.p11 = -(4.0/3.0)*eta_shear*du1_dx;
+          pi_ns.p22 = (2.0/3.0)*eta_shear*du1_dx;
+          pi_ns.p33 = (2.0/3.0)*eta_shear*du1_dx;
+          pi_ns.p12 = -eta_shear*du2_dx;
+          pi_ns.p13 = -eta_shear*du3_dx;
+          pi_ns = srrmhd::ProjectShearStress(
+              guess.vx, guess.vy, guess.vz, pi_ns);
+        }
+        success = srrmhd::SingleC2P_IdealSRRMHDImplicitViscous(
+            state, eos, ex_star, ey_star, ez_star, kappa, pi_star, pi_ns,
+            a_dt/viscosity_data.tau, viscosity_data.chi_max, false, guess,
+            recovered, recovered_pi, iterations);
+      } else {
+        success = srrmhd::SingleC2P_IdealSRRMHDImplicit(
+            state, eos, ex_star, ey_star, ez_star, kappa, guess, recovered,
+            iterations);
+      }
       if (!success) {
         ++sum_fail;
       } else {
@@ -369,6 +430,38 @@ TaskStatus MHD::ImpRKUpdate(Driver *pdriver, int estage) {
         ru(source_stage, m, 0, k, j, i) = (recovered.ex - ex_star)/a_dt;
         ru(source_stage, m, 1, k, j, i) = (recovered.ey - ey_star)/a_dt;
         ru(source_stage, m, 2, k, j, i) = (recovered.ez - ez_star)/a_dt;
+        if (viscosity_data.enabled) {
+          const Real p11_star = visc_u(m, srrmhd::IVP11, k, j, i);
+          const Real p22_star = visc_u(m, srrmhd::IVP22, k, j, i);
+          const Real p33_star = visc_u(m, srrmhd::IVP33, k, j, i);
+          const Real p12_star = visc_u(m, srrmhd::IVP12, k, j, i);
+          const Real p13_star = visc_u(m, srrmhd::IVP13, k, j, i);
+          const Real p23_star = visc_u(m, srrmhd::IVP23, k, j, i);
+          visc_u(m, srrmhd::IVP11, k, j, i) = state.d*recovered_pi.p11;
+          visc_u(m, srrmhd::IVP22, k, j, i) = state.d*recovered_pi.p22;
+          visc_u(m, srrmhd::IVP33, k, j, i) = state.d*recovered_pi.p33;
+          visc_u(m, srrmhd::IVP12, k, j, i) = state.d*recovered_pi.p12;
+          visc_u(m, srrmhd::IVP13, k, j, i) = state.d*recovered_pi.p13;
+          visc_u(m, srrmhd::IVP23, k, j, i) = state.d*recovered_pi.p23;
+          visc_w(m, srrmhd::IVP11, k, j, i) = recovered_pi.p11;
+          visc_w(m, srrmhd::IVP22, k, j, i) = recovered_pi.p22;
+          visc_w(m, srrmhd::IVP33, k, j, i) = recovered_pi.p33;
+          visc_w(m, srrmhd::IVP12, k, j, i) = recovered_pi.p12;
+          visc_w(m, srrmhd::IVP13, k, j, i) = recovered_pi.p13;
+          visc_w(m, srrmhd::IVP23, k, j, i) = recovered_pi.p23;
+          ru(source_stage, m, 3+srrmhd::IVP11, k, j, i) =
+              (state.d*recovered_pi.p11 - p11_star)/a_dt;
+          ru(source_stage, m, 3+srrmhd::IVP22, k, j, i) =
+              (state.d*recovered_pi.p22 - p22_star)/a_dt;
+          ru(source_stage, m, 3+srrmhd::IVP33, k, j, i) =
+              (state.d*recovered_pi.p33 - p33_star)/a_dt;
+          ru(source_stage, m, 3+srrmhd::IVP12, k, j, i) =
+              (state.d*recovered_pi.p12 - p12_star)/a_dt;
+          ru(source_stage, m, 3+srrmhd::IVP13, k, j, i) =
+              (state.d*recovered_pi.p13 - p13_star)/a_dt;
+          ru(source_stage, m, 3+srrmhd::IVP23, k, j, i) =
+              (state.d*recovered_pi.p23 - p23_star)/a_dt;
+        }
       }
       max_iter = (iterations > max_iter) ? iterations : max_iter;
     }, Kokkos::Sum<int>(failures), Kokkos::Max<int>(max_iterations));
@@ -408,6 +501,8 @@ TaskStatus MHD::Fluxes(Driver *pdrive, int stage) {
   } else if (rsolver_method == MHD_RSolver::hlle_gr) {
     CalculateFluxes<MHD_RSolver::hlle_gr>(pdrive, stage);
   }
+
+  if (relativistic_viscosity_data.enabled) CalculateViscousFluxes();
 
   // Add viscous, resistive, heat-flux, etc fluxes
   if (pvisc != nullptr) {
@@ -473,6 +568,12 @@ TaskStatus MHD::MHDSrcTerms(Driver *pdrive, int stage) {
   Real beta_dt = (pdrive->beta[stage-1])*(pmy_pack->pmesh->dt);
 
   // Add source terms for various physics
+  if (relativistic_viscosity_data.enabled
+      && !relativistic_viscosity_data.linearized_target_1d) {
+    const int viscosity_failures = AddRelativisticViscousSource(beta_dt);
+    pmy_pack->pmesh->ecounter.neos_fail += viscosity_failures;
+    if (viscosity_failures > 0) return TaskStatus::fail;
+  }
   if (is_resistive_rel && !use_electric_ct) AddResistiveChargeSource(beta_dt);
   if (psrc->const_accel)  psrc->ConstantAccel(w0, peos->eos_data, beta_dt, u0);
   if (psrc->ism_cooling)  psrc->ISMCooling(w0, peos->eos_data, beta_dt, u0);
@@ -580,6 +681,10 @@ TaskStatus MHD::RestrictU(Driver *pdrive, int stage) {
 
 TaskStatus MHD::SendU(Driver *pdrive, int stage) {
   TaskStatus tstat = pbval_u->PackAndSendCC(u0, coarse_u0);
+  if (tstat != TaskStatus::complete) return tstat;
+  if (relativistic_viscosity_data.enabled) {
+    tstat = pbval_visc->PackAndSendCC(visc_u0, coarse_u0);
+  }
   return tstat;
 }
 
@@ -589,6 +694,10 @@ TaskStatus MHD::SendU(Driver *pdrive, int stage) {
 
 TaskStatus MHD::RecvU(Driver *pdrive, int stage) {
   TaskStatus tstat = pbval_u->RecvAndUnpackCC(u0, coarse_u0);
+  if (tstat != TaskStatus::complete) return tstat;
+  if (relativistic_viscosity_data.enabled) {
+    tstat = pbval_visc->RecvAndUnpackCC(visc_u0, coarse_u0);
+  }
   return tstat;
 }
 
@@ -1006,6 +1115,9 @@ TaskStatus MHD::ApplyPhysicalBCs(Driver *pdrive, int stage) {
   // physical BCs are skipped for strictly periodic meshes
   if (!pmy_pack->pmesh->strictly_periodic) {
     pbval_u->HydroBCs((pmy_pack), (pbval_u->u_in), u0);
+    if (relativistic_viscosity_data.enabled) {
+      pbval_visc->HydroBCs((pmy_pack), (pbval_visc->u_in), visc_u0);
+    }
     pbval_b->BFieldBCs((pmy_pack), (pbval_b->b_in), b0);
   } else {
     // allow explicitly enrolled user BC callbacks to override periodic ghosts
@@ -1052,7 +1164,102 @@ TaskStatus MHD::ConToPrim(Driver *pdrive, int stage) {
   int n1m1 = indcs.nx1 + 2*ng - 1;
   int n2m1 = (indcs.nx2 > 1)? (indcs.nx2 + 2*ng - 1) : 0;
   int n3m1 = (indcs.nx3 > 1)? (indcs.nx3 + 2*ng - 1) : 0;
-  peos->ConsToPrim(u0, b0, w0, bcc0, false, 0, n1m1, 0, n2m1, 0, n3m1);
+  if (!relativistic_viscosity_data.enabled) {
+    peos->ConsToPrim(u0, b0, w0, bcc0, false, 0, n1m1, 0, n2m1, 0, n3m1);
+    return TaskStatus::complete;
+  }
+
+  const int nmb1 = pmy_pack->nmb_thispack - 1;
+  auto u = u0;
+  auto w = w0;
+  auto b = b0;
+  auto bcc = bcc0;
+  auto visc_u = visc_u0;
+  auto visc_w = visc_w0;
+  auto eos = peos->eos_data;
+  int failures = 0;
+  int max_iterations = 0;
+  Kokkos::parallel_reduce("viscous_srrmhd_c2p",
+  Kokkos::MDRangePolicy<Kokkos::Rank<4>>(DevExeSpace(), {0, 0, 0, 0},
+                                         {nmb1+1, n3m1+1, n2m1+1, n1m1+1}),
+  KOKKOS_LAMBDA(int m, int k, int j, int i, int &sum_fail, int &max_iter) {
+    srrmhd::SRRMHDCons1D state;
+    state.d = u(m, IDN, k, j, i);
+    state.mx = u(m, IM1, k, j, i);
+    state.my = u(m, IM2, k, j, i);
+    state.mz = u(m, IM3, k, j, i);
+    state.e = u(m, IEN, k, j, i);
+    state.ex = u(m, srrmhd::IRE1, k, j, i);
+    state.ey = u(m, srrmhd::IRE2, k, j, i);
+    state.ez = u(m, srrmhd::IRE3, k, j, i);
+    state.bx = 0.5*(b.x1f(m, k, j, i) + b.x1f(m, k, j, i+1));
+    state.by = 0.5*(b.x2f(m, k, j, i) + b.x2f(m, k, j+1, i));
+    state.bz = 0.5*(b.x3f(m, k, j, i) + b.x3f(m, k+1, j, i));
+    if (!(state.d > 0.0)) {
+      ++sum_fail;
+      return;
+    }
+
+    srrmhd::ShearStress pi;
+    pi.p11 = visc_u(m, srrmhd::IVP11, k, j, i)/state.d;
+    pi.p22 = visc_u(m, srrmhd::IVP22, k, j, i)/state.d;
+    pi.p33 = visc_u(m, srrmhd::IVP33, k, j, i)/state.d;
+    pi.p12 = visc_u(m, srrmhd::IVP12, k, j, i)/state.d;
+    pi.p13 = visc_u(m, srrmhd::IVP13, k, j, i)/state.d;
+    pi.p23 = visc_u(m, srrmhd::IVP23, k, j, i)/state.d;
+
+    srrmhd::SRRMHDPrim1D guess;
+    guess.d = w(m, IDN, k, j, i);
+    guess.vx = w(m, IVX, k, j, i);
+    guess.vy = w(m, IVY, k, j, i);
+    guess.vz = w(m, IVZ, k, j, i);
+    guess.e = w(m, IEN, k, j, i);
+    guess.ex = state.ex;
+    guess.ey = state.ey;
+    guess.ez = state.ez;
+    guess.bx = state.bx;
+    guess.by = state.by;
+    guess.bz = state.bz;
+    if (!isfinite(guess.vx) || !isfinite(guess.vy) || !isfinite(guess.vz)) {
+      guess.vx = 0.0;
+      guess.vy = 0.0;
+      guess.vz = 0.0;
+    }
+
+    srrmhd::SRRMHDPrim1D recovered = guess;
+    srrmhd::ShearStress recovered_pi;
+    int iterations = 0;
+    const bool success = srrmhd::SingleC2P_IdealSRRMHDImplicitViscous(
+        state, eos, state.ex, state.ey, state.ez, 0.0, pi, pi, 0.0, 1.0e30,
+        true, guess, recovered, recovered_pi, iterations);
+    if (!success) {
+      ++sum_fail;
+    } else {
+      w(m, IDN, k, j, i) = recovered.d;
+      w(m, IVX, k, j, i) = recovered.vx;
+      w(m, IVY, k, j, i) = recovered.vy;
+      w(m, IVZ, k, j, i) = recovered.vz;
+      w(m, IEN, k, j, i) = recovered.e;
+      w(m, srrmhd::IRE1, k, j, i) = recovered.ex;
+      w(m, srrmhd::IRE2, k, j, i) = recovered.ey;
+      w(m, srrmhd::IRE3, k, j, i) = recovered.ez;
+      bcc(m, IBX, k, j, i) = recovered.bx;
+      bcc(m, IBY, k, j, i) = recovered.by;
+      bcc(m, IBZ, k, j, i) = recovered.bz;
+      visc_w(m, srrmhd::IVP11, k, j, i) = recovered_pi.p11;
+      visc_w(m, srrmhd::IVP22, k, j, i) = recovered_pi.p22;
+      visc_w(m, srrmhd::IVP33, k, j, i) = recovered_pi.p33;
+      visc_w(m, srrmhd::IVP12, k, j, i) = recovered_pi.p12;
+      visc_w(m, srrmhd::IVP13, k, j, i) = recovered_pi.p13;
+      visc_w(m, srrmhd::IVP23, k, j, i) = recovered_pi.p23;
+    }
+    max_iter = (iterations > max_iter) ? iterations : max_iter;
+  }, Kokkos::Sum<int>(failures), Kokkos::Max<int>(max_iterations));
+
+  pmy_pack->pmesh->ecounter.neos_fail += failures;
+  pmy_pack->pmesh->ecounter.maxit_c2p =
+      std::max(pmy_pack->pmesh->ecounter.maxit_c2p, max_iterations);
+  if (failures > 0) return TaskStatus::fail;
   return TaskStatus::complete;
 }
 
@@ -1071,6 +1278,10 @@ TaskStatus MHD::ClearSend(Driver *pdrive, int stage) {
     // check sends of U complete
     TaskStatus tstat = pbval_u->ClearSend();
     if (tstat != TaskStatus::complete) return tstat;
+    if (relativistic_viscosity_data.enabled) {
+      tstat = pbval_visc->ClearSend();
+      if (tstat != TaskStatus::complete) return tstat;
+    }
     // check sends of B complete
     tstat = pbval_b->ClearSend();
     if (tstat != TaskStatus::complete) return tstat;
@@ -1131,6 +1342,10 @@ TaskStatus MHD::ClearRecv(Driver *pdrive, int stage) {
     // check receives of U complete
     tstat = pbval_u->ClearRecv();
     if (tstat != TaskStatus::complete) return tstat;
+    if (relativistic_viscosity_data.enabled) {
+      tstat = pbval_visc->ClearRecv();
+      if (tstat != TaskStatus::complete) return tstat;
+    }
     // check receives of B complete
     tstat = pbval_b->ClearRecv();
     if (tstat != TaskStatus::complete) return tstat;

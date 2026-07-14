@@ -1,0 +1,113 @@
+# Production test: 32^3 mechanically driven visco-resistive SRMHD turbulence.
+#
+# The gas starts exactly uniform and at rest: rho0=P0=1 and v=0.  A uniform
+# guide field B^z=sqrt(2 P0/beta0)=sqrt(2) gives beta0=1; there is no random
+# magnetic seed.  The target v_rms=0.3450327796711771 is used only to define
+# L_drive=L/k_peak=1/2, t0=L_drive/v_rms=1.449137674618944, and the nominal
+# eta=nu_sh=v_rms*L_drive/50 for Re=Rm=50 and Pm=1.  The run spans 10 t0.
+
+<comment>
+problem = 32^3 M_turb=0.5 driven visco-resistive SRMHD, Re=Rm=50
+
+<job>
+basename = driven3d_mach0p5_re50
+
+<mesh>
+nghost = 4
+nx1 = 32
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+
+nx2 = 32
+x2min = 0.0
+x2max = 1.0
+ix2_bc = periodic
+ox2_bc = periodic
+
+nx3 = 32
+x3min = 0.0
+x3max = 1.0
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 16
+nx2 = 16
+nx3 = 16
+
+<coord>
+special_rel = true
+
+<time>
+evolution = dynamic
+integrator = imex2
+cfl_number = 0.4
+tlim = 14.49137674618944
+nlim = -1
+ndiag = 100
+
+<mhd>
+eos = ideal
+gamma = 1.6666666666666667
+resistive_rel = true
+resistivity_model = uniform
+resistivity = 0.003450327796711771
+relativistic_viscosity = true
+linearized_shear_target_1d = false
+shear_viscosity = 0.003450327796711771
+shear_relaxation_time = 0.02
+shear_chi_max = 2.0
+rsolver = llf
+reconstruct = wenoz
+fofc = true
+fofc_force = false
+
+<problem>
+pgen_name = rsrmhd_decaying_turbulence
+user_hist = true
+density = 1.0
+pressure = 1.0
+velocity_rms = 0.0
+magnetic_configuration = uniform_z
+plasma_beta = 1.0
+profile_name = driven3d_mach0p5_re50
+
+<velocity_spectral_ic>
+nlow = 1
+nhigh = 3
+spectrum = parabolic
+iseed = 1837
+
+<turb_driving>
+relativistic_forcing = mechanical
+tcorr = 1.449137674618944
+# Calibrated between beta-one guide-field brackets at 0.80 and 1.40.
+accel_rms = 1.20
+nlow = 1
+nhigh = 3
+driving_geometry = isotropic
+driving_profile = parabola
+sol_weight = 1.0
+parabola_peak = 2.0
+parabola_width = 0.5
+
+# Fifty history samples and twenty full-resolution movie frames per turnover.
+<output1>
+file_type = hst
+dt = 0.02898275349237887
+user_hist_only = true
+data_format = %20.12e
+
+<output2>
+file_type = bin
+variable = mhd_w_bcc
+id = prim
+dt = 0.07245688373094719
+
+<output3>
+file_type = bin
+variable = turb_force
+id = force
+dt = 0.07245688373094719

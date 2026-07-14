@@ -16,6 +16,7 @@
 #include "parameter_input.hpp"
 #include "tasklist/task_list.hpp"
 #include "bvals/bvals.hpp"
+#include "mhd/relativistic_viscosity.hpp"
 #include "mhd/resistivity_model.hpp"
 
 // forward declarations
@@ -116,8 +117,11 @@ class MHD {
   bool use_electric_ct = false;   // true for charge-conserving face-centered E prototype
   Real resistivity = 0.0;         // scalar relativistic resistivity eta
   srrmhd::ResistivityData resistivity_data;
+  srrmhd::RelativisticViscosityData relativistic_viscosity_data;
   DvceArray5D<Real> u0;    // conserved variables
   DvceArray5D<Real> w0;    // primitive variables
+  DvceArray5D<Real> visc_u0;  // conservative shear P^(ij)=D pi^(ij)
+  DvceArray5D<Real> visc_w0;  // primitive spatial shear pi^(ij)
   DvceFaceFld4D<Real> b0;  // face-centered magnetic fields
   DvceFaceFld4D<Real> e0;  // primary face-centered electric field for dual CT
   DvceArray5D<Real> bcc0;  // cell-centered magnetic fields
@@ -131,6 +135,7 @@ class MHD {
 
   // Objects containing boundary communication buffers and routines for u and b
   MeshBoundaryValuesCC *pbval_u;
+  MeshBoundaryValuesCC *pbval_visc = nullptr;
   MeshBoundaryValuesFC *pbval_b;
   MeshBoundaryValuesFC *pbval_e = nullptr;         // explicit edge-B synchronization
   MeshBoundaryValuesFC *pbval_ect_face = nullptr;  // implicit face/star exchange
@@ -152,6 +157,7 @@ class MHD {
 
   // following only used for time-evolving flow
   DvceArray5D<Real> u1;       // conserved variables, second register
+  DvceArray5D<Real> visc_u1;  // conservative shear, second register
   DvceFaceFld4D<Real> b1;     // face-centered magnetic fields, second register
   DvceFaceFld4D<Real> e1;     // face-centered electric fields, second register
   DvceFaceFld4D<Real> jfc;    // face-centered current used by dual CT
@@ -170,6 +176,7 @@ class MHD {
   MPI_Request ect_reduce_request = MPI_REQUEST_NULL;
 #endif
   DvceFaceFld5D<Real> uflx;   // fluxes of conserved quantities on cell faces
+  DvceFaceFld5D<Real> visc_flx;  // fluxes of conservative shear P^(ij)
   DvceEdgeFld4D<Real> efld;   // edge-centered electric fields (fluxes of B)
   DvceEdgeFld4D<Real> bfld;   // edge-centered magnetic fields (fluxes of E)
   // temporary variables used to store face-centered electric fields returned by RS
@@ -186,6 +193,7 @@ class MHD {
   // following used for FOFC algorithm
   DvceArray4D<bool> fofc;  // flag for each cell to indicate if FOFC is needed
   bool use_fofc = false;   // flag to enable FOFC
+  bool force_fofc = false; // force fallback on every cell (verification only)
 
   // following used for h-correction (Sanders, Morano & Druguet 1998)
   DvceArray4D<Real> eta1, eta2, eta3;  // max |eigenvalue| in x1, x2, x3 per cell
@@ -226,6 +234,7 @@ class MHD {
   TaskStatus DualCTUpdate(Driver *d, int stage);
   TaskStatus MHDSrcTerms(Driver *d, int stage);
   void AddResistiveChargeSource(const Real beta_dt);
+  int AddRelativisticViscousSource(const Real beta_dt);
   TaskStatus SendU_OA(Driver *d, int stage);
   TaskStatus RecvU_OA(Driver *d, int stage);
   TaskStatus RestrictU(Driver *d, int stage);
@@ -256,11 +265,14 @@ class MHD {
   // CalculateFluxes function templated over Riemann Solvers
   template <MHD_RSolver T>
   void CalculateFluxes(Driver *d, int stage);
+  void CalculateViscousFluxes();
 
   // first-order flux correction
   void FOFC(Driver *d, int stage);
+  void FOFCResistive(Driver *d, int stage);
 
-  DvceArray5D<Real> utest, bcctest;  // scratch arrays for FOFC
+  DvceArray5D<Real> utest, bcctest;       // scratch arrays for FOFC
+  DvceArray5D<Real> visc_utest;           // provisional conservative shear
 
  private:
   MeshBlockPack* pmy_pack;   // ptr to MeshBlockPack containing this MHD

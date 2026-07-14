@@ -1,0 +1,86 @@
+# Paper test: 512^2 visco-resistive turbulence with Re=50 and Pm=nu_sh/eta=1.
+
+<job>
+basename  = pm1
+
+<mesh>
+nghost    = 4
+nx1       = 512
+x1min     = 0.0
+x1max     = 1.0
+ix1_bc    = periodic
+ox1_bc    = periodic
+nx2       = 512
+x2min     = 0.0
+x2max     = 1.0
+ix2_bc    = periodic
+ox2_bc    = periodic
+nx3       = 1
+x3min     = -0.5
+x3max     = 0.5
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1       = 64
+nx2       = 64
+nx3       = 1
+
+<coord>
+special_rel = true
+
+<time>
+evolution  = dynamic
+integrator = imex2
+cfl_number = 0.4
+tlim       = 2.0
+nlim       = -1
+ndiag      = 100
+
+<mhd>
+eos                        = ideal
+gamma                      = 1.6666666666666667
+resistive_rel              = true
+resistivity_model          = uniform
+resistivity                = 0.0012
+relativistic_viscosity     = true
+linearized_shear_target_1d = false
+shear_viscosity            = 0.0012
+shear_relaxation_time      = 0.02
+shear_chi_max              = 2.0
+rsolver                    = llf
+reconstruct                = wenoz
+fofc                       = true
+fofc_force                 = false
+
+<problem>
+pgen_name      = rsrmhd_decaying_turbulence
+user_hist      = true
+density        = 1.0
+pressure       = 1.0
+velocity_rms   = 0.15
+magnetic_rms   = 0.15
+profile_name   = pm1
+
+<velocity_spectral_ic>
+nlow           = 1
+nhigh          = 4
+spectrum       = parabolic
+iseed          = 1837
+
+<magnetic_spectral_ic>
+nlow           = 1
+nhigh          = 4
+spectrum       = parabolic
+iseed          = 918273
+
+<output1>
+file_type       = hst
+dt              = 0.02
+user_hist_only  = true
+
+<output2>
+file_type       = bin
+variable        = mhd_w_bcc
+id              = prim
+dt              = 0.5
