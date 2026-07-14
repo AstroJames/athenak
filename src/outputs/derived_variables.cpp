@@ -125,9 +125,11 @@ void BaseTypeOutput::ComputeDerivedVariable(std::string name, Mesh *pm) {
     auto &bcc = pm->pmb_pack->pmhd->bcc0;
     par_for("jz", DevExeSpace(), 0, (nmb-1), ks, ke, js, je, is, ie,
     KOKKOS_LAMBDA(int m, int k, int j, int i) {
-      dv(m,i_dv,k,j,i) = (bcc(m,IBY,k,j,i+1) - bcc(m,IBY,k,j,i-1))/size.d_view(m).dx1;
+      dv(m,i_dv,k,j,i) = (bcc(m,IBY,k,j,i+1) - bcc(m,IBY,k,j,i-1))
+                          /(2.0*size.d_view(m).dx1);
       if (multi_d) {
-        dv(m,i_dv,k,j,i) -=(bcc(m,IBX,k,j+1,i) - bcc(m,IBX,k,j-1,i))/size.d_view(m).dx2;
+        dv(m,i_dv,k,j,i) -= (bcc(m,IBX,k,j+1,i) - bcc(m,IBX,k,j-1,i))
+                             /(2.0*size.d_view(m).dx2);
       }
     });
     i_dv += 1; // increment derived variable index

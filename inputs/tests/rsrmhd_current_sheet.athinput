@@ -75,3 +75,12 @@ data_format = %20.12e
 dt          = -1.0
 slice_x2    = 0.0
 slice_x3    = 0.0
+
+<output3>
+file_type   = tab
+variable    = mhd_jz
+id          = current
+data_format = %20.12e
+dt          = 9.0
+slice_x2    = 0.0
+slice_x3    = 0.0

@@ -2,6 +2,7 @@
 
 import logging
 import glob
+import math
 import os
 import sys
 import numpy as np
@@ -18,12 +19,16 @@ def run(**kwargs):
     error_file = 'build/src/rsrmhd_current_sheet-errs.dat'
     if os.path.exists(error_file):
         os.remove(error_file)
+    for output_file in glob.glob(
+            'build/src/tab/rsrmhd_current_sheet.current.*.tab'):
+        os.remove(output_file)
     for resolution in (128, 256, 512):
         output_dt = '9.0' if resolution == 128 else '-1.0'
         athena.run('tests/rsrmhd_current_sheet.athinput', [
             'mesh/nx1=' + repr(resolution),
             'meshblock/nx1=' + repr(resolution),
             'output1/dt=' + output_dt,
+            'output3/dt=' + output_dt,
         ])
 
 
@@ -95,5 +100,26 @@ def analyze():
         -electric['x1v']**2 / (4.0 * 0.01 * analytic_time))
     if np.mean(np.abs(electric['e3'] - e3_exact)) > 8.0e-4:
         logger.warning('Named E3 output does not match the evolved sheet')
+        return False
+
+    current_files = sorted(glob.glob(
+        'build/src/tab/rsrmhd_current_sheet.current.*.tab'))
+    if not current_files:
+        logger.warning('Named current-density output was not written')
+        return False
+    current = athena_read.tab(current_files[0])
+    if 'jz' not in current or current['jz'].size < 3:
+        logger.warning('Current-density output is invalid: %s', current.keys())
+        return False
+    x1 = current['x1v']
+    dx1 = x1[1] - x1[0]
+    analytic_time = 1.0 + current['time']
+    by = np.array([
+        math.erf(x/(2.0*np.sqrt(0.01*analytic_time))) for x in x1
+    ])
+    centered_jz = (by[2:] - by[:-2])/(2.0*dx1)
+    jz_error = np.max(np.abs(current['jz'][1:-1] - centered_jz))
+    if jz_error > 5.0e-10:
+        logger.warning('Jz output does not use a centered derivative: %g', jz_error)
         return False
     return True
