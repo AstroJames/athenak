@@ -29,6 +29,7 @@
 #include "z4c/z4c.hpp"
 #include "radiation/radiation.hpp"
 #include "outputs/restart_state.hpp"
+#include "srcterms/antenna_driver.hpp"
 #include "srcterms/srcterms.hpp"
 #include "srcterms/turb_driver.hpp"
 //#include "outputs.hpp"
@@ -181,6 +182,7 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
   hydro::Hydro* phydro = pm->pmb_pack->phydro;
   mhd::MHD* pmhd = pm->pmb_pack->pmhd;
   radiation::Radiation* prad = pm->pmb_pack->prad;
+  AntennaDriver* pantenna = pm->pmb_pack->pantenna;
   TurbulenceDriver* pturb=pm->pmb_pack->pturb;
   SourceTerms* psrc = (pmhd != nullptr) ? pmhd->psrc
                        : ((phydro != nullptr) ? phydro->psrc : nullptr);
@@ -287,6 +289,30 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
           pturb->injected_momentum3};
       resfile.Write_any_type(state, sizeof(state), "byte");
     }
+    if (pantenna != nullptr) {
+      resfile.Write_any_type(&(pantenna->rstate), sizeof(RNG_State), "byte");
+      const Real state[restart_state::antenna_diagnostics] = {
+          pantenna->last_power, pantenna->last_current_rms,
+          pantenna->last_divergence, pantenna->last_momentum1,
+          pantenna->last_momentum2, pantenna->last_momentum3,
+          pantenna->injected_energy, pantenna->injected_momentum1,
+          pantenna->injected_momentum2, pantenna->injected_momentum3,
+          pantenna->alfven_speed_reference, pantenna->magnetization_reference,
+          pantenna->angular_frequency_reference, pantenna->apar_rms[0],
+          pantenna->apar_rms[1], pantenna->last_face_cell_mismatch};
+      resfile.Write_any_type(state, sizeof(state), "byte");
+      pantenna->mode_state.template sync<HostMemSpace>();
+      Real modes[restart_state::antenna_modes];
+      int index = 0;
+      for (int family = 0; family < AntennaDriver::num_families; ++family) {
+        for (int mode = 0; mode < AntennaDriver::num_modes; ++mode) {
+          for (int q = 0; q < AntennaDriver::num_quadratures; ++q) {
+            modes[index++] = pantenna->mode_state.h_view(family, mode, q);
+          }
+        }
+      }
+      resfile.Write_any_type(modes, sizeof(modes), "byte");
+    }
     if (psrc != nullptr && psrc->relativistic_cooling_model
         == RelativisticCoolingModel::entropy) {
       const Real state[restart_state::cooling_diagnostics] = {
@@ -344,6 +370,11 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
   if (pturb != nullptr) {
     step3size += sizeof(RNG_State)
                  + restart_state::turbulence_diagnostics*sizeof(Real);
+  }
+  if (pantenna != nullptr) {
+    step3size += sizeof(RNG_State)
+                 + (restart_state::antenna_diagnostics
+                    + restart_state::antenna_modes)*sizeof(Real);
   }
   if (psrc != nullptr && psrc->relativistic_cooling_model
       == RelativisticCoolingModel::entropy) {

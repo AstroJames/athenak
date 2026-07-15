@@ -25,6 +25,7 @@
 #include "mhd/relativistic_viscosity.hpp"
 #include "outputs/outputs.hpp"
 #include "pgen/pgen.hpp"
+#include "srcterms/antenna_driver.hpp"
 #include "srcterms/srcterms.hpp"
 #include "srcterms/turb_driver.hpp"
 #include "utils/spectral_ic_gen.hpp"
@@ -274,11 +275,14 @@ namespace {
 
 void SRRMHDDecayingTurbulenceHistory(HistoryData *pdata, Mesh *pm) {
   const bool driven = (pm->pmb_pack->pturb != nullptr);
+  const bool antenna = (pm->pmb_pack->pantenna != nullptr);
   auto *pmhd = pm->pmb_pack->pmhd;
   const bool entropy_cooling =
       (pmhd->psrc->relativistic_cooling_model == RelativisticCoolingModel::entropy);
   const int cooling_offset = driven ? 36 : 17;
-  pdata->nhist = entropy_cooling ? cooling_offset + 10 : (driven ? 36 : 10);
+  const int base_nhist = entropy_cooling ? cooling_offset + 10 : (driven ? 36 : 10);
+  const int antenna_offset = base_nhist;
+  pdata->nhist = base_nhist + (antenna ? (driven ? 14 : 29) : 0);
   pdata->label[0] = "volume";
   pdata->label[1] = "ekin";
   pdata->label[2] = "emag";
@@ -336,6 +340,39 @@ void SRRMHDDecayingTurbulenceHistory(HistoryData *pdata, Mesh *pm) {
     pdata->label[cooling_offset+7] = "p_cool3";
     pdata->label[cooling_offset+8] = "cool_limit";
     pdata->label[cooling_offset+9] = "e_cool_lim";
+  }
+  if (antenna) {
+    pdata->label[antenna_offset] = "ant_power";
+    pdata->label[antenna_offset+1] = "jant_rms";
+    pdata->label[antenna_offset+2] = "div_jant";
+    pdata->label[antenna_offset+3] = "ant_mom1";
+    pdata->label[antenna_offset+4] = "ant_mom2";
+    pdata->label[antenna_offset+5] = "ant_mom3";
+    pdata->label[antenna_offset+6] = "e_ant";
+    pdata->label[antenna_offset+7] = "p_ant1";
+    pdata->label[antenna_offset+8] = "p_ant2";
+    pdata->label[antenna_offset+9] = "p_ant3";
+    pdata->label[antenna_offset+10] = "vA_ant";
+    pdata->label[antenna_offset+11] = "sigma_ant";
+    pdata->label[antenna_offset+12] = "omega_ant";
+    if (!driven) {
+      pdata->label[antenna_offset+13] = "mom1";
+      pdata->label[antenna_offset+14] = "mom2";
+      pdata->label[antenna_offset+15] = "mom3";
+      pdata->label[antenna_offset+16] = "etot";
+      pdata->label[antenna_offset+17] = "mass";
+      pdata->label[antenna_offset+18] = "eint";
+      pdata->label[antenna_offset+19] = "v2";
+      pdata->label[antenna_offset+20] = "mach2";
+      pdata->label[antenna_offset+21] = "lorentz";
+      pdata->label[antenna_offset+22] = "cross_h";
+      pdata->label[antenna_offset+23] = "sigma";
+      pdata->label[antenna_offset+24] = "entropy";
+      pdata->label[antenna_offset+25] = "q_ohm";
+      pdata->label[antenna_offset+26] = "q_visc";
+      pdata->label[antenna_offset+27] = "v_alfven";
+    }
+    pdata->label[antenna_offset+(driven ? 13 : 28)] = "jant_fc_cc";
   }
 
   auto w = pmhd->w0;
@@ -510,6 +547,24 @@ void SRRMHDDecayingTurbulenceHistory(HistoryData *pdata, Mesh *pm) {
       cell.the_array[15]=volume*eint;
       cell.the_array[16]=volume*entropy;
     }
+    if (antenna && !driven) {
+      cell.the_array[antenna_offset+13]=volume*u(m,IM1,k,j,i);
+      cell.the_array[antenna_offset+14]=volume*u(m,IM2,k,j,i);
+      cell.the_array[antenna_offset+15]=volume*u(m,IM3,k,j,i);
+      cell.the_array[antenna_offset+16]=volume*u(m,IEN,k,j,i);
+      cell.the_array[antenna_offset+17]=volume*d;
+      cell.the_array[antenna_offset+18]=volume*eint;
+      cell.the_array[antenna_offset+19]=volume*v2;
+      cell.the_array[antenna_offset+20]=volume*v2/cs2;
+      cell.the_array[antenna_offset+21]=volume*lor;
+      cell.the_array[antenna_offset+22]=volume*bdotv;
+      cell.the_array[antenna_offset+23]=volume*fmax(0.0, bcom2)/enthalpy;
+      cell.the_array[antenna_offset+24]=volume*entropy;
+      cell.the_array[antenna_offset+25]=volume*q_ohm;
+      cell.the_array[antenna_offset+26]=volume*q_visc;
+      cell.the_array[antenna_offset+27]=
+          volume*sqrt(fmax(0.0, bcom2)/(enthalpy + bcom2));
+    }
     sum += cell;
   }, Kokkos::Sum<array_sum::GlobalSum>(total));
   Kokkos::fence();
@@ -538,6 +593,24 @@ void SRRMHDDecayingTurbulenceHistory(HistoryData *pdata, Mesh *pm) {
     total.the_array[cooling_offset+7] = psrc->cooled_momentum3;
     total.the_array[cooling_offset+8] = psrc->last_limited_cooling_power;
     total.the_array[cooling_offset+9] = psrc->limited_cooling_energy;
+  }
+  if (antenna && global_variable::my_rank == 0) {
+    auto *pantenna = pm->pmb_pack->pantenna;
+    total.the_array[antenna_offset] = pantenna->last_power;
+    total.the_array[antenna_offset+1] = pantenna->last_current_rms;
+    total.the_array[antenna_offset+2] = pantenna->last_divergence;
+    total.the_array[antenna_offset+3] = pantenna->last_momentum1;
+    total.the_array[antenna_offset+4] = pantenna->last_momentum2;
+    total.the_array[antenna_offset+5] = pantenna->last_momentum3;
+    total.the_array[antenna_offset+6] = pantenna->injected_energy;
+    total.the_array[antenna_offset+7] = pantenna->injected_momentum1;
+    total.the_array[antenna_offset+8] = pantenna->injected_momentum2;
+    total.the_array[antenna_offset+9] = pantenna->injected_momentum3;
+    total.the_array[antenna_offset+10] = pantenna->alfven_speed_reference;
+    total.the_array[antenna_offset+11] = pantenna->magnetization_reference;
+    total.the_array[antenna_offset+12] = pantenna->angular_frequency_reference;
+    total.the_array[antenna_offset+(driven ? 13 : 28)] =
+        pantenna->last_face_cell_mismatch;
   }
   for (int n=0; n<NHISTORY_VARIABLES; ++n) pdata->hdata[n]=total.the_array[n];
 }

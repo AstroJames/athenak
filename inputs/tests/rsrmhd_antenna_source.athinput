@@ -1,0 +1,118 @@
+# Conservative-source verification for the Zhdankin oscillating-Langevin antenna.
+
+<comment>
+problem = driven periodic SRRMHD cube with an external neutral antenna current
+
+<job>
+basename = rsrmhd_antenna_source
+
+<mesh>
+nghost = 2
+nx1 = 8
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+nx2 = 8
+x2min = 0.0
+x2max = 1.0
+ix2_bc = periodic
+ox2_bc = periodic
+nx3 = 8
+x3min = 0.0
+x3max = 1.0
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 4
+nx2 = 4
+nx3 = 4
+
+<coord>
+special_rel = true
+
+<time>
+evolution = dynamic
+integrator = imex2
+cfl_number = 0.3
+tlim = 100.0
+nlim = 8
+ndiag = 1
+
+<mhd>
+eos = ideal
+gamma = 1.6666666666666667
+resistive_rel = true
+electric_ct = false
+resistivity_model = uniform
+resistivity = 0.01
+relativistic_viscosity = false
+rsolver = llf
+reconstruct = plm
+fofc = false
+fofc_force = false
+
+<problem>
+pgen_name = rsrmhd_decaying_turbulence
+user_hist = true
+density = 1.0
+pressure = 1.0
+velocity_rms = 0.0
+magnetic_configuration = uniform_z
+magnetic_rms = 0.0
+plasma_beta = 1.0
+profile_name = rsrmhd_antenna_source
+
+<velocity_spectral_ic>
+nlow = 1
+nhigh = 2
+spectrum = parabolic
+iseed = 1837
+
+<magnetic_spectral_ic>
+nlow = 1
+nhigh = 2
+spectrum = parabolic
+iseed = 918273
+
+<antenna_driving>
+mode_set = zhdankin8
+current_geometry = apar_double_curl
+guide_axis = z
+apply_source = true
+va_reference = initial_mean
+frequency_factor = 0.6
+decorrelation_factor = 0.5
+amplitude_normalization = apar_rms
+apar_rms_plus = 0.0001
+apar_rms_minus = 0.0001
+initial_state = stationary
+seed = 210989
+
+<output1>
+file_type = hst
+dcycle = 1
+data_format = %.17e
+
+<output2>
+file_type = bin
+variable = mhd_u_bcc
+id = state
+dcycle = 8
+
+<output3>
+file_type = bin
+variable = mhd_e
+id = electric
+dcycle = 8
+
+<output4>
+file_type = bin
+variable = antenna_current
+id = antenna
+dcycle = 8
+
+<output5>
+file_type = rst
+dcycle = 4

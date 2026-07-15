@@ -721,8 +721,10 @@ void TurbulenceDriver::IncludeAddForcingTask(std::shared_ptr<TaskList> tl, TaskI
                               pmy_pack->phydro->id.rkupdt, pmy_pack->phydro->id.srctrms);
     }
     if (pmy_pack->pmhd != nullptr) {
+      TaskID none(0);
+      TaskID dependency = (start == none) ? pmy_pack->pmhd->id.ect : start;
       auto id = tl->InsertTask(&TurbulenceDriver::AddForcing, this,
-                              pmy_pack->pmhd->id.ect, pmy_pack->pmhd->id.srctrms);
+                              dependency, pmy_pack->pmhd->id.srctrms);
     }
   } else {
     auto id = tl->InsertTask(&TurbulenceDriver::AddForcing, this,

@@ -25,6 +25,7 @@
 #include "z4c/z4c.hpp"
 #include "radiation/radiation.hpp"
 #include "outputs/restart_state.hpp"
+#include "srcterms/antenna_driver.hpp"
 #include "srcterms/srcterms.hpp"
 #include "srcterms/turb_driver.hpp"
 #include "pgen.hpp"
@@ -174,6 +175,7 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
   adm::ADM* padm = pm->pmb_pack->padm;
   z4c::Z4c* pz4c = pm->pmb_pack->pz4c;
   radiation::Radiation* prad=pm->pmb_pack->prad;
+  AntennaDriver* pantenna = pm->pmb_pack->pantenna;
   TurbulenceDriver* pturb=pm->pmb_pack->pturb;
   SourceTerms* psrc = (pmhd != nullptr) ? pmhd->psrc
                        : ((phydro != nullptr) ? phydro->psrc : nullptr);
@@ -279,6 +281,63 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
       pturb->injected_momentum2 = state[7];
       pturb->injected_momentum3 = state[8];
     }
+  }
+
+  if (pantenna != nullptr) {
+    if (restart_version < 2) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "Antenna restart state is absent or predates version 2"
+                << std::endl;
+      exit(EXIT_FAILURE);
+    }
+    char rng_data[sizeof(RNG_State)];
+    Real state[restart_state::antenna_diagnostics];
+    Real modes[restart_state::antenna_modes];
+    if (global_variable::my_rank == 0) {
+      if (resfile.Read_bytes(rng_data, 1, sizeof(RNG_State)) != sizeof(RNG_State)
+          || resfile.Read_Reals(state, restart_state::antenna_diagnostics)
+              != restart_state::antenna_diagnostics
+          || resfile.Read_Reals(modes, restart_state::antenna_modes)
+              != restart_state::antenna_modes) {
+        std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                  << std::endl << "Antenna state read from restart file is incorrect, "
+                  << "restart file is broken." << std::endl;
+        exit(EXIT_FAILURE);
+      }
+    }
+#if MPI_PARALLEL_ENABLED
+    MPI_Bcast(rng_data, sizeof(RNG_State), MPI_CHAR, 0, MPI_COMM_WORLD);
+    MPI_Bcast(state, restart_state::antenna_diagnostics, MPI_ATHENA_REAL, 0,
+              MPI_COMM_WORLD);
+    MPI_Bcast(modes, restart_state::antenna_modes, MPI_ATHENA_REAL, 0,
+              MPI_COMM_WORLD);
+#endif
+    std::memcpy(&(pantenna->rstate), rng_data, sizeof(RNG_State));
+    pantenna->last_power = state[0];
+    pantenna->last_current_rms = state[1];
+    pantenna->last_divergence = state[2];
+    pantenna->last_momentum1 = state[3];
+    pantenna->last_momentum2 = state[4];
+    pantenna->last_momentum3 = state[5];
+    pantenna->injected_energy = state[6];
+    pantenna->injected_momentum1 = state[7];
+    pantenna->injected_momentum2 = state[8];
+    pantenna->injected_momentum3 = state[9];
+    pantenna->alfven_speed_reference = state[10];
+    pantenna->magnetization_reference = state[11];
+    pantenna->angular_frequency_reference = state[12];
+    pantenna->apar_rms[0] = state[13];
+    pantenna->apar_rms[1] = state[14];
+    pantenna->last_face_cell_mismatch = state[15];
+    int index = 0;
+    for (int family = 0; family < AntennaDriver::num_families; ++family) {
+      for (int mode = 0; mode < AntennaDriver::num_modes; ++mode) {
+        for (int q = 0; q < AntennaDriver::num_quadratures; ++q) {
+          pantenna->mode_state.h_view(family, mode, q) = modes[index++];
+        }
+      }
+    }
+    pantenna->MarkRestarted();
   }
 
   if (psrc != nullptr && restart_version >= 1

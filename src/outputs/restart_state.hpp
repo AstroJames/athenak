@@ -10,9 +10,11 @@
 
 namespace restart_state {
 
-inline constexpr int version = 1;
+inline constexpr int version = 2;
 inline constexpr int turbulence_diagnostics = 9;
 inline constexpr int cooling_diagnostics = 10;
+inline constexpr int antenna_diagnostics = 16;
+inline constexpr int antenna_modes = 16;
 
 } // namespace restart_state
 

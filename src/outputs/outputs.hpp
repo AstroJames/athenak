@@ -16,12 +16,12 @@
 #include "athena.hpp"
 #include "io_wrapper.hpp"
 
-#define NHISTORY_VARIABLES 48
+#define NHISTORY_VARIABLES 64
 #if NHISTORY_VARIABLES > NREDUCTION_VARIABLES
     #error NHISTORY > NREDUCTION in outputs.hpp
 #endif
 
-#define NOUTPUT_CHOICES 158
+#define NOUTPUT_CHOICES 159
 // choices for output variables used in <ouput> blocks in input file
 // TO ADD MORE CHOICES:
 //   - add more strings to array below, change NOUTPUT_CHOICES above appropriately
@@ -100,7 +100,9 @@ static const char *var_choice[NOUTPUT_CHOICES] = {
 
   // Resistive special-relativistic MHD electric field, charge, and resistivity
   // (152-157)
-  "mhd_e1", "mhd_e2", "mhd_e3", "mhd_e", "mhd_q", "mhd_eta"
+  "mhd_e1", "mhd_e2", "mhd_e3", "mhd_e", "mhd_q", "mhd_eta",
+  // Electromagnetic antenna (158)
+  "antenna_current"
 };
 
 

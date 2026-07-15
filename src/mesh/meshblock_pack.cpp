@@ -26,6 +26,7 @@
 #include "diffusion/viscosity.hpp"
 #include "diffusion/resistivity.hpp"
 #include "radiation/radiation.hpp"
+#include "srcterms/antenna_driver.hpp"
 #include "srcterms/turb_driver.hpp"
 #include "particles/particles.hpp"
 #include "units/units.hpp"
@@ -59,6 +60,7 @@ MeshBlockPack::~MeshBlockPack() {
   if (prad   != nullptr) {delete prad;}
   if (pdyngr != nullptr) {delete pdyngr;}
   if (pnr    != nullptr) {delete pnr;}
+  if (pantenna != nullptr) {delete pantenna;}
   if (pturb  != nullptr) {delete pturb;}
   if (punit  != nullptr) {delete punit;}
   if (pz4c   != nullptr) {delete pz4c;}
@@ -166,7 +168,20 @@ void MeshBlockPack::AddPhysics(ParameterInput *pin) {
     prad = nullptr;
   }
 
-  // (6) TURBULENCE DRIVER
+  // (6) ELECTROMAGNETIC ANTENNA
+  // Update the stochastic coefficients once per full step and insert the external
+  // four-current after the explicit Maxwell update.
+  TaskID antenna_stage(0);
+  if (pin->DoesBlockExist("antenna_driving")) {
+    pantenna = new AntennaDriver(this, pin);
+    pantenna->IncludeUpdateTask(tl_map["before_timeintegrator"], none);
+    pantenna->IncludeApplyTask(tl_map["stagen"], none);
+    antenna_stage = pantenna->stage_task_id;
+  } else {
+    pantenna = nullptr;
+  }
+
+  // (7) TURBULENCE DRIVER
   // This is a special module to drive turbulence in hydro, MHD, or both. Cannot be
   // included as a source term since it requires evolving force array via O-U process.
   // Instead, TurbulenceDriver object is stored in MeshBlockPack and tasks for evolving
@@ -175,12 +190,12 @@ void MeshBlockPack::AddPhysics(ParameterInput *pin) {
   if (pin->DoesBlockExist("turb_driving")) {
     pturb = new TurbulenceDriver(this, pin);
     pturb->IncludeInitializeModesTask(tl_map["before_timeintegrator"], none);
-    pturb->IncludeAddForcingTask(tl_map["stagen"], none);
+    pturb->IncludeAddForcingTask(tl_map["stagen"], antenna_stage);
   } else {
     pturb = nullptr;
   }
 
-  // (7) Z4c and ADM
+  // (8) Z4c and ADM
   // Create Z4c and ADM physics module.
   if (pin->DoesBlockExist("z4c")) {
     pz4c = new z4c::Z4c(this, pin);
@@ -196,7 +211,7 @@ void MeshBlockPack::AddPhysics(ParameterInput *pin) {
     }
   }
 
-  // (8) Dynamical Spacetime and Matter (MHD TODO)
+  // (9) Dynamical Spacetime and Matter (MHD TODO)
   if ((pin->DoesBlockExist("z4c") || pin->DoesBlockExist("adm")) &&
       (pin->DoesBlockExist("hydro")) ) {
     std::cout << "Dynamical metric and hydro not compatible; use MHD instead  "
@@ -214,7 +229,7 @@ void MeshBlockPack::AddPhysics(ParameterInput *pin) {
     pnr->AssembleNumericalRelativityTasks(tl_map);
   }
 
-  // (8) PARTICLES
+  // (10) PARTICLES
   // Create particles module.  Create tasklist.
   if (pin->DoesBlockExist("particles")) {
     ppart = new particles::Particles(this, pin);

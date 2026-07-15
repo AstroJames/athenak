@@ -26,6 +26,7 @@
 #include "coordinates/adm.hpp"
 #include "z4c/tmunu.hpp"
 #include "z4c/z4c.hpp"
+#include "srcterms/antenna_driver.hpp"
 #include "srcterms/srcterms.hpp"
 #include "srcterms/turb_driver.hpp"
 #include "outputs.hpp"
@@ -248,6 +249,14 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
        << "Output of a resistive-SRMHD field requested in <output> block '"
        << out_params.block_name << "' but resistive SRMHD is not active."
        << std::endl << "Input file must set <mhd>/resistive_rel=true" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  if ((!power_spectrum_alias) && (ivar==158)
+      && (pm->pmb_pack->pantenna == nullptr)) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+       << std::endl << "Antenna current output requested in <output> block '"
+       << out_params.block_name << "' but <antenna_driving> is not active."
+       << std::endl;
     exit(EXIT_FAILURE);
   }
 
@@ -704,6 +713,13 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
       outvars.emplace_back("force1",0,&(pm->pmb_pack->pturb->force));
       outvars.emplace_back("force2",1,&(pm->pmb_pack->pturb->force));
       outvars.emplace_back("force3",2,&(pm->pmb_pack->pturb->force));
+    }
+
+    // Electromagnetic antenna current
+    if (variable.compare("antenna_current") == 0) {
+      outvars.emplace_back("jant1", 0, &(pm->pmb_pack->pantenna->current));
+      outvars.emplace_back("jant2", 1, &(pm->pmb_pack->pantenna->current));
+      outvars.emplace_back("jant3", 2, &(pm->pmb_pack->pantenna->current));
     }
 
     // ADM variables, excluding gauge
