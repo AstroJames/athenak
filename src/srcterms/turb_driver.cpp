@@ -701,7 +701,9 @@ void TurbulenceDriver::IncludeInitializeModesTask(std::shared_ptr<TaskList> tl,
 //  Called by MeshBlockPack::AddPhysics() function
 
 void TurbulenceDriver::IncludeAddForcingTask(std::shared_ptr<TaskList> tl, TaskID start) {
-  // These must be inserted after the RK update, but before ordinary source terms.
+  // Insert forcing after the explicit field update, but before ordinary source terms.
+  // In MHD, depending only on RKUpdate leaves AddForcing concurrent with the dual-CT
+  // prepare/exchange/update chain, so MPI progress can change which stage state is used.
   if (pmy_pack->pionn == nullptr) {
     if (pmy_pack->phydro != nullptr) {
       auto id = tl->InsertTask(&TurbulenceDriver::AddForcing, this,
@@ -709,7 +711,7 @@ void TurbulenceDriver::IncludeAddForcingTask(std::shared_ptr<TaskList> tl, TaskI
     }
     if (pmy_pack->pmhd != nullptr) {
       auto id = tl->InsertTask(&TurbulenceDriver::AddForcing, this,
-                              pmy_pack->pmhd->id.rkupdt, pmy_pack->pmhd->id.srctrms);
+                              pmy_pack->pmhd->id.ect, pmy_pack->pmhd->id.srctrms);
     }
   } else {
     auto id = tl->InsertTask(&TurbulenceDriver::AddForcing, this,

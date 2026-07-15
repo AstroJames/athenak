@@ -47,6 +47,11 @@ resistivity_model = uniform
 eta_floor      = 1.0e-8
 eta_scale      = 1.0
 number_per_mass = 1.0
+relativistic_viscosity = false
+linearized_shear_target_1d = false
+shear_viscosity = 0.01
+shear_relaxation_time = 0.05
+shear_chi_max = 2.0
 rsolver        = llf
 reconstruct    = plm
 fofc           = false
@@ -58,6 +63,7 @@ p0        = 0.1
 rho       = 1.0
 nonideal_e_scale = 1.0
 interior_radius = 5.0
+viscous_state_name = none
 
 <output1>
 file_type   = tab

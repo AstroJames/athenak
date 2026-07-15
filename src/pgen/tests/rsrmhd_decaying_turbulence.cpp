@@ -168,6 +168,15 @@ void ProblemGenerator::ResistiveSRMHDDecayingTurbulence(ParameterInput *pin,
               << std::endl;
     std::exit(EXIT_FAILURE);
   }
+  if (pmhd->use_electric_ct && (velocity_rms != 0.0
+      || uniform_velocity1 != 0.0 || uniform_velocity2 != 0.0
+      || uniform_velocity3 != 0.0)) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+              << std::endl << "rsrmhd_decaying_turbulence currently requires an "
+              << "exactly zero initial velocity with face-centered electric CT; "
+              << "the driven-box perturbation is supplied by the forcing" << std::endl;
+    std::exit(EXIT_FAILURE);
+  }
   if (magnetic_configuration != "random"
       && magnetic_configuration != "uniform_z") {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
@@ -197,6 +206,12 @@ void ProblemGenerator::ResistiveSRMHDDecayingTurbulence(ParameterInput *pin,
     Kokkos::deep_copy(pmhd->b0.x1f, 0.0);
     Kokkos::deep_copy(pmhd->b0.x2f, 0.0);
     Kokkos::deep_copy(pmhd->b0.x3f, sqrt(2.0*pressure0/plasma_beta));
+  }
+  if (pmhd->use_electric_ct) {
+    // With the required zero initial velocity, ideal E = -v cross B vanishes.
+    Kokkos::deep_copy(pmhd->e0.x1f, 0.0);
+    Kokkos::deep_copy(pmhd->e0.x2f, 0.0);
+    Kokkos::deep_copy(pmhd->e0.x3f, 0.0);
   }
 
   auto velocity = velocity_face;

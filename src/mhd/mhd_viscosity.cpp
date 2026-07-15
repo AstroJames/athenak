@@ -201,6 +201,7 @@ void MHD::CalculateViscousFluxes() {
   const int js = indcs.js, je = indcs.je;
   const int ks = indcs.ks, ke = indcs.ke;
   const int ncells1 = indcs.nx1 + 2*indcs.ng;
+  const int nx1 = indcs.nx1;
   const int nmb1 = pmy_pack->nmb_thispack - 1;
   const int nmhd_local = nmhd;
   const auto recon = recon_method;
@@ -210,6 +211,33 @@ void MHD::CalculateViscousFluxes() {
   auto pi = visc_w0;
   auto flux = uflx.x1f;
   auto pi_flux = visc_flx.x1f;
+
+  // A single periodic 1D block has no boundary exchange after the face-E implicit
+  // update.  Rebuild the primitive ghosts from the accepted active state before
+  // reconstruction so viscous fluxes do not sample shear from the previous stage.
+  if (pmy_pack->pmesh->one_d && pmy_pack->pmesh->nmb_total == 1 &&
+      pmy_pack->pmesh->strictly_periodic) {
+    par_for(
+      "viscous_periodic_primitive_ghosts", DevExeSpace(), 0, nmb1,
+      0, nmhd_local-1, 0, ncells1-1,
+      KOKKOS_LAMBDA(int m, int n, int i) {
+       if (i < is || i > ie) {
+        int offset = (i - is) % nx1;
+        if (offset < 0) offset += nx1;
+        w(m, n, 0, 0, i) = w(m, n, 0, 0, is + offset);
+       }
+      });
+    par_for(
+      "viscous_periodic_shear_ghosts", DevExeSpace(), 0, nmb1,
+      0, srrmhd::NVISC-1, 0, ncells1-1,
+      KOKKOS_LAMBDA(int m, int n, int i) {
+       if (i < is || i > ie) {
+        int offset = (i - is) % nx1;
+        if (offset < 0) offset += nx1;
+        pi(m, n, 0, 0, i) = pi(m, n, 0, 0, is + offset);
+       }
+      });
+  }
 
   const size_t scratch_size =
       2*ScrArray2D<Real>::shmem_size(nmhd_local, ncells1)

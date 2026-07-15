@@ -93,6 +93,7 @@ void ProblemGenerator::ResistiveSRMHDRoundTrip(ParameterInput *pin, const bool r
     auto &w0 = pmbp->pmhd->w0;
     auto &u0 = pmbp->pmhd->u0;
     auto &b0 = pmbp->pmhd->b0;
+    auto &e0 = pmbp->pmhd->e0;
     auto &bcc0 = pmbp->pmhd->bcc0;
     auto &visc_u0 = pmbp->pmhd->visc_u0;
     auto &size = pmbp->pmb->mb_size;
@@ -129,6 +130,11 @@ void ProblemGenerator::ResistiveSRMHDRoundTrip(ParameterInput *pin, const bool r
     Kokkos::deep_copy(b0.x1f, background_b1);
     Kokkos::deep_copy(b0.x2f, background_b2);
     Kokkos::deep_copy(b0.x3f, background_b3);
+    if (pmbp->pmhd->use_electric_ct) {
+      Kokkos::deep_copy(e0.x1f, background_e1);
+      Kokkos::deep_copy(e0.x2f, background_e2);
+      Kokkos::deep_copy(e0.x3f, background_e3);
+    }
     par_for("pgen_viscous_transport", DevExeSpace(), 0, nmb-1, ks, ke, js, je,
             is, ie, KOKKOS_LAMBDA(int m, int k, int j, int i) {
       const Real x = size.d_view(m).x1min
@@ -172,7 +178,12 @@ void ProblemGenerator::ResistiveSRMHDRoundTrip(ParameterInput *pin, const bool r
       visc_u0(m, srrmhd::IVP12, k, j, i) =
           transport_test ? lor*0.002 : 0.0;
       if (relaxation_test) {
-        visc_u0(m, srrmhd::IVP23, k, j, i) = lor*amplitude;
+        visc_u0(m, srrmhd::IVP11, k, j, i) = 0.004;
+        visc_u0(m, srrmhd::IVP22, k, j, i) = -0.001;
+        visc_u0(m, srrmhd::IVP33, k, j, i) = -0.003;
+        visc_u0(m, srrmhd::IVP12, k, j, i) = 0.002;
+        visc_u0(m, srrmhd::IVP13, k, j, i) = -0.0015;
+        visc_u0(m, srrmhd::IVP23, k, j, i) = amplitude;
       } else if (transport_test) {
         visc_u0(m, srrmhd::IVP23, k, j, i) =
             lor*amplitude*sin(2.0*M_PI*x);
@@ -183,7 +194,11 @@ void ProblemGenerator::ResistiveSRMHDRoundTrip(ParameterInput *pin, const bool r
             js, je, is, ie, KOKKOS_LAMBDA(int m, int k, int j, int i) {
       srrmhd::ShearStress pi;
       const Real d = u0(m, IDN, k, j, i);
+      pi.p11 = visc_u0(m, srrmhd::IVP11, k, j, i)/d;
+      pi.p22 = visc_u0(m, srrmhd::IVP22, k, j, i)/d;
+      pi.p33 = visc_u0(m, srrmhd::IVP33, k, j, i)/d;
       pi.p12 = visc_u0(m, srrmhd::IVP12, k, j, i)/d;
+      pi.p13 = visc_u0(m, srrmhd::IVP13, k, j, i)/d;
       pi.p23 = visc_u0(m, srrmhd::IVP23, k, j, i)/d;
       srrmhd::SRRMHDCons1D state;
       state.mx = u0(m, IM1, k, j, i);
@@ -305,13 +320,24 @@ void SRRMHDViscousRelaxationErrors(ParameterInput *pin, Mesh *pm) {
   auto visc_u = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->visc_u0);
   auto w = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->w0);
   const Real tau = pin->GetReal("mhd", "shear_relaxation_time");
-  const Real exact = 0.01*exp(-pm->time/tau);
-  Real stress_error = 0.0;
+  constexpr Real initial[srrmhd::NVISC] = {
+      0.004, -0.001, -0.003, 0.002, -0.0015, 0.01};
+  Real stress_sum[srrmhd::NVISC] = {};
+  Real stress_error[srrmhd::NVISC] = {};
+  Real electric_sum[3] = {};
   Real fluid_error = 0.0;
+  int ncells = 0;
   for (int m = 0; m < pm->pmb_pack->nmb_thispack; ++m) {
     for (int i = indcs.is; i <= indcs.ie; ++i) {
-      stress_error = std::max(stress_error,
-          fabs(visc_u(m, srrmhd::IVP23, indcs.ks, indcs.js, i) - exact));
+      for (int n = 0; n < srrmhd::NVISC; ++n) {
+        const Real exact = initial[n]*exp(-pm->time/tau);
+        const Real stress = visc_u(m, n, indcs.ks, indcs.js, i);
+        stress_sum[n] += stress;
+        stress_error[n] = std::max(stress_error[n], fabs(stress - exact));
+      }
+      electric_sum[0] += w(m, srrmhd::IRE1, indcs.ks, indcs.js, i);
+      electric_sum[1] += w(m, srrmhd::IRE2, indcs.ks, indcs.js, i);
+      electric_sum[2] += w(m, srrmhd::IRE3, indcs.ks, indcs.js, i);
       fluid_error = std::max(fluid_error,
           fabs(w(m, IDN, indcs.ks, indcs.js, i) - 1.0));
       fluid_error = std::max(fluid_error,
@@ -322,8 +348,20 @@ void SRRMHDViscousRelaxationErrors(ParameterInput *pin, Mesh *pm) {
           fabs(w(m, IVY, indcs.ks, indcs.js, i)));
       fluid_error = std::max(fluid_error,
           fabs(w(m, IVZ, indcs.ks, indcs.js, i)));
+      ++ncells;
     }
   }
+#if MPI_PARALLEL_ENABLED
+  MPI_Allreduce(MPI_IN_PLACE, stress_sum, srrmhd::NVISC, MPI_ATHENA_REAL,
+                MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(MPI_IN_PLACE, stress_error, srrmhd::NVISC, MPI_ATHENA_REAL,
+                MPI_MAX, MPI_COMM_WORLD);
+  MPI_Allreduce(MPI_IN_PLACE, electric_sum, 3, MPI_ATHENA_REAL, MPI_SUM,
+                MPI_COMM_WORLD);
+  MPI_Allreduce(MPI_IN_PLACE, &fluid_error, 1, MPI_ATHENA_REAL, MPI_MAX,
+                MPI_COMM_WORLD);
+  MPI_Allreduce(MPI_IN_PLACE, &ncells, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+#endif
   if (global_variable::my_rank == 0) {
     std::string filename = "rsrmhd_viscous_relaxation-errs.dat";
     if (pin->DoesParameterExist("problem", "viscous_diagnostic_name")) {
@@ -331,8 +369,20 @@ void SRRMHDViscousRelaxationErrors(ParameterInput *pin, Mesh *pm) {
       if (name.compare("none") != 0) filename = name + "-errs.dat";
     }
     std::ofstream file(filename);
-    file << std::setprecision(17) << stress_error << " " << fluid_error << " "
-         << exact << std::endl;
+    file << "# Nx Ncycle time fluid_error mean_pi11 mean_pi22 mean_pi33 "
+         << "mean_pi12 mean_pi13 mean_pi23 err_pi11 err_pi22 err_pi33 "
+         << "err_pi12 err_pi13 err_pi23 mean_E1 mean_E2 mean_E3\n"
+         << std::setprecision(17)
+         << pm->mesh_indcs.nx1 << " " << pm->ncycle << " " << pm->time << " "
+         << fluid_error;
+    for (int n = 0; n < srrmhd::NVISC; ++n) {
+      file << " " << stress_sum[n]/static_cast<Real>(ncells);
+    }
+    for (int n = 0; n < srrmhd::NVISC; ++n) file << " " << stress_error[n];
+    for (int n = 0; n < 3; ++n) {
+      file << " " << electric_sum[n]/static_cast<Real>(ncells);
+    }
+    file << std::endl;
   }
 }
 

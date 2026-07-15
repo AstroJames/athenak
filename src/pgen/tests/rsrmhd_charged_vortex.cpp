@@ -541,6 +541,48 @@ void SRRMHDChargedVortexErrors(ParameterInput *pin, Mesh *pm) {
          << failures << " " << pm->time << std::endl;
   }
 
+  if (pin->DoesParameterExist("problem", "viscous_state_name")) {
+    const std::string name = pin->GetString("problem", "viscous_state_name");
+    if (name.compare("none") != 0) {
+      auto visc_u = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->visc_u0);
+      std::string filename = name;
+      if (global_variable::nranks > 1) {
+        filename += "-rank" + std::to_string(global_variable::my_rank);
+      }
+      std::ofstream state_file(filename + "-state.dat");
+      state_file << "# x1 x2 x3 rho eint u1 u2 u3 E1 E2 E3 "
+                 << "pi11 pi22 pi33 pi12 pi13 pi23\n" << std::setprecision(17);
+      for (int m = 0; m < pm->pmb_pack->nmb_thispack; ++m) {
+        for (int k = ks; k <= ke; ++k) {
+          for (int j = js; j <= je; ++j) {
+            for (int i = is; i <= ie; ++i) {
+              const Real x1 = CellCenterX(i-is, indcs.nx1, mbsize(m).x1min,
+                                          mbsize(m).x1max);
+              const Real x2 = CellCenterX(j-js, indcs.nx2, mbsize(m).x2min,
+                                          mbsize(m).x2max);
+              const Real x3 = CellCenterX(k-ks, indcs.nx3, mbsize(m).x3min,
+                                          mbsize(m).x3max);
+              const Real lor = sqrt(1.0 + SQR(w(m, IVX, k, j, i))
+                  + SQR(w(m, IVY, k, j, i)) + SQR(w(m, IVZ, k, j, i)));
+              const Real d = w(m, IDN, k, j, i)*lor;
+              state_file << x1 << " " << x2 << " " << x3 << " "
+                         << w(m, IDN, k, j, i) << " " << w(m, IEN, k, j, i)
+                         << " " << w(m, IVX, k, j, i) << " "
+                         << w(m, IVY, k, j, i) << " " << w(m, IVZ, k, j, i)
+                         << " " << w(m, srrmhd::IRE1, k, j, i) << " "
+                         << w(m, srrmhd::IRE2, k, j, i) << " "
+                         << w(m, srrmhd::IRE3, k, j, i);
+              for (int n = 0; n < srrmhd::NVISC; ++n) {
+                state_file << " " << visc_u(m, n, k, j, i)/d;
+              }
+              state_file << "\n";
+            }
+          }
+        }
+      }
+    }
+  }
+
   if (pmhd->resistivity_data.model != srrmhd::ResistivityModel::uniform) {
     Real eta_min = std::numeric_limits<Real>::max();
     Real eta_max = 0.0;
