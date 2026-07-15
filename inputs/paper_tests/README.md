@@ -74,10 +74,11 @@ recommended fluid calibration when matching the published amplitude and energy
 budget together; `1.0` remains the literal external-current normalization.
 
 The full-amplitude face-centered-E run reaches order-unity fluctuations but its
-multidimensional Picard iteration fails near `0.23 t_A0`, even at CFL `0.1`.
-The otherwise identical cell-centered-E run completes all six crossing times
-with relative source-energy closure `1.3e-12`. Until the strong-field face-E
-iteration is made more robust, use cell-centered E for this benchmark.
+multidimensional Picard iteration fails at `0.224 t_A0` for CFL `0.4`; reducing
+the CFL to `0.1` only delays the failure to `0.281 t_A0`. The otherwise identical
+cell-centered-E run completes all six crossing times with relative source-energy
+closure `1.3e-12`. Until the strong-field face-E iteration is made more robust,
+use cell-centered E for this benchmark.
 
 Generate the comparison figure with
 
