@@ -43,7 +43,10 @@ the value of electrical resistivity in those five inputs has no dynamics.
 The `rsrmhd_antenna_zhdankin32.athinput` pilot starts from an ultrarelativistic
 fluid approximation to the published pair-plasma baseline and uses the same
 eight signed wavevectors, balanced counter-propagating families, frequency,
-decorrelation rate, and nominal current amplitude.  It runs without cooling so
+decorrelation rate, and nominal current amplitude. The `zhdankin` amplitude
+normalization converts the paper's Gaussian-unit current to AthenaK's
+rationalized units, including the factor of `4 pi` in the Ampere source. It runs
+without cooling so
 that the magnetic-fluctuation saturation, injection efficiency, heating, and
 declining magnetization can be compared directly.  Summarize the result with
 
@@ -58,6 +61,36 @@ The main published targets are `delta B_rms/B0 approximately 1`,
 `v_rms approximately 0.7 v_A`, and a late-time dimensionless injection rate
 near 1.7.  These are calibration observables, not hard regression tolerances,
 because the fluid dissipation model differs from the PIC calculation.
+
+The `32^3` four-rank calibration on 2026-07-15 established three useful cases.
+The unconverted Gaussian current underdrives the system, with developed
+`delta B_rms/B0=0.154` and instantaneous injection efficiency `0.0173`. The
+literal rationalized Zhdankin amplitude gives `delta B_rms/B0=1.355` and
+`v_rms/v_A=0.702`, but its injection efficiency is high (`3.33`). Setting both
+amplitude fractions to `0.65` gives `delta B_rms/B0=1.003+/-0.131`,
+`v_rms/v_A=0.628+/-0.094`, instantaneous injection efficiency `1.628`, and a
+heating-slope efficiency of `1.523` over `4 <= t/t_A0 <= 6`. Thus `0.65` is the
+recommended fluid calibration when matching the published amplitude and energy
+budget together; `1.0` remains the literal external-current normalization.
+
+The full-amplitude face-centered-E run reaches order-unity fluctuations but its
+multidimensional Picard iteration fails near `0.23 t_A0`, even at CFL `0.1`.
+The otherwise identical cell-centered-E run completes all six crossing times
+with relative source-energy closure `1.3e-12`. Until the strong-field face-E
+iteration is made more robust, use cell-centered E for this benchmark.
+
+Generate the comparison figure with
+
+```sh
+/opt/homebrew/Caskroom/miniconda/base/bin/python \
+  vis/python/plot_rsrmhd_antenna_calibration.py \
+  /path/to/unconverted.user.hst \
+  /path/to/exact_zhdankin.user.hst \
+  /path/to/fluid_calibrated.user.hst \
+  --labels "unconverted control" "exact Zhdankin amplitude" \
+           "fluid calibration (0.65)" \
+  --output /path/to/antenna_calibration_comparison.pdf
+```
 
 ## One-dimensional viscous shear wave
 

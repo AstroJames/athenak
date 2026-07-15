@@ -3,10 +3,15 @@
 # The initial state approximates their ultrarelativistic beta0=1, sigma0=0.5
 # pair-plasma baseline with rho0=1, P0=100, Gamma=4/3, and B0^2=2 P0.
 # It gives sigma0=200/401 and vA0=sqrt(200/601)=0.576869744537761.
-# The antenna normalization sets each propagation family's stationary mode
-# amplitude to the Zhdankin value, which targets delta B_rms/B0 approximately 1.
+# The antenna normalization converts the published Gaussian-unit current into
+# AthenaK's rationalized units, including the 4 pi Ampere-source factor.  Each
+# propagation family's stationary amplitude then targets delta B_rms/B0 about 1.
 # The fluid comparison uses explicit Re=Rm=50 at Ldrive=1/k0=L/(2 pi), and
 # spans six initial Alfven crossing times without cooling, as in the PIC baseline.
+# Cell-centered E is the validated production layout for the full-amplitude case;
+# the multidimensional face-E Picard iteration currently fails once delta B/B0
+# reaches order unity. A fluid-calibrated comparison uses both amplitude fractions
+# equal to 0.65 while retaining this file's literal literature value of 1.0.
 
 <comment>
 problem = 32^3 Zhdankin antenna calibration in visco-resistive SRMHD
@@ -52,7 +57,7 @@ ndiag = 100
 eos = ideal
 gamma = 1.3333333333333333
 resistive_rel = true
-electric_ct = true
+electric_ct = false
 resistivity_model = uniform
 resistivity = 0.001836233427266871
 relativistic_viscosity = true

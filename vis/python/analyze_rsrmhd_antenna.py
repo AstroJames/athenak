@@ -48,19 +48,44 @@ def summarize(history_path):
     if not np.any(developed):
         developed = time >= 0.5*time[-1]
 
+    nominal_power = 0.5*b0_squared*va0*box_length**2
+    developed_time = time[developed]
+    if developed_time.size >= 2:
+        heating_slope = np.polyfit(
+            developed_time, np.asarray(history['eint'])[developed], 1
+        )[0]
+    else:
+        heating_slope = np.nan
+
+    def mean_and_std(values):
+        selected = np.asarray(values)[developed]
+        return float(np.mean(selected)), float(np.std(selected))
+
+    delta_b_mean, delta_b_std = mean_and_std(delta_b_ratio)
+    velocity_ratio = velocity_rms/alfven_speed
+    velocity_mean, velocity_std = mean_and_std(velocity_ratio)
+    sigma_mean, sigma_std = mean_and_std(magnetization)
+
     return {
         'history': str(Path(history_path).resolve()),
         'samples': int(time.size),
         'final_time_over_alfven_time': float(time[-1]/alfven_time),
         'initial_alfven_speed': va0,
         'initial_magnetization': float(history['sigma_ant'][reference_index]),
-        'developed_delta_b_rms_over_b0': float(np.mean(delta_b_ratio[developed])),
-        'developed_v_rms_over_v_alfven': float(np.mean(
-            velocity_rms[developed]/alfven_speed[developed])),
+        'developed_delta_b_rms_over_b0': delta_b_mean,
+        'developed_delta_b_rms_over_b0_std': delta_b_std,
+        'developed_v_rms_over_v_alfven': velocity_mean,
+        'developed_v_rms_over_v_alfven_std': velocity_std,
         'developed_injection_efficiency': float(np.nanmean(
             injection_efficiency[developed])),
+        'developed_instantaneous_injection_efficiency': float(np.mean(
+            np.asarray(history['ant_power'])[developed]/nominal_power
+        )),
         'developed_heating_efficiency': float(np.nanmean(
             heating_efficiency[developed])),
+        'developed_heating_slope_efficiency': float(heating_slope/nominal_power),
+        'developed_magnetization': sigma_mean,
+        'developed_magnetization_std': sigma_std,
         'final_magnetization': float(magnetization[-1]),
         'max_relative_energy_audit_error': float(
             np.max(np.abs(energy_residual))/history['etot'][0]
