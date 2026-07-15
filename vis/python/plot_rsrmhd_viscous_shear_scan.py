@@ -93,11 +93,11 @@ def plot(profiles, output_prefix):
                bbox_to_anchor=(0.5, 0.91), frameon=False)
     axes[0].text(0.96, 0.94, '(a)', transform=axes[0].transAxes,
                  ha='right', va='top')
-    axes[1].text(0.04, 0.94, '(b)', transform=axes[1].transAxes,
-                 ha='left', va='top')
-    axes[1].text(0.96, 0.06,
+    axes[1].text(0.96, 0.94, '(b)', transform=axes[1].transAxes,
+                 ha='right', va='top')
+    axes[1].text(0.04, 0.94,
                  r'$t/t_c=0.4,\quad \tau_\pi/t_c=0.2$',
-                 transform=axes[1].transAxes, ha='right', va='bottom')
+                 transform=axes[1].transAxes, ha='left', va='top')
     fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.77))
     fig.savefig(output_prefix.with_suffix('.pdf'), bbox_inches='tight')
     fig.savefig(output_prefix.with_suffix('.png'), dpi=220, bbox_inches='tight')

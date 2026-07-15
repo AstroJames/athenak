@@ -5,6 +5,9 @@ visco-resistive comparisons in the paper.  The smaller regression tests remain
 under `inputs/tests/`; these inputs retain the resolutions, transport
 coefficients, reconstruction, and random seeds used for the figures.
 
+The complete 2026 rerun matrix, including command provenance and the higher
+resolution figure cases, is documented in `PRODUCTION_CAMPAIGN.md`.
+
 ## Test matrix
 
 | Test | Resolution | Physics | Parameters |

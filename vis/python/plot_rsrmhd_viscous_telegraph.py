@@ -9,6 +9,7 @@ import tempfile
 import matplotlib
 matplotlib.rc_file("/Users/beattijr/.matplotlib/matplotlibrc")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 
 
@@ -77,21 +78,31 @@ def make_plot(rows, scans, amplitude, enthalpy_density, output_dir):
     """Plot analytic curves and AthenaK Fourier amplitudes."""
     wave_number = 2.0 * np.pi
     dense_time = np.linspace(0.0, 1.0, 500)
-    figure, axes = plt.subplots(2, 2, figsize=(9.0, 7.0), sharex=True,
-                                sharey="col")
+    figure, axes = plt.subplots(
+        2, 2, figsize=(9.4, 7.3), sharex=True, sharey="col", layout="none",
+    )
+    figure.subplots_adjust(
+        left=0.10, right=0.98, bottom=0.09, top=0.82,
+        hspace=0.42, wspace=0.24,
+    )
     panel_labels = (("(a)", "(b)"), ("(c)", "(d)"))
     for scan_id, cases in enumerate(scans):
+        handles = []
         for nu, tau in cases:
             velocity, stress_over_w = telegraph_solution(
                 dense_time, nu, tau, wave_number, amplitude)
             if scan_id == 0:
-                label = (rf"$\nu_{{\rm sh}}={nu:.2f}$, "
-                         rf"$c_{{\rm T}}={np.sqrt(nu/tau):.3f}$")
+                label = (rf"${nu:.2f}$ "
+                         rf"$(c_{{\rm T}}={np.sqrt(nu/tau):.3f})$")
             else:
-                label = (rf"$\tau_\pi={tau:.1f}$, "
-                         rf"$c_{{\rm T}}={np.sqrt(nu/tau):.3f}$")
+                label = (rf"${tau:.1f}$ "
+                         rf"$(c_{{\rm T}}={np.sqrt(nu/tau):.3f})$")
             line, = axes[scan_id, 0].plot(
-                dense_time, velocity / amplitude, label=label)
+                dense_time, velocity / amplitude)
+            handles.append(Line2D(
+                [0], [0], color=line.get_color(), marker="o",
+                markerfacecolor="none", label=label,
+            ))
             axes[scan_id, 1].plot(
                 dense_time, stress_over_w / amplitude, color=line.get_color())
             subset = rows[
@@ -107,18 +118,27 @@ def make_plot(rows, scans, amplitude, enthalpy_density, output_dir):
                 linestyle="none", marker="o", markerfacecolor="none",
                 color=line.get_color(), markersize=4.5)
 
-        axes[scan_id, 0].legend(frameon=False, loc="best")
-        fixed_text = (r"fixed $\tau_\pi=0.2$" if scan_id == 0
-                      else r"fixed $\nu_{\rm sh}=0.02$")
-        axes[scan_id, 1].text(
-            0.97, 0.92, fixed_text,
-            transform=axes[scan_id, 1].transAxes, ha="right", va="top")
+        legend_title = (
+            r"fixed $\tau_\pi=0.2$; varying $\nu_{\rm sh}$"
+            if scan_id == 0 else
+            r"fixed $\nu_{\rm sh}=0.02$; varying $\tau_\pi$"
+        )
+        axes[scan_id, 0].legend(
+            handles=handles, title=legend_title, ncols=3,
+            loc="lower center", bbox_to_anchor=(1.08, 1.04),
+            frameon=False, fontsize=10.0, title_fontsize=10.5,
+            handlelength=2.0, handletextpad=0.35, columnspacing=0.9,
+            labelspacing=0.25, alignment="center",
+        )
         for column in range(2):
             axis = axes[scan_id, column]
             axis.axhline(0.0, color="0.65", linewidth=0.7)
-            axis.text(0.03, 0.92, panel_labels[scan_id][column],
-                      transform=axis.transAxes, va="top")
-            axis.grid(alpha=0.2)
+            axis.text(
+                0.03, 0.08, panel_labels[scan_id][column],
+                transform=axis.transAxes, ha="left", va="bottom",
+                fontsize=13,
+            )
+            axis.grid(False)
             axis.set_xlim(0.0, 1.0)
 
     for row in range(2):
@@ -126,9 +146,11 @@ def make_plot(rows, scans, amplitude, enthalpy_density, output_dir):
         axes[row, 1].set_ylabel(r"$\widehat{\pi^{xy}}/(wA)$")
     axes[1, 0].set_xlabel(r"$t/t_c$")
     axes[1, 1].set_xlabel(r"$t/t_c$")
-    figure.tight_layout()
     figure.savefig(output_dir / "viscous_telegraph_sweep.pdf")
-    figure.savefig(output_dir / "viscous_telegraph_sweep.png", dpi=250)
+    figure.savefig(
+        output_dir / "viscous_telegraph_sweep.png", dpi=250,
+        transparent=False, facecolor=matplotlib.rcParams["figure.facecolor"],
+    )
     plt.close(figure)
 
 

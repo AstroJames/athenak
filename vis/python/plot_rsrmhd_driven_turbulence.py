@@ -122,7 +122,11 @@ def plot_histories(history, output_base, eddy_time, drive_scale,
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     x_max = float(np.ceil(x[-1]))
     fig, axes = plt.subplots(
-        2, 3, figsize=(7.2, 5.2), sharex=True, layout="constrained",
+        2, 3, figsize=(10.5, 7.4), sharex=True, layout="none",
+    )
+    fig.subplots_adjust(
+        left=0.085, right=0.985, bottom=0.09, top=0.875,
+        hspace=0.58, wspace=0.42,
     )
     configure_axes(axes, x_max)
 

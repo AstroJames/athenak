@@ -112,7 +112,15 @@ def make_plot(diffusion, timestep, longitudinal, output_dir):
     longitudinal_exact = longitudinal_solution(
         dense_longitudinal_time, 0.03, 0.2, wave_number, amplitude)
 
-    figure, axes = plt.subplots(2, 2, figsize=(9.0, 7.0))
+    figure = plt.figure(figsize=(9.4, 7.2), layout="none")
+    grid = figure.add_gridspec(
+        2, 2, left=0.10, right=0.98, bottom=0.09, top=0.97,
+        hspace=0.32, wspace=0.30,
+    )
+    axes = np.asarray([
+        [figure.add_subplot(grid[0, 0]), figure.add_subplot(grid[0, 1])],
+        [figure.add_subplot(grid[1, 0]), figure.add_subplot(grid[1, 1])],
+    ])
     axes[0, 0].plot(dense_diffusion_time, causal / amplitude,
                     label="Israel--Stewart")
     axes[0, 0].plot(dense_diffusion_time, navier_stokes / amplitude,
@@ -122,10 +130,17 @@ def make_plot(diffusion, timestep, longitudinal, output_dir):
                     label="AthenaK")
     axes[0, 0].set_xlabel(r"$t/t_c$")
     axes[0, 0].set_ylabel(r"$\widehat{u^y}/A$")
-    axes[0, 0].legend(frameon=False)
+    axes[0, 0].set_xlim(-0.03, 2.10)
+    axes[0, 0].set_ylim(0.81, 1.008)
+    axes[0, 0].legend(
+        frameon=False, loc="lower left", fontsize=10.5,
+        handlelength=2.2, labelspacing=0.25,
+    )
     axes[0, 0].text(
-        0.97, 0.08, r"$\nu_{\rm sh}=0.0025$, $\tau_\pi=0.01$",
-        transform=axes[0, 0].transAxes, ha="right")
+        0.97, 0.95, r"$\nu_{\rm sh}=0.0025$, $\tau_\pi=0.01$",
+        transform=axes[0, 0].transAxes, ha="right", va="top",
+        fontsize=10.5,
+    )
 
     dx = timestep[:, 0]
     dtnew = timestep[:, 1]
@@ -141,9 +156,15 @@ def make_plot(diffusion, timestep, longitudinal, output_dir):
         r"$1/64$", r"$1/128$", r"$1/256$", r"$1/512$",
     ])
     axes[0, 1].xaxis.set_minor_formatter(NullFormatter())
-    axes[0, 1].legend(frameon=False)
-    axes[0, 1].text(0.97, 0.08, "causal crossing-time bound",
-                    transform=axes[0, 1].transAxes, ha="right")
+    axes[0, 1].legend(
+        frameon=False, loc="lower right", fontsize=10.5,
+        handlelength=2.2, labelspacing=0.25,
+    )
+    axes[0, 1].text(
+        0.03, 0.83, "causal crossing-time bound",
+        transform=axes[0, 1].transAxes, ha="left", va="top",
+        fontsize=10.5,
+    )
 
     axes[1, 0].plot(
         dense_longitudinal_time, longitudinal_exact[:, 0] / amplitude,
@@ -153,10 +174,16 @@ def make_plot(diffusion, timestep, longitudinal, output_dir):
         linestyle="none", marker="o", markerfacecolor="none", label="AthenaK")
     axes[1, 0].set_xlabel(r"$t/t_c$")
     axes[1, 0].set_ylabel(r"$\widehat{u^x}/A$")
-    axes[1, 0].legend(frameon=False)
+    axes[1, 0].set_xlim(-0.03, 1.05)
+    axes[1, 0].legend(
+        frameon=False, loc="upper right", fontsize=10.5,
+        handlelength=2.2, labelspacing=0.25,
+    )
     axes[1, 0].text(
-        0.97, 0.08, r"$\nu_{\rm sh}=0.03$, $\tau_\pi=0.2$",
-        transform=axes[1, 0].transAxes, ha="right")
+        0.03, 0.08, r"$\nu_{\rm sh}=0.03$, $\tau_\pi=0.2$",
+        transform=axes[1, 0].transAxes, ha="left", va="bottom",
+        fontsize=10.5,
+    )
 
     axes[1, 1].plot(
         dense_longitudinal_time, longitudinal_exact[:, 1] / (enthalpy * amplitude),
@@ -172,14 +199,26 @@ def make_plot(diffusion, timestep, longitudinal, output_dir):
         linestyle="none", marker="s", markerfacecolor="none")
     axes[1, 1].set_xlabel(r"$t/t_c$")
     axes[1, 1].set_ylabel("normalized amplitude")
-    axes[1, 1].legend(frameon=False)
+    axes[1, 1].set_xlim(-0.03, 1.05)
+    axes[1, 1].legend(
+        frameon=False, loc="upper center", fontsize=10.5,
+        handlelength=2.2, labelspacing=0.25,
+    )
 
-    for label, axis in zip(("(a)", "(b)", "(c)", "(d)"), axes.flat):
-        axis.text(0.03, 0.92, label, transform=axis.transAxes, va="top")
-        axis.grid(alpha=0.2)
-    figure.tight_layout()
+    panel_positions = ((0.03, 0.55), (0.03, 0.95),
+                       (0.03, 0.55), (0.03, 0.95))
+    for label, axis, position in zip(
+            ("(a)", "(b)", "(c)", "(d)"), axes.flat, panel_positions):
+        axis.text(
+            *position, label, transform=axis.transAxes,
+            ha="left", va="top", fontsize=13,
+        )
+        axis.grid(False)
     figure.savefig(output_dir / "viscous_phaseb_validation.pdf")
-    figure.savefig(output_dir / "viscous_phaseb_validation.png", dpi=250)
+    figure.savefig(
+        output_dir / "viscous_phaseb_validation.png", dpi=250,
+        transparent=False, facecolor=matplotlib.rcParams["figure.facecolor"],
+    )
     plt.close(figure)
 
 
