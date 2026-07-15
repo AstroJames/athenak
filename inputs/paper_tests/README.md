@@ -24,6 +24,7 @@ resolution figure cases, is documented in `PRODUCTION_CAMPAIGN.md`.
 | `rsrmhd_decaying_turbulence_pm50.athinput` | 512 x 512 | visco-resistive SRMHD | `nu_sh=0.0012`, `eta=0.000024`, `Re=50`, `Pm=50` |
 | `rsrmhd_driven_turbulence_mach0p5_re200.athinput` | 128 x 128 | mechanically driven visco-resistive SRMHD | `M_turb=0.5`, nominal `Re=Rm=200`, `Pm=1` |
 | `rsrmhd_driven_turbulence_3d_mach0p5_re50.athinput` | 32 x 32 x 32 | mechanically driven visco-resistive SRMHD | rest start, beta-one `B^z` guide field, target `M_turb=0.5`, nominal `Re=Rm=50`, `Pm=1` |
+| `rsrmhd_antenna_zhdankin32.athinput` | 32 x 32 x 32 | electromagnetic antenna-driven visco-resistive SRMHD | Zhdankin eight-mode baseline, `beta_0=1`, `sigma_0=0.5`, nominal `Re=Rm=50` |
 
 Here `Pm = nu_sh/eta`.  All finite-`Pm` simulations therefore have the same
 nominal initial Reynolds number
@@ -36,6 +37,27 @@ The shear-wave inputs use the resistive SRMHD state container because that is
 where the current viscous IMEX implementation lives, but initialize `B=E=0`.
 The electromagnetic and Ohmic sectors therefore remain exactly inactive, and
 the value of electrical resistivity in those five inputs has no dynamics.
+
+## Zhdankin antenna calibration
+
+The `rsrmhd_antenna_zhdankin32.athinput` pilot starts from an ultrarelativistic
+fluid approximation to the published pair-plasma baseline and uses the same
+eight signed wavevectors, balanced counter-propagating families, frequency,
+decorrelation rate, and nominal current amplitude.  It runs without cooling so
+that the magnetic-fluctuation saturation, injection efficiency, heating, and
+declining magnetization can be compared directly.  Summarize the result with
+
+```sh
+/opt/homebrew/Caskroom/miniconda/base/bin/python \
+  vis/python/analyze_rsrmhd_antenna.py \
+  /path/to/antenna_zhdankin32.user.hst \
+  --output /path/to/antenna_zhdankin32_summary.json
+```
+
+The main published targets are `delta B_rms/B0 approximately 1`,
+`v_rms approximately 0.7 v_A`, and a late-time dimensionless injection rate
+near 1.7.  These are calibration observables, not hard regression tolerances,
+because the fluid dissipation model differs from the PIC calculation.
 
 ## One-dimensional viscous shear wave
 

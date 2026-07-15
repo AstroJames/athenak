@@ -1,0 +1,125 @@
+# 32^3 fluid calibration of the Zhdankin et al. oscillating-Langevin antenna.
+#
+# The initial state approximates their ultrarelativistic beta0=1, sigma0=0.5
+# pair-plasma baseline with rho0=1, P0=100, Gamma=4/3, and B0^2=2 P0.
+# It gives sigma0=200/401 and vA0=sqrt(200/601)=0.576869744537761.
+# The antenna normalization sets each propagation family's stationary mode
+# amplitude to the Zhdankin value, which targets delta B_rms/B0 approximately 1.
+# The fluid comparison uses explicit Re=Rm=50 at Ldrive=1/k0=L/(2 pi), and
+# spans six initial Alfven crossing times without cooling, as in the PIC baseline.
+
+<comment>
+problem = 32^3 Zhdankin antenna calibration in visco-resistive SRMHD
+
+<job>
+basename = antenna_zhdankin32
+
+<mesh>
+nghost = 4
+nx1 = 32
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+nx2 = 32
+x2min = 0.0
+x2max = 1.0
+ix2_bc = periodic
+ox2_bc = periodic
+nx3 = 32
+x3min = 0.0
+x3max = 1.0
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 16
+nx2 = 16
+nx3 = 16
+
+<coord>
+special_rel = true
+
+<time>
+evolution = dynamic
+integrator = imex2
+cfl_number = 0.4
+tlim = 10.40096149401583
+nlim = -1
+ndiag = 100
+
+<mhd>
+eos = ideal
+gamma = 1.3333333333333333
+resistive_rel = true
+electric_ct = true
+resistivity_model = uniform
+resistivity = 0.001836233427266871
+relativistic_viscosity = true
+linearized_shear_target_1d = false
+shear_viscosity = 0.001836233427266871
+shear_relaxation_time = 0.02
+shear_chi_max = 2.0
+rsolver = llf
+reconstruct = wenoz
+fofc = true
+fofc_force = false
+
+<problem>
+pgen_name = rsrmhd_decaying_turbulence
+user_hist = true
+density = 1.0
+pressure = 100.0
+velocity_rms = 0.0
+magnetic_configuration = uniform_z
+magnetic_rms = 0.0
+plasma_beta = 1.0
+profile_name = antenna_zhdankin32
+
+<velocity_spectral_ic>
+nlow = 1
+nhigh = 2
+spectrum = parabolic
+iseed = 1837
+
+<magnetic_spectral_ic>
+nlow = 1
+nhigh = 2
+spectrum = parabolic
+iseed = 918273
+
+<antenna_driving>
+mode_set = zhdankin8
+current_geometry = apar_double_curl
+guide_axis = z
+apply_source = true
+va_reference = initial_mean
+frequency_factor = 0.6
+decorrelation_factor = 0.5
+amplitude_normalization = zhdankin
+amplitude_fraction_plus = 1.0
+amplitude_fraction_minus = 1.0
+initial_state = stationary
+seed = 210989
+
+<output1>
+file_type = hst
+dt = 0.03466987164671943
+user_hist_only = true
+data_format = %20.12e
+
+<output2>
+file_type = bin
+variable = mhd_w_bcc
+id = prim
+dt = 0.17334935823359715
+
+<output3>
+file_type = bin
+variable = antenna_current
+id = antenna
+dt = 0.17334935823359715
+
+<output4>
+file_type = rst
+dt = 1.7334935823359716
