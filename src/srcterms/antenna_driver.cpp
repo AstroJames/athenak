@@ -294,12 +294,14 @@ void AntennaDriver::InitializeReferenceState() {
   const Real box_length = pmy_pack->pmesh->mesh_size.x1max
                           - pmy_pack->pmesh->mesh_size.x1min;
   if (zhdankin_amplitude) {
-    // Zhdankin et al. set |a_j|=B0 L/(8 pi) and multiply the current by
-    // 2 pi/L^2, giving a component amplitude B0/(4 L).  Compensating the two
-    // discrete curl symbols makes that current amplitude resolution independent.
+    // In Gaussian units, Zhdankin et al. set |a_j|=B0 L/(8 pi) and multiply
+    // the current by 2 pi/L^2, giving J_G=B0_G/(4 L).  AthenaK uses
+    // rationalized units: B_G=sqrt(4 pi) B and J=sqrt(4 pi) J_G, hence the
+    // corresponding Ampere-source amplitude is J=pi B0/L.  Compensating the
+    // two discrete curl symbols makes that amplitude resolution independent.
     const Real dx = box_length/pmy_pack->pmesh->mesh_indcs.nx1;
     const Real q = std::sin(2.0*M_PI*dx/box_length)/dx;
-    const Real baseline = std::abs(b0)/(4.0*box_length*q*q);
+    const Real baseline = M_PI*std::abs(b0)/(box_length*q*q);
     for (int family = 0; family < num_families; ++family) {
       apar_rms[family] = amplitude_fraction[family]*baseline;
     }

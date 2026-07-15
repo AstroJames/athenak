@@ -68,10 +68,10 @@ def analyze():
             coefficients[sample_index, mode_index] = transform[
                 kz % nz, ky % ny, kx % nx]
 
-    # For beta=1 and P=1, B0=sqrt(2).  The Zhdankin normalization gives
-    # each complex current component RMS amplitude B0/(4 L); a real mode's
-    # positive Fourier coefficient has another factor of Ncells/2.
-    coefficient_rms = samples[0][1].size*np.sqrt(2.0)/8.0
+    # For beta=1 and P=1, AthenaK's rationalized-unit guide field is sqrt(2).
+    # Zhdankin's Gaussian-unit current B0_G/(4 L) converts to pi B0/L in
+    # AthenaK. A real mode's positive Fourier coefficient contributes Ncells/2.
+    coefficient_rms = samples[0][1].size*np.pi*np.sqrt(2.0)/2.0
     expected_variance = coefficient_rms**2
     measured_variance = np.mean(np.abs(coefficients)**2)
     variance_ratio = measured_variance/expected_variance
