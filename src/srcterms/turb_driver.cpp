@@ -71,6 +71,17 @@ bool BasisActive(int n, int nkx, int nky, int nkz) {
   return !((nkx == 0 && sx) || (nky == 0 && sy) || (nkz == 0 && sz));
 }
 
+Real SignedWavevectorNormalization(int nkx, int nky, int nkz) {
+  // A nonnegative integer triplet with m nonzero components represents 2^m
+  // signed Fourier wavevectors.  Scaling its real sine-cosine coefficients by
+  // sqrt(2^m) gives every signed complex coefficient the same variance.
+  int multiplicity = 1;
+  if (nkx != 0) multiplicity *= 2;
+  if (nky != 0) multiplicity *= 2;
+  if (nkz != 0) multiplicity *= 2;
+  return std::sqrt(static_cast<Real>(multiplicity));
+}
+
 void ApplySolenoidalWeight(Real kx, Real ky, Real kz, Real sol_weight,
                            Real xcoef[8], Real ycoef[8], Real zcoef[8]) {
   Real k2 = kx*kx + ky*ky + kz*kz;
@@ -965,6 +976,7 @@ TaskStatus TurbulenceDriver::InitializeModes(Driver *pdrive, int stage) {
               zsss_.h_view(c,nmode) = 0.0;
             }
           }
+          norm *= SignedWavevectorNormalization(nkx, nky, nkz);
           // normalization
           xccc_.h_view(c,nmode) *= norm;
           xscc_.h_view(c,nmode) *= norm;

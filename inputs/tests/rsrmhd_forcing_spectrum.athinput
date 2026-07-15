@@ -1,0 +1,89 @@
+# Statistical test of signed-wavevector normalization in the turbulence driver.
+
+<comment>
+problem = isotropic white-noise mechanical forcing on a small periodic SRMHD box
+
+<job>
+basename = rsrmhd_forcing_spectrum
+
+<mesh>
+nghost = 2
+nx1 = 8
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+nx2 = 8
+x2min = 0.0
+x2max = 1.0
+ix2_bc = periodic
+ox2_bc = periodic
+nx3 = 8
+x3min = 0.0
+x3max = 1.0
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 8
+nx2 = 8
+nx3 = 8
+
+<coord>
+special_rel = true
+
+<time>
+evolution = dynamic
+integrator = rk2
+cfl_number = 0.4
+tlim = 100.0
+nlim = 128
+ndiag = 128
+
+<mhd>
+eos = ideal
+gamma = 1.6666666666666667
+resistive_rel = false
+relativistic_viscosity = false
+rsolver = llf
+reconstruct = plm
+fofc = false
+fofc_force = false
+
+<problem>
+pgen_name = rsrmhd_decaying_turbulence
+user_hist = false
+density = 1.0
+pressure = 1.0
+velocity_rms = 0.0
+magnetic_configuration = uniform_z
+plasma_beta = 1.0
+profile_name = rsrmhd_forcing_spectrum
+
+<velocity_spectral_ic>
+nlow = 1
+nhigh = 2
+spectrum = parabolic
+iseed = 1837
+
+<magnetic_spectral_ic>
+nlow = 1
+nhigh = 2
+spectrum = parabolic
+iseed = 918273
+
+<turb_driving>
+relativistic_forcing = mechanical
+tcorr = 0.0
+accel_rms = 1.0e-6
+nlow = 1
+nhigh = 3
+driving_geometry = isotropic
+driving_profile = band
+sol_weight = 1.0
+
+<output1>
+file_type = bin
+variable = turb_force
+id = force
+dcycle = 1
