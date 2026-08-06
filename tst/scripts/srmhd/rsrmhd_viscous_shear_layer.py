@@ -44,7 +44,7 @@ def analyze():
         resolution = int(name.rsplit('_', 1)[1])
         x = (np.arange(resolution) + 0.5) / resolution
         lorentz = np.sqrt(1.0 + (0.5 * np.sin(2.0 * np.pi * x))**2)
-        gamma = 5.0 / 3.0
+        gamma = 4.0 / 3.0
         enthalpy = 1.0 + gamma
         pressure = gamma - 1.0
         initial_energy = np.mean(enthalpy * lorentz**2 - pressure - lorentz)

@@ -5,13 +5,13 @@ basename  = rsrmhd_viscous_kh
 
 <mesh>
 nghost    = 4
-nx1       = 256
-x1min     = 0.0
-x1max     = 1.0
+nx1       = 512
+x1min     = -0.5
+x1max     = 0.5
 ix1_bc    = periodic
 ox1_bc    = periodic
-nx2       = 256
-x2min     = 0.0
+nx2       = 1024
+x2min     = -1.0
 x2max     = 1.0
 ix2_bc    = periodic
 ox2_bc    = periodic
@@ -31,15 +31,15 @@ special_rel = true
 
 <time>
 evolution  = dynamic
-integrator = imex2
+integrator = imex3
 cfl_number = 0.4
-tlim       = 2.0
+tlim       = 3.0
 nlim       = -1
 ndiag      = 100
 
 <mhd>
 eos                        = ideal
-gamma                      = 1.6666666666666667
+gamma                      = 1.3333333333333333
 resistive_rel              = true
 resistivity_model          = uniform
 resistivity                = 1.0
@@ -62,10 +62,12 @@ user_hist                = true
 viscous_kh               = true
 viscous_diagnostic_name  = none
 viscous_profile_name     = none
-shear_velocity           = 0.4
-shear_width              = 0.04
+shear_four_velocity      = 1.0                 # unit asymptotic u^x
+shear_width              = 0.05                # tanh transition width
 perturbation             = 0.01
-perturbation_width       = 0.05
+perturbation_width       = 0.2                 # Gaussian perturbation width
+density_contrast         = 1.0                 # rho=2 inside, 1 outside
+pressure                 = 10.0
 background_b1            = 0.0
 background_b2            = 0.0
 background_b3            = 0.0

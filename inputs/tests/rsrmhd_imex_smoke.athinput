@@ -43,7 +43,7 @@ tlim       = 1.0
 
 <mhd>
 eos            = ideal
-gamma          = 1.6666666666666667
+gamma          = 1.3333333333333333
 resistive_rel  = true
 resistivity    = 0.01
 rsolver        = llf

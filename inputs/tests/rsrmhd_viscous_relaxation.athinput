@@ -37,7 +37,7 @@ tlim       = 0.1
 
 <mhd>
 eos                       = ideal
-gamma                     = 1.6666666666666667
+gamma                     = 1.3333333333333333
 resistive_rel             = true
 electric_ct               = false
 resistivity               = 1.0

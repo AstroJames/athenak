@@ -42,7 +42,7 @@ ndiag = 128
 
 <mhd>
 eos = ideal
-gamma = 1.6666666666666667
+gamma = 1.3333333333333333
 resistive_rel = false
 relativistic_viscosity = false
 rsolver = llf

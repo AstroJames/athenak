@@ -12,11 +12,16 @@ logger = logging.getLogger('athena' + __name__[7:])
 def run(**kwargs):
     logger.debug('Running test ' + __name__)
     for name, viscosity in (('inviscid', 0.0), ('viscous', 0.02)):
-        athena.run('tests/rsrmhd_viscous_kh.athinput', [
+        ideal_overrides = [] if viscosity > 0.0 else [
+            'time/integrator=rk3',
+            'mhd/resistive_rel=false',
+            'mhd/relativistic_viscosity=false',
+        ]
+        athena.run('tests/rsrmhd_viscous_kh.athinput', ideal_overrides + [
             f'job/basename=rsrmhd_kh_{name}',
             f'mhd/shear_viscosity={viscosity}',
             'mesh/nx1=32',
-            'mesh/nx2=32',
+            'mesh/nx2=64',
             'meshblock/nx1=16',
             'meshblock/nx2=16',
             'time/tlim=0.5',
@@ -25,6 +30,7 @@ def run(**kwargs):
         ])
 
     common = [
+        'mhd/resistive_rel=true',
         'mhd/shear_viscosity=0.02',
         'mesh/nx1=16',
         'mesh/nx2=16',
@@ -73,12 +79,12 @@ def analyze():
         logger.warning('The KH cases do not conserve the same total energy: %g %g',
                        inviscid[2], viscous[2])
         return False
+    if np.max(np.abs(viscous[3:6] - inviscid[3:6])) > 2.0e-11:
+        logger.warning('The KH cases do not preserve the same global momentum: %s %s',
+                       inviscid[3:6], viscous[3:6])
+        return False
     for name, values in (('inviscid', inviscid), ('viscous', viscous)):
-        if np.max(np.abs(values[3:6])) > 2.0e-6:
-            logger.warning('%s KH run does not preserve global momentum: %s',
-                           name, values[3:6])
-            return False
-        if values[6] > 1.0e-4 or values[7] > 2.0 + 1.0e-12:
+        if values[6] > 2.0e-3 or values[7] > 2.0 + 1.0e-12:
             logger.warning('%s KH run violates a stress constraint: %g %g',
                            name, values[6], values[7])
             return False

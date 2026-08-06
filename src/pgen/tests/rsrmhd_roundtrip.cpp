@@ -96,6 +96,9 @@ void ProblemGenerator::ResistiveSRMHDRoundTrip(ParameterInput *pin, const bool r
     auto &e0 = pmbp->pmhd->e0;
     auto &bcc0 = pmbp->pmhd->bcc0;
     auto &visc_u0 = pmbp->pmhd->visc_u0;
+    const bool is_resistive = pmbp->pmhd->is_resistive_rel;
+    const bool viscosity_enabled =
+        pmbp->pmhd->relativistic_viscosity_data.enabled;
     auto &size = pmbp->pmb->mb_size;
     const Real boost_velocity = boosted_test
         ? pin->GetOrAddReal("problem", "boost_velocity", 0.4) : 0.0;
@@ -105,14 +108,18 @@ void ProblemGenerator::ResistiveSRMHDRoundTrip(ParameterInput *pin, const bool r
     const Real amplitude = (telegraph_test || boosted_test || longitudinal_test
                             || shear_layer_test)
         ? pin->GetOrAddReal("problem", "amplitude", 1.0e-4) : 0.01;
-    const Real shear_velocity = kh_test
-        ? pin->GetOrAddReal("problem", "shear_velocity", 0.4) : 0.0;
+    const Real shear_four_velocity = kh_test
+        ? pin->GetOrAddReal("problem", "shear_four_velocity", 1.0) : 0.0;
     const Real shear_width = kh_test
         ? pin->GetOrAddReal("problem", "shear_width", 0.04) : 1.0;
     const Real perturbation = kh_test
         ? pin->GetOrAddReal("problem", "perturbation", 0.01) : 0.0;
     const Real perturbation_width = kh_test
         ? pin->GetOrAddReal("problem", "perturbation_width", 0.05) : 1.0;
+    const Real kh_density_contrast = kh_test
+        ? pin->GetOrAddReal("problem", "density_contrast", 1.0) : 0.0;
+    const Real kh_pressure = kh_test
+        ? pin->GetOrAddReal("problem", "pressure", 10.0) : 1.0;
     const Real background_b1 = pin->GetOrAddReal("problem", "background_b1", 0.0);
     const Real background_b2 = pin->GetOrAddReal("problem", "background_b2", 0.0);
     const Real background_b3 = pin->GetOrAddReal("problem", "background_b3", 0.0);
@@ -152,46 +159,66 @@ void ProblemGenerator::ResistiveSRMHDRoundTrip(ParameterInput *pin, const bool r
           && wave_direction == 1 ? transverse_wave : 0.0;
       Real initial_u3 = telegraph_test && wave_direction == 2
           ? transverse_wave : 0.0;
+      Real initial_density = 1.0;
+      Real initial_pressure = 1.0;
       if (kh_test) {
-        const Real vx = shear_velocity*(tanh((y-0.25)/shear_width)
-                                      - tanh((y-0.75)/shear_width) - 1.0);
-        const Real layer1 = exp(-SQR((y-0.25)/perturbation_width));
-        const Real layer2 = exp(-SQR((y-0.75)/perturbation_width));
-        const Real vy = perturbation*sin(2.0*M_PI*x)*(layer1 + layer2);
-        const Real gamma_lorentz = 1.0/sqrt(1.0 - SQR(vx) - SQR(vy));
-        initial_u1 = gamma_lorentz*vx;
-        initial_u2 = gamma_lorentz*vy;
+        // Relativistic adaptation of the Lecoanet et al. KHI used in Stone et al.'s
+        // AthenaK paper.  As in the relativistic path through kh.cpp, we interpret
+        // its profile components as spatial four-velocities.  Unit asymptotic u^x
+        // then corresponds to |v^x|=1/sqrt(2).
+        const Real lower_transition = tanh((y+0.5)/shear_width);
+        const Real upper_transition = tanh((y-0.5)/shear_width);
+        initial_density = 1.0 + 0.5*kh_density_contrast*
+            (lower_transition - upper_transition);
+        initial_u1 = shear_four_velocity*
+            (lower_transition - upper_transition - 1.0);
+        Real ave_sine = sin(2.0*M_PI*x);
+        if (x > 0.0) {
+          ave_sine -= sin(2.0*M_PI*(-0.5+x));
+        } else {
+          ave_sine -= sin(2.0*M_PI*(0.5+x));
+        }
+        ave_sine *= 0.5;
+        const Real layer1 = exp(-SQR((y+0.5)/perturbation_width));
+        const Real layer2 = exp(-SQR((y-0.5)/perturbation_width));
+        initial_u2 = -perturbation*ave_sine*(layer1 + layer2);
         initial_u3 = 0.0;
+        initial_pressure = kh_pressure;
       }
-      w0(m, IDN, k, j, i) = 1.0;
+      w0(m, IDN, k, j, i) = initial_density;
       w0(m, IVX, k, j, i) = initial_u1;
       w0(m, IVY, k, j, i) = initial_u2;
       w0(m, IVZ, k, j, i) = initial_u3;
-      w0(m, IEN, k, j, i) = 1.0;
-      w0(m, srrmhd::IRE1, k, j, i) = background_e1;
-      w0(m, srrmhd::IRE2, k, j, i) = background_e2;
-      w0(m, srrmhd::IRE3, k, j, i) = background_e3;
+      w0(m, IEN, k, j, i) = initial_pressure;
+      if (is_resistive) {
+        w0(m, srrmhd::IRE1, k, j, i) = background_e1;
+        w0(m, srrmhd::IRE2, k, j, i) = background_e2;
+        w0(m, srrmhd::IRE3, k, j, i) = background_e3;
+      }
       bcc0(m, IBX, k, j, i) = background_b1;
       bcc0(m, IBY, k, j, i) = background_b2;
       bcc0(m, IBZ, k, j, i) = background_b3;
-      for (int n = 0; n < srrmhd::NVISC; ++n) visc_u0(m, n, k, j, i) = 0.0;
-      visc_u0(m, srrmhd::IVP12, k, j, i) =
-          transport_test ? lor*0.002 : 0.0;
-      if (relaxation_test) {
-        visc_u0(m, srrmhd::IVP11, k, j, i) = 0.004;
-        visc_u0(m, srrmhd::IVP22, k, j, i) = -0.001;
-        visc_u0(m, srrmhd::IVP33, k, j, i) = -0.003;
-        visc_u0(m, srrmhd::IVP12, k, j, i) = 0.002;
-        visc_u0(m, srrmhd::IVP13, k, j, i) = -0.0015;
-        visc_u0(m, srrmhd::IVP23, k, j, i) = amplitude;
-      } else if (transport_test) {
-        visc_u0(m, srrmhd::IVP23, k, j, i) =
-            lor*amplitude*sin(2.0*M_PI*x);
+      if (viscosity_enabled) {
+        for (int n = 0; n < srrmhd::NVISC; ++n) visc_u0(m, n, k, j, i) = 0.0;
+        visc_u0(m, srrmhd::IVP12, k, j, i) =
+            transport_test ? lor*0.002 : 0.0;
+        if (relaxation_test) {
+          visc_u0(m, srrmhd::IVP11, k, j, i) = 0.004;
+          visc_u0(m, srrmhd::IVP22, k, j, i) = -0.001;
+          visc_u0(m, srrmhd::IVP33, k, j, i) = -0.003;
+          visc_u0(m, srrmhd::IVP12, k, j, i) = 0.002;
+          visc_u0(m, srrmhd::IVP13, k, j, i) = -0.0015;
+          visc_u0(m, srrmhd::IVP23, k, j, i) = amplitude;
+        } else if (transport_test) {
+          visc_u0(m, srrmhd::IVP23, k, j, i) =
+              lor*amplitude*sin(2.0*M_PI*x);
+        }
       }
     });
     pmbp->pmhd->peos->PrimToCons(w0, bcc0, u0, is, ie, js, je, ks, ke);
-    par_for("pgen_viscous_transport_total", DevExeSpace(), 0, nmb-1, ks, ke,
-            js, je, is, ie, KOKKOS_LAMBDA(int m, int k, int j, int i) {
+    if (viscosity_enabled) {
+      par_for("pgen_viscous_transport_total", DevExeSpace(), 0, nmb-1, ks, ke,
+              js, je, is, ie, KOKKOS_LAMBDA(int m, int k, int j, int i) {
       srrmhd::ShearStress pi;
       const Real d = u0(m, IDN, k, j, i);
       pi.p11 = visc_u0(m, srrmhd::IVP11, k, j, i)/d;
@@ -212,7 +239,8 @@ void ProblemGenerator::ResistiveSRMHDRoundTrip(ParameterInput *pin, const bool r
       u0(m, IM2, k, j, i) = state.my;
       u0(m, IM3, k, j, i) = state.mz;
       u0(m, IEN, k, j, i) = state.e;
-    });
+      });
+    }
     return;
   }
 
@@ -698,7 +726,7 @@ void SRRMHDViscousKHHistory(HistoryData *pdata, Mesh *pm) {
     const Real dvx_dy = (velocity(j+1, i, IVX) - velocity(j-1, i, IVX))
                        /(2.0*size.d_view(m).dx2);
     const Real omega = dvy_dx - dvx_dy;
-    const Real layer = exp(-SQR((y-0.25)/0.05)) + exp(-SQR((y-0.75)/0.05));
+    const Real layer = exp(-SQR((y+0.5)/0.2)) + exp(-SQR((y-0.5)/0.2));
     const Real volume = size.d_view(m).dx1*size.d_view(m).dx2*size.d_view(m).dx3;
     array_sum::GlobalSum cell;
     cell.the_array[0] = volume;
@@ -723,6 +751,7 @@ void SRRMHDViscousKHErrors(ParameterInput *pin, Mesh *pm) {
   auto visc_u = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->visc_u0);
   auto w = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->w0);
   auto u = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->u0);
+  const bool viscosity_enabled = pmhd->relativistic_viscosity_data.enabled;
   auto size_h = pm->pmb_pack->pmb->mb_size.h_view;
   const Real gamma = pin->GetReal("mhd", "gamma");
   Real volume_sum = 0.0;
@@ -752,12 +781,14 @@ void SRRMHDViscousKHErrors(ParameterInput *pin, Mesh *pm) {
           const Real lor = sqrt(1.0 + SQR(u1) + SQR(u2) + SQR(u3));
           const Real d = w(m, IDN, k, j, i)*lor;
           srrmhd::ShearStress pi;
-          pi.p11 = visc_u(m, srrmhd::IVP11, k, j, i)/d;
-          pi.p22 = visc_u(m, srrmhd::IVP22, k, j, i)/d;
-          pi.p33 = visc_u(m, srrmhd::IVP33, k, j, i)/d;
-          pi.p12 = visc_u(m, srrmhd::IVP12, k, j, i)/d;
-          pi.p13 = visc_u(m, srrmhd::IVP13, k, j, i)/d;
-          pi.p23 = visc_u(m, srrmhd::IVP23, k, j, i)/d;
+          if (viscosity_enabled) {
+            pi.p11 = visc_u(m, srrmhd::IVP11, k, j, i)/d;
+            pi.p22 = visc_u(m, srrmhd::IVP22, k, j, i)/d;
+            pi.p33 = visc_u(m, srrmhd::IVP33, k, j, i)/d;
+            pi.p12 = visc_u(m, srrmhd::IVP12, k, j, i)/d;
+            pi.p13 = visc_u(m, srrmhd::IVP13, k, j, i)/d;
+            pi.p23 = visc_u(m, srrmhd::IVP23, k, j, i)/d;
+          }
           const Real shear_norm = srrmhd::ShearInvariantNorm(u1, u2, u3, pi);
           const Real enthalpy_density = w(m, IDN, k, j, i)
                                       + gamma*w(m, IEN, k, j, i);
@@ -851,11 +882,15 @@ void SRRMHDViscousKHErrors(ParameterInput *pin, Mesh *pm) {
                                /(2.0*size_h(m).dx1);
             const Real dvx_dy = (velocity(j+1, i, IVX) - velocity(j-1, i, IVX))
                                /(2.0*size_h(m).dx2);
+            const Real pi11 = viscosity_enabled
+                ? visc_u(m, srrmhd::IVP11, k, j, i)/d : 0.0;
+            const Real pi22 = viscosity_enabled
+                ? visc_u(m, srrmhd::IVP22, k, j, i)/d : 0.0;
+            const Real pi12 = viscosity_enabled
+                ? visc_u(m, srrmhd::IVP12, k, j, i)/d : 0.0;
             file << x << " " << y << " " << vx << " " << vy << " "
                  << w(m, IDN, k, j, i) << " " << w(m, IEN, k, j, i) << " "
-                 << visc_u(m, srrmhd::IVP11, k, j, i)/d << " "
-                 << visc_u(m, srrmhd::IVP22, k, j, i)/d << " "
-                 << visc_u(m, srrmhd::IVP12, k, j, i)/d << " "
+                 << pi11 << " " << pi22 << " " << pi12 << " "
                  << dvy_dx-dvx_dy << "\n";
           }
         }

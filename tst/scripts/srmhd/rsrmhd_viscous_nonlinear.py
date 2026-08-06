@@ -29,7 +29,7 @@ def analyze():
         return False
 
     numerical = np.loadtxt('build/src/rsrmhd_viscous_longitudinal-amps.dat')
-    gamma = 5.0 / 3.0
+    gamma = 4.0 / 3.0
     pressure = gamma - 1.0
     enthalpy = 1.0 + gamma
     wave_number = 2.0 * np.pi

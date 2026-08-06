@@ -147,6 +147,7 @@ class TaskList {
       auto dep = task.GetDependency();
       if ( tasks_completed_.CheckDependencies(dep) && !(task.IsComplete()) ) {
         TaskStatus status = task(d,s);  // calls Task function using overloaded operator()
+        if (status == TaskStatus::fail) return TaskListStatus::stuck;
         if (status == TaskStatus::complete) {
           task.SetComplete();              // set bool flag in task
           MarkTaskComplete(task.GetID());  // add TaskID to tasks_completed_

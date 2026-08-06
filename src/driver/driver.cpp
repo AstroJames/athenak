@@ -283,6 +283,11 @@ void Driver::ExecuteTaskList(Mesh *pm, std::string tl, int stage) {
       if (!pmbp->tl_map[tl]->IsComplete()) {
         auto status = pmbp->tl_map[tl]->DoAvailable(this, stage);
         if (status == TaskListStatus::complete) { npack_left--; }
+        if (status == TaskListStatus::stuck) {
+          std::cerr << "### FATAL ERROR: task list '" << tl
+                    << "' failed at stage " << stage << std::endl;
+          std::exit(EXIT_FAILURE);
+        }
       }
     }
   }

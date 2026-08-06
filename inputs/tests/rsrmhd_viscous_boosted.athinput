@@ -31,13 +31,13 @@ special_rel = true
 
 <time>
 evolution  = dynamic
-integrator = imex2
+integrator = imex3
 cfl_number = 0.4
 tlim       = 0.4
 
 <mhd>
 eos                        = ideal
-gamma                      = 1.6666666666666667
+gamma                      = 1.3333333333333333
 resistive_rel              = true
 resistivity                = 1.0
 relativistic_viscosity     = true

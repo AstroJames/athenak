@@ -42,7 +42,7 @@ ndiag      = 100
 
 <mhd>
 eos                        = ideal
-gamma                      = 1.6666666666666667
+gamma                      = 1.3333333333333333
 resistive_rel              = true
 resistivity_model          = uniform
 resistivity                = 0.002

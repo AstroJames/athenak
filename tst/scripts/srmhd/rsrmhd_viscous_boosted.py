@@ -19,7 +19,7 @@ def analyze():
     stress = numerical[2] - 1j * numerical[3]
     mean_u1, boost, time = numerical[4:7]
 
-    gamma_gas = 5.0 / 3.0
+    gamma_gas = 4.0 / 3.0
     enthalpy = 1.0 + gamma_gas
     nu = 0.05
     tau = 0.2

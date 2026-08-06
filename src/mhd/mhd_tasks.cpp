@@ -212,7 +212,7 @@ TaskStatus MHD::CopyCons(Driver *pdrive, int stage) {
 
 //----------------------------------------------------------------------------------------
 //! \fn TaskStatus MHD::FirstTwoImpRK()
-//! \brief Execute the two leading fully implicit stages of IMEX2 before fluxes.
+//! \brief Execute the two leading fully implicit stages of an IMEX integrator.
 //!
 //! Precondition: u0, w0, b0, and bcc0 are mutually consistent at the beginning of the
 //! full step.  Postcondition: u1/b1 contain that beginning state, while u0/w0 contain
@@ -470,7 +470,12 @@ TaskStatus MHD::ImpRKUpdate(Driver *pdriver, int estage) {
     pmy_pack->pmesh->ecounter.neos_fail += failures;
     pmy_pack->pmesh->ecounter.maxit_c2p =
         std::max(pmy_pack->pmesh->ecounter.maxit_c2p, max_iterations);
-    if (failures > 0) return TaskStatus::fail;
+    if (failures > 0) {
+      std::cerr << "### FATAL ERROR: " << failures
+                << " implicit resistive-viscous primitive recoveries failed"
+                << std::endl;
+      return TaskStatus::fail;
+    }
   }
 
   return TaskStatus::complete;
@@ -573,7 +578,11 @@ TaskStatus MHD::MHDSrcTerms(Driver *pdrive, int stage) {
       && !relativistic_viscosity_data.linearized_target_1d) {
     const int viscosity_failures = AddRelativisticViscousSource(beta_dt);
     pmy_pack->pmesh->ecounter.neos_fail += viscosity_failures;
-    if (viscosity_failures > 0) return TaskStatus::fail;
+    if (viscosity_failures > 0) {
+      std::cerr << "### FATAL ERROR: " << viscosity_failures
+                << " relativistic viscous-source solves failed" << std::endl;
+      return TaskStatus::fail;
+    }
   }
   if (is_resistive_rel && !use_electric_ct) AddResistiveChargeSource(beta_dt);
   if (psrc->const_accel)  psrc->ConstantAccel(w0, peos->eos_data, beta_dt, u0);
@@ -1317,7 +1326,11 @@ TaskStatus MHD::RecoverViscousPrimitives(
   pmy_pack->pmesh->ecounter.neos_fail += failures;
   pmy_pack->pmesh->ecounter.maxit_c2p =
       std::max(pmy_pack->pmesh->ecounter.maxit_c2p, max_iterations);
-  if (failures > 0) return TaskStatus::fail;
+  if (failures > 0) {
+    std::cerr << "### FATAL ERROR: " << failures
+              << " explicit viscous primitive recoveries failed" << std::endl;
+    return TaskStatus::fail;
+  }
   return TaskStatus::complete;
 }
 
@@ -1335,7 +1348,10 @@ TaskStatus MHD::ConToPrim(Driver *pdrive, int stage) {
     peos->ConsToPrim(u0, b0, w0, bcc0, false, 0, n1m1, 0, n2m1, 0, n3m1);
     return TaskStatus::complete;
   }
-  return RecoverViscousPrimitives(visc_u0, 0.0, true, false,
+  // Explicit transport and source updates do not preserve the algebraic shear
+  // constraints to roundoff. Project, limit, and store the accepted stress before
+  // the next stage rather than recovering from an unconstrained six-component state.
+  return RecoverViscousPrimitives(visc_u0, 0.0, false, true,
                                   0, n1m1, 0, n2m1, 0, n3m1);
 }
 

@@ -900,11 +900,12 @@ bool ImplicitViscousPrimitiveResidual(
                                + SQR(u.bx) + SQR(u.by) + SQR(u.bz));
   ShearTemporal temporal = ShearTemporalComponents(u1, u2, u3, pi);
   Real pressure = (u.e - em_energy - temporal.p00 + u.d - u.d*lor)/pressure_den;
-  if (!(pressure > 0.0) || !isfinite(pressure)) return false;
 
   const Real shear_norm = ShearInvariantNorm(u1, u2, u3, pi);
   const Real enthalpy_density = u.d/lor + eos.gamma*pressure/gm1;
-  if (shear_norm > shear_chi_max*enthalpy_density) {
+  if (!isfinite(shear_norm)) return false;
+  if (!(pressure > 0.0) || !isfinite(pressure)
+      || shear_norm > shear_chi_max*enthalpy_density) {
     const Real pressure0 = (u.e - em_energy + u.d - u.d*lor)/pressure_den;
     const Real enthalpy0 = u.d/lor + eos.gamma*pressure0/gm1;
     const Real enthalpy_slope = eos.gamma*temporal.p00/(gm1*pressure_den);
@@ -919,8 +920,8 @@ bool ImplicitViscousPrimitiveResidual(
     pi.p23 *= scale;
     temporal = ShearTemporalComponents(u1, u2, u3, pi);
     pressure = (u.e - em_energy - temporal.p00 + u.d - u.d*lor)/pressure_den;
-    if (!(pressure > 0.0) || !isfinite(pressure)) return false;
   }
+  if (!(pressure > 0.0) || !isfinite(pressure)) return false;
 
   const Real s1_fl = u.mx - (w.ey*u.bz - w.ez*u.by) - temporal.p01;
   const Real s2_fl = u.my - (w.ez*u.bx - w.ex*u.bz) - temporal.p02;
@@ -997,9 +998,16 @@ bool SingleC2P_IdealSRRMHDImplicitViscous(
           u, eos, ex_star, ey_star, ez_star, electric_kappa, pi_star, pi_ns,
           shear_dt_over_tau, shear_chi_max, fixed_spatial_shear, minus[0], minus[1],
           minus[2], fminus[0], fminus[1], fminus[2], scratch_w, scratch_pi);
-      if (!plus_ok || !minus_ok) return false;
       for (int row = 0; row < 3; ++row) {
-        jacobian[row][col] = (fplus[row] - fminus[row])/(2.0*step);
+        if (plus_ok && minus_ok) {
+          jacobian[row][col] = (fplus[row] - fminus[row])/(2.0*step);
+        } else if (plus_ok) {
+          jacobian[row][col] = (fplus[row] - residual[row])/step;
+        } else if (minus_ok) {
+          jacobian[row][col] = (residual[row] - fminus[row])/step;
+        } else {
+          return false;
+        }
       }
     }
 

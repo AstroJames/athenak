@@ -308,6 +308,7 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
       std::exit(EXIT_FAILURE);
     }
     std::string integrator = pin->GetOrAddString("time", "integrator", "rk2");
+    const bool supported_imex = integrator == "imex2" || integrator == "imex3";
     if (use_electric_ct) {
       if (pmy_pack->pmesh->one_d && pmy_pack->pmesh->nmb_total != 1) {
         std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
@@ -316,16 +317,16 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
                   << std::endl;
         std::exit(EXIT_FAILURE);
       }
-      if (integrator.compare("imex2") != 0) {
+      if (!supported_imex) {
         std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-                  << std::endl << "Dynamic dual CT requires the IMEX-SSP2(3,2,2) "
-                  << "integrator selected by <time>/integrator=imex2" << std::endl;
+                  << std::endl << "Dynamic dual CT requires <time>/integrator="
+                  << "imex2 or imex3" << std::endl;
         std::exit(EXIT_FAILURE);
       }
-    } else if (integrator.compare("imex2") != 0) {
+    } else if (!supported_imex) {
       std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
                 << std::endl << "Dynamic resistive SRMHD requires "
-                << "<time>/integrator=imex2" << std::endl;
+                << "<time>/integrator=imex2 or imex3" << std::endl;
       std::exit(EXIT_FAILURE);
     }
   }
@@ -371,9 +372,12 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
       Kokkos::realloc(ect_face_prev.x1f, nmb, ncells3, ncells2, ncells1+1);
       Kokkos::realloc(ect_face_prev.x2f, nmb, ncells3, ncells2+1, ncells1);
       Kokkos::realloc(ect_face_prev.x3f, nmb, ncells3+1, ncells2, ncells1);
-      Kokkos::realloc(ect_src.x1f, nmb, 3, ncells3, ncells2, ncells1+1);
-      Kokkos::realloc(ect_src.x2f, nmb, 3, ncells3, ncells2+1, ncells1);
-      Kokkos::realloc(ect_src.x3f, nmb, 3, ncells3+1, ncells2, ncells1);
+      // IMEX3 stores four diagonal stiff-source evaluations.  Allocate the maximum
+      // tableau size supported by Driver; IMEX2 uses only the first three entries.
+      constexpr int max_imex_stages = 4;
+      Kokkos::realloc(ect_src.x1f, nmb, max_imex_stages, ncells3, ncells2, ncells1+1);
+      Kokkos::realloc(ect_src.x2f, nmb, max_imex_stages, ncells3, ncells2+1, ncells1);
+      Kokkos::realloc(ect_src.x3f, nmb, max_imex_stages, ncells3+1, ncells2, ncells1);
       Kokkos::realloc(ect_u_prev, nmb, 3, ncells3, ncells2, ncells1);
       Kokkos::realloc(bfld.x1e, nmb, ncells3+1, ncells2+1, ncells1);
       Kokkos::realloc(bfld.x2e, nmb, ncells3+1, ncells2, ncells1+1);
