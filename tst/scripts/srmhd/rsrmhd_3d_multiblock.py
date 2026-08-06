@@ -54,8 +54,9 @@ def analyze():
     # These are the one-MeshBlock physical error norms at the same global resolution.
     # Matching them verifies that faces, edges, and corners introduced by the 2x2x2
     # decomposition do not alter the evolved solution.
-    reference = np.array([2.1626193782817325e-3, 1.0438390241497808e-1,
-                          2.7744929495405313e-4, 1.2079908827251074e-2])
+    # One-MeshBlock reference for the project-wide relativistic EOS choice gamma=4/3.
+    reference = np.array([2.1617310309207517e-3, 1.0443385390870807e-1,
+                          2.7771853764054644e-4, 1.2138306088015471e-2])
     if not np.allclose(data[:, 2:6], reference, rtol=2.0e-11, atol=2.0e-13):
         logger.warning('3D MeshBlock solution differs from one-block reference: %s',
                        data[:, 2:6])

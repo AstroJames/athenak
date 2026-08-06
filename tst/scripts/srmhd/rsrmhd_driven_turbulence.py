@@ -179,8 +179,10 @@ def analyze():
         'pressure integral': (history_3d[0, 10], 1.0),
         'velocity variance': (history_3d[0, 28], 0.0),
         'Lorentz-factor integral': (history_3d[0, 31], 1.0),
-        'magnetization': (history_3d[0, 33], 4.0/7.0),
-        'Alfven speed': (history_3d[0, 37], np.sqrt(4.0/11.0)),
+        # With gamma=4/3, rho=pressure=1 and beta=1 give w=5, B^2=2,
+        # sigma=B^2/w=2/5, and v_A=sqrt(sigma/(1+sigma))=sqrt(2/7).
+        'magnetization': (history_3d[0, 33], 2.0/5.0),
+        'Alfven speed': (history_3d[0, 37], np.sqrt(2.0/7.0)),
     }
     for label, (actual, expected) in initial_expected.items():
         if not np.isclose(actual, expected, rtol=0.0, atol=2.0e-13):

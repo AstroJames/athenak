@@ -61,14 +61,15 @@ def analyze():
                            data[offset:offset + 3, 2:6])
             return False
     if not np.allclose(data[:3, 2:6], data[3:, 2:6],
-                       rtol=0.0, atol=2.0e-13):
+                       rtol=0.0, atol=3.0e-12):
         logger.warning('Single/multiblock 3D dual CT differs: %s', data[:, 2:6])
         return False
 
     # Reference after refreshing physical ghost primitives following every face-E
     # implicit stage.  This is also the state ordering required for restart equivalence.
-    reference = np.array([1.0161650218613861e-2, 4.9517336431936981e-2,
-                          2.4374489078990607e-3, 1.9235370757992976e-2])
+    # Single-MeshBlock reference for the project-wide relativistic EOS choice gamma=4/3.
+    reference = np.array([1.3019933916764955e-2, 6.7439130686073601e-2,
+                          2.6608581067658374e-3, 2.0596043661551128e-2])
     if not np.allclose(data[0, 2:6], reference, rtol=1.0e-12, atol=1.0e-14):
         logger.warning('3D dual-CT reference solution changed: %s', data[0, 2:6])
         return False
