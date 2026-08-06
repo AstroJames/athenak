@@ -52,15 +52,16 @@ def main():
     vy_limit = symmetric_limit([item[2]["vy"] for item in datasets])
     pi_limit = symmetric_limit([item[2]["pi12"] for item in datasets])
 
-    fig, axes = plt.subplots(2, 3, figsize=(11.0, 6.7), constrained_layout=True,
+    fig, axes = plt.subplots(2, 3, figsize=(7.4, 8.8), constrained_layout=True,
                              sharex=True, sharey=True)
-    row_labels = [r"$\nu_{\rm sh}=0$",
+    row_labels = [r"$\mathrm{ideal}$",
                   rf"$\nu_{{\rm sh}}={args.viscosity:g}$"]
     specs = [
         ("omega", r"$\omega^z$", omega_limit),
         ("vy", r"$v^y$", vy_limit),
         ("pi12", r"$\pi^{xy}$", pi_limit),
     ]
+    images = [None, None, None]
     for row, (x, y, fields) in enumerate(datasets):
         extent = image_extent(x, y)
         for column, (field, label, limit) in enumerate(specs):
@@ -73,21 +74,26 @@ def main():
                 image = ax.imshow(fields[field], origin="lower", extent=extent,
                                   interpolation="nearest", cmap="RdBu_r",
                                   vmin=-limit, vmax=limit)
-            ax.set_aspect("equal")
+            ax.set_box_aspect(2.0)
             ax.grid(False)
-            ax.text(0.03, 0.95, row_labels[row], transform=ax.transAxes,
-                    ha="left", va="top",
-                    bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "none"})
-            ax.text(0.97, 0.95, label, transform=ax.transAxes, ha="right", va="top",
-                    bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "none"})
-            fig.colorbar(image, ax=ax, fraction=0.047, pad=0.02)
+            images[column] = image
             if row == 1:
                 ax.set_xlabel(r"$x/L$")
             if column == 0:
                 ax.set_ylabel(r"$y/L$")
+    for row, label in enumerate(row_labels):
+        axes[row, 0].text(0.03, 0.96, label, transform=axes[row, 0].transAxes,
+                          ha="left", va="top",
+                          bbox={"facecolor": "white", "alpha": 0.82,
+                                "edgecolor": "none"})
     axes[0, 0].text(0.03, 0.04, rf"$t/t_c={args.time:g}$",
                     transform=axes[0, 0].transAxes, ha="left", va="bottom",
                     bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "none"})
+    for column, (_, label, _) in enumerate(specs):
+        colorbar = fig.colorbar(images[column], ax=axes[:, column], location="top",
+                                orientation="horizontal", fraction=0.035,
+                                pad=0.025, aspect=24)
+        colorbar.set_label(label)
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,106 @@
+# Production scan: cooling-time dependence of mechanically driven SRRMHD.
+#
+# The uniform initial state has rho0=1, gamma=4/3, beta0=1, and sigma0=0.1.
+# These constraints give P0=1/16, B0^2=1/8, w0=5/4, and cs0^2=1/15.
+# A reference Mach number of 0.5 therefore gives v_ref=sqrt(15)/30.  With
+# L_drive=L/k_peak=1/2, t_eddy=L_drive/v_ref=sqrt(15).  The nominal
+# eta=nu_sh=sqrt(15)/6000 gives Re=Rm=100.  The forcing correlation time is
+# t_corr=t_eddy and the production duration is 10 t_eddy.  The scan runner
+# changes only the cooling model/time and output names between cases.
+
+<comment>
+problem = 64^3 OU four-acceleration cooling-time scan, beta0=1, sigma0=0.1
+
+<job>
+basename = driven_cooling_tcool1
+
+<mesh>
+nghost = 4
+nx1 = 64
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+
+nx2 = 64
+x2min = 0.0
+x2max = 1.0
+ix2_bc = periodic
+ox2_bc = periodic
+
+nx3 = 64
+x3min = 0.0
+x3max = 1.0
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 32
+nx2 = 32
+nx3 = 32
+
+<coord>
+special_rel = true
+
+<time>
+evolution = dynamic
+integrator = imex3
+cfl_number = 0.4
+tlim = 38.72983346207417
+nlim = -1
+ndiag = 100
+
+<mhd>
+eos = ideal
+gamma = 1.3333333333333333
+resistive_rel = true
+electric_ct = false
+resistivity_model = uniform
+resistivity = 0.0006454972243679028
+relativistic_viscosity = true
+linearized_shear_target_1d = false
+shear_viscosity = 0.0006454972243679028
+shear_relaxation_time = 0.02
+shear_chi_max = 2.0
+relativistic_cooling = entropy
+cooling_time = 3.872983346207417
+cooling_adiabat = 0.0625
+cooling_cfl = 0.1
+rsolver = llf
+reconstruct = wenoz
+fofc = true
+fofc_force = false
+
+<problem>
+pgen_name = rsrmhd_decaying_turbulence
+user_hist = true
+density = 1.0
+pressure = 0.0625
+velocity_rms = 0.0
+magnetic_configuration = uniform_z
+plasma_beta = 1.0
+profile_name = driven_cooling_tcool1
+
+<velocity_spectral_ic>
+nlow = 1
+nhigh = 3
+spectrum = parabolic
+iseed = 1837
+
+<turb_driving>
+relativistic_forcing = mechanical
+tcorr = 3.872983346207417
+accel_rms = 0.09
+nlow = 1
+nhigh = 3
+driving_geometry = isotropic
+driving_profile = parabola
+sol_weight = 1.0
+parabola_peak = 2.0
+parabola_width = 0.5
+
+<output1>
+file_type = hst
+dt = 0.19364916731037085
+user_hist_only = true
+data_format = %20.12e

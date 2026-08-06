@@ -112,7 +112,7 @@ def plot_spectra(spectra, output, crossing_time=None):
         axis.grid(alpha=0.18)
     if crossing_time is not None:
         axes[1].text(
-            0.05, 0.08, rf"$t/t_{{\rm eddy}}={crossing_time:.4g}$",
+            0.05, 0.08, rf"$t/t_0={crossing_time:.4g}$",
             transform=axes[1].transAxes, ha="left", va="bottom",
             bbox=comparison.annotation_box(),
         )
@@ -159,6 +159,8 @@ def main():
         if args.snapshot is None:
             profile = base.read_profile(args.root/key, key)
             spectra[key] = spectra_from_profile(profile)
+            history = base.read_history(args.root/key/f"{key}.user.hst")
+            times.append(float(history["time"][-1]))
         else:
             binary = args.root/key/"bin"/f"{key}.prim.{args.snapshot:05d}.bin"
             time, spectra[key] = spectra_from_binary(binary)

@@ -27,7 +27,7 @@ def transverse_solution(time, nu, tau, wave_number, amplitude):
 
 
 def longitudinal_solution(time, nu, tau, wave_number, amplitude):
-    gamma = 5.0 / 3.0
+    gamma = 4.0 / 3.0
     pressure = gamma - 1.0
     enthalpy = 1.0 + gamma
     matrix = np.array([
@@ -101,7 +101,7 @@ def write_csv(path, diffusion, timestep, longitudinal):
 
 def make_plot(diffusion, timestep, longitudinal, output_dir):
     amplitude = 1.0e-4
-    enthalpy = 1.0 + 5.0 / 3.0
+    enthalpy = 1.0 + 4.0 / 3.0
     wave_number = 2.0 * np.pi
     dense_diffusion_time = np.linspace(0.0, 2.0, 500)
     dense_longitudinal_time = np.linspace(0.0, 1.0, 500)

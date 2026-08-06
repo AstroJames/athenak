@@ -31,7 +31,7 @@ special_rel = true
 
 <time>
 evolution  = dynamic
-integrator = imex2
+integrator = imex3
 cfl_number = 0.4
 tlim       = 2.0
 nlim       = -1
@@ -39,7 +39,7 @@ ndiag      = 100
 
 <mhd>
 eos                        = ideal
-gamma                      = 1.6666666666666667
+gamma                      = 1.3333333333333333
 resistive_rel              = true
 resistivity_model          = uniform
 resistivity                = 0.000024

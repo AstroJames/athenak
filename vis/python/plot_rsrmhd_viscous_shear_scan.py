@@ -17,7 +17,7 @@ AMPLITUDE = 0.5
 TAU_PI = 0.2
 TIME = 0.4
 WAVE_NUMBER = 2.0 * np.pi
-ENTHALPY_DENSITY = 8.0 / 3.0
+ENTHALPY_DENSITY = 7.0 / 3.0
 
 
 def telegraph_amplitudes(viscosity):

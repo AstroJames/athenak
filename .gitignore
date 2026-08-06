@@ -1,11 +1,13 @@
 # build directories
 build/
 manual_build/
+/build_*/
 
 # Claude Code tool directory (worktrees, session state)
 .claude/
 
 # Athena output files
+/outputs/
 *.tab
 *.vtk
 *.bin
@@ -31,6 +33,9 @@ CMake*
 # Python cache files
 __pycache__/
 *.pyc
+
+# Local browser-test artifacts
+/.playwright-cli/
 
 *.gitignore
 AGENTS.md

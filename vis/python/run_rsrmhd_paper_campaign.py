@@ -13,6 +13,12 @@ import subprocess
 import time
 
 
+T0 = 15.0**0.5
+DRIVE_SCALE = 0.5
+TARGET_MACH = 0.5
+COOLING_VISCOSITY = T0/6000.0
+
+
 GROUP_DIRS = {
     "current_sheet": "01_current_sheet",
     "ohmic_harris": "02_ohmic_harris",
@@ -24,7 +30,8 @@ GROUP_DIRS = {
     "boost_rotation": "08_boosted_and_rotated_shear",
     "khi": "09_viscous_khi",
     "decaying": "10_decaying_turbulence",
-    "driven": "11_driven_turbulence",
+    "driven_cooling": "11_driven_cooling_scan",
+    "antenna": "12_antenna",
 }
 
 
@@ -77,7 +84,8 @@ class Campaign:
             json.dumps(source, indent=2) + "\n", encoding="utf-8",
         )
 
-    def run_case(self, group, name, input_path, overrides=(), ranks=1):
+    def run_case(self, group, name, input_path, overrides=(), ranks=1,
+                 metadata=None):
         case_dir = self.root/GROUP_DIRS[group]/name
         case_dir.mkdir(parents=True, exist_ok=True)
         record_path = case_dir/"run.json"
@@ -107,6 +115,8 @@ class Campaign:
             "started_utc": utc_now(),
             "status": "running",
         }
+        if metadata is not None:
+            record.update(metadata)
         record_path.write_text(json.dumps(record, indent=2) + "\n",
                                encoding="utf-8")
         start = time.monotonic()
@@ -278,12 +288,18 @@ class Campaign:
 
     def khi(self):
         input_path = self.repo/"inputs/tests/rsrmhd_viscous_kh.athinput"
-        for name, viscosity in (("inviscid_512", 0.0), ("viscous_512", 0.0001)):
-            stem = name.removesuffix("_512")
-            self.run_case("khi", name, input_path, (
+        for name, viscosity in (
+                ("inviscid_384x768", 0.0),
+                ("viscous_384x768", 0.0001)):
+            stem = name.removesuffix("_384x768")
+            ideal_overrides = () if viscosity > 0.0 else (
+                "time/integrator=rk3", "mhd/resistive_rel=false",
+                "mhd/relativistic_viscosity=false",
+            )
+            self.run_case("khi", name, input_path, (*ideal_overrides,
                 f"job/basename=kh_{stem}", f"mhd/shear_viscosity={viscosity}",
-                "mesh/nx1=512", "mesh/nx2=512", "meshblock/nx1=64",
-                "meshblock/nx2=64", "time/tlim=4.0",
+                "mesh/nx1=384", "mesh/nx2=768", "meshblock/nx1=64",
+                "meshblock/nx2=64", "time/tlim=3.0",
                 f"problem/viscous_diagnostic_name=kh_{stem}",
                 f"problem/viscous_profile_name=kh_{stem}",
             ), ranks=8)
@@ -296,16 +312,66 @@ class Campaign:
             )
             self.run_case("decaying", name, input_path, ranks=8)
 
-    def driven(self):
-        cases = (
-            ("n32", "rsrmhd_driven_turbulence_3d_mach0p5_re50.athinput"),
-            ("n64", "rsrmhd_driven_turbulence_3d64_mach0p5_re50.athinput"),
+    def driven_cooling(self):
+        input_path = (
+            self.repo/"inputs/paper_tests"/
+            "rsrmhd_driven_cooling_scan_3d64.athinput"
         )
-        for name, filename in cases:
-            self.run_case(
-                "driven", name, self.repo/"inputs/paper_tests"/filename,
-                ranks=8,
-            )
+        cases = (
+            ("no_cooling", "none", None),
+            ("tcool_0p1", "entropy", 0.1),
+            ("tcool_1", "entropy", 1.0),
+            ("tcool_10", "entropy", 10.0),
+        )
+        for name, model, ratio in cases:
+            cooling_time = T0 if ratio is None else ratio*T0
+            basename = f"driven_cooling_{name}"
+            self.run_case("driven_cooling", name, input_path, (
+                f"job/basename={basename}",
+                f"mhd/relativistic_cooling={model}",
+                f"mhd/cooling_time={cooling_time:.17g}",
+                f"problem/profile_name={basename}",
+            ), ranks=8, metadata={
+                "resolution": 64,
+                "meshblock": 32,
+                "turnovers": 10.0,
+                "eddy_time": T0,
+                "forcing_correlation_time": T0,
+                "accel_rms": 0.09,
+                "target_mach_reference": TARGET_MACH,
+                "drive_scale": DRIVE_SCALE,
+                "nominal_reynolds": 100.0,
+                "nominal_magnetic_reynolds": 100.0,
+                "viscosity": COOLING_VISCOSITY,
+                "resistivity": COOLING_VISCOSITY,
+                "initial_beta": 1.0,
+                "initial_magnetization": 0.1,
+                "adiabatic_index": 4.0/3.0,
+                "integrator": "imex3",
+                "electric_field_layout": "cell_centered",
+                "reconstruction": "wenoz",
+                "fofc": True,
+                "cooling_model": model,
+                "cooling_time_over_eddy_time": ratio,
+                "cooling_time": cooling_time,
+            })
+
+    def antenna(self):
+        input_path = (
+            self.repo/"inputs/paper_tests"/"rsrmhd_antenna_zhdankin32.athinput"
+        )
+        self.run_case("antenna", "fluid_calibrated", input_path, (
+            "antenna_driving/amplitude_fraction_plus=0.65",
+            "antenna_driving/amplitude_fraction_minus=0.65",
+        ), ranks=8, metadata={
+            "resolution": 32,
+            "adiabatic_index": 4.0/3.0,
+            "integrator": "imex3",
+            "electric_field_layout": "cell_centered",
+            "reconstruction": "wenoz",
+            "fofc": True,
+            "antenna_amplitude_fraction": 0.65,
+        })
 
 
 def main():

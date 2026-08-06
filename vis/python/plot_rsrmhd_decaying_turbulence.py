@@ -50,7 +50,7 @@ def read_profile(directory, stem):
         for index, name in enumerate(names)
     }
     fields["chi"] = fields["pi_norm"] / (
-        fields["rho"] + (5.0/3.0)*fields["eint"]
+        fields["rho"] + (4.0/3.0)*fields["eint"]
     )
     return x, y, fields
 
@@ -139,7 +139,7 @@ def plot_fields(profiles, output, final_crossing_time, cases=CASES):
     fig.colorbar(images[4], ax=axes[:, 1], location="right", shrink=0.72, pad=0.02)
     fig.colorbar(images[8], ax=axes[:, 2], location="right", shrink=0.72, pad=0.02)
     axes[0, 2].text(
-        0.97, 0.04, rf"$t/t_{{\rm eddy}}={final_crossing_time:.2f}$",
+        0.97, 0.04, rf"$t/t_0={final_crossing_time:.2f}$",
         transform=axes[0, 2].transAxes, ha="right", va="bottom",
         bbox={"facecolor": "white", "alpha": 0.78, "edgecolor": "none"},
     )
@@ -196,7 +196,7 @@ def plot_histories(histories, output, eddy_time, cases=CASES):
                       ha="left", va="bottom")
         axis.grid(alpha=0.18)
     for axis in axes[-1, :]:
-        axis.set_xlabel(r"$t/t_{\rm eddy}$")
+        axis.set_xlabel(r"$t/t_0$")
     fig.legend(handles, labels, loc="outside upper center", ncol=3,
                frameon=False)
     fig.savefig(output, dpi=145, bbox_inches="tight")

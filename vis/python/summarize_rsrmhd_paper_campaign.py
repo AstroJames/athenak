@@ -9,10 +9,12 @@ from pathlib import Path
 import shutil
 
 
-def is_production(record):
+def is_production(record, record_path):
     """Return whether a run record belongs to the final production matrix."""
-    group = record["group"]
-    case = record["case"]
+    if any(part.startswith("preliminary_") for part in record_path.parts):
+        return False
+    group = record.get("group", "")
+    case = record.get("case", "")
     if group == "charged_vortex":
         return case in {
             f"{layout}_{resolution}"
@@ -21,6 +23,8 @@ def is_production(record):
         }
     if group == "decomposition":
         return case.startswith("dual_")
+    if group == "khi":
+        return case in {"inviscid_384x768", "viscous_384x768"}
     return True
 
 
@@ -45,8 +49,10 @@ def main():
     preliminary = []
     for path in sorted(root.rglob("run.json")):
         record = json.loads(path.read_text(encoding="utf-8"))
-        record["record_path"] = str(path.relative_to(root))
-        (production if is_production(record) else preliminary).append(record)
+        relative_path = path.relative_to(root)
+        record["record_path"] = str(relative_path)
+        target = production if is_production(record, relative_path) else preliminary
+        target.append(record)
 
     columns = (
         "group", "case", "status", "mpi_ranks", "elapsed_seconds",
@@ -93,7 +99,9 @@ def main():
     )
     scripts = root/"scripts"
     scripts.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(__file__, scripts/Path(__file__).name)
+    archived_script = scripts/Path(__file__).name
+    if Path(__file__).resolve() != archived_script.resolve():
+        shutil.copy2(__file__, archived_script)
 
     incomplete = [
         record for record in production if record.get("status") != "completed"

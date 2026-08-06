@@ -3,7 +3,9 @@
 This directory contains the production input files used for the viscosity and
 visco-resistive comparisons in the paper.  The smaller regression tests remain
 under `inputs/tests/`; these inputs retain the resolutions, transport
-coefficients, reconstruction, and random seeds used for the figures.
+coefficients, reconstruction, and random seeds used for the figures. The
+reusable ideal-sector input now uses the preferred RK3 integrator described
+below; the permanent campaign metadata retain the exact earlier run settings.
 
 The complete 2026 rerun matrix, including command provenance and the higher
 resolution figure cases, is documented in `PRODUCTION_CAMPAIGN.md`.
@@ -18,12 +20,12 @@ resolution figure cases, is documented in `PRODUCTION_CAMPAIGN.md`.
 | `rsrmhd_viscous_shear_nu040.athinput` | 256 | viscous SR hydro limit | `nu_sh=0.040`, `tau_pi=0.2` |
 | `rsrmhd_viscous_shear_nu050.athinput` | 256 | viscous SR hydro limit | `nu_sh=0.050`, `tau_pi=0.2` |
 | `rsrmhd_ohmic_decay.athinput` | 2048 | uniform-resistivity SRMHD | `eta=(0.001,0.003,0.01,0.03)`, `a=0.02`, `B_guide=10` |
-| `rsrmhd_decaying_turbulence_ideal.athinput` | 512 x 512 | ideal SRMHD | `eta=nu_sh=0` |
+| `rsrmhd_decaying_turbulence_ideal.athinput` | 512 x 512 | ideal SRMHD | `eta=nu_sh=0`, RK3 |
 | `rsrmhd_decaying_turbulence_pm1.athinput` | 512 x 512 | visco-resistive SRMHD | `nu_sh=0.0012`, `eta=0.0012`, `Re=50`, `Pm=1` |
 | `rsrmhd_decaying_turbulence_pm10.athinput` | 512 x 512 | visco-resistive SRMHD | `nu_sh=0.0012`, `eta=0.00012`, `Re=50`, `Pm=10` |
 | `rsrmhd_decaying_turbulence_pm50.athinput` | 512 x 512 | visco-resistive SRMHD | `nu_sh=0.0012`, `eta=0.000024`, `Re=50`, `Pm=50` |
-| `rsrmhd_driven_turbulence_mach0p5_re200.athinput` | 128 x 128 | mechanically driven visco-resistive SRMHD | `M_turb=0.5`, nominal `Re=Rm=200`, `Pm=1` |
-| `rsrmhd_driven_turbulence_3d_mach0p5_re50.athinput` | 32 x 32 x 32 | mechanically driven visco-resistive SRMHD | rest start, beta-one `B^z` guide field, target `M_turb=0.5`, nominal `Re=Rm=50`, `Pm=1` |
+| `../tests/rsrmhd_viscous_kh.athinput` | 384 x 768 | ideal and viscous SR hydrodynamics | AthenaK-paper density, shear, and perturbation profiles, without particles |
+| `rsrmhd_driven_cooling_scan_3d64.athinput` | 64 x 64 x 64 | mechanically driven visco-resistive SRMHD | no cooling and `t_cool/t_0=(0.1,1,10)`, nominal `Re=Rm=100`, `Pm=1` |
 | `rsrmhd_antenna_zhdankin32.athinput` | 32 x 32 x 32 | electromagnetic antenna-driven visco-resistive SRMHD | Zhdankin eight-mode baseline, `beta_0=1`, `sigma_0=0.5`, nominal `Re=Rm=50` |
 
 Here `Pm = nu_sh/eta`.  All finite-`Pm` simulations therefore have the same
@@ -33,10 +35,35 @@ magnetic diffusivity.  They use uniform resistivity, `tau_pi=0.02`, WENOZ
 reconstruction, and FOFC.  The ideal case uses the same velocity and magnetic
 initial conditions.
 
+New ideal hydrodynamic and ideal-SRMHD calculations pair WENOZ with SSPRK(3,3),
+selected by `integrator=rk3`.  Resistive, viscous, and visco-resistive inputs use
+IMEX-SSP3(4,3,3), selected by `integrator=imex3`; its three explicit stages are
+the same SSPRK(3,3) method.  The archived campaign predates this policy and must
+not be relabelled as RK3/IMEX3 data.
+
 The shear-wave inputs use the resistive SRMHD state container because that is
 where the current viscous IMEX implementation lives, but initialize `B=E=0`.
 The electromagnetic and Ohmic sectors therefore remain exactly inactive, and
 the value of electrical resistivity in those five inputs has no dynamics.
+
+## Relativistic AthenaK-paper KHI
+
+The two-dimensional KHI uses the Lecoanet et al. profile implemented by the
+AthenaK release-paper problem generator.  The domain is
+`-0.5 < x < 0.5`, `-1 < y < 1`, the interfaces lie at `y=+-0.5`, the density
+is 2 between the interfaces and 1 outside, the pressure is 10, the shear
+transition width is 0.05, and the transverse perturbation has amplitude 0.01
+and Gaussian width 0.2.  The matched production grid is `384 x 768`.  We omit both
+the passive contaminant and the Lagrangian tracer particles because the
+viscous comparison uses fluid vorticity, transverse velocity, and shear stress.
+
+The published Newtonian setup has asymptotic shear speed 1, which is not a
+valid relativistic three-velocity.  We retain its unit shear as a unit spatial
+four-velocity, corresponding to asymptotic `|v^x|=1/sqrt(2)`, and use the
+project-wide relativistic EOS choice `gamma=4/3`.  These are the only physical
+adaptations.  Both cases use WENO-Z and FOFC and evolve to `t/t_c=3`.  The
+ideal control disables the resistive and viscous sectors and uses SSPRK(3,3).
+The `nu_sh=1e-4` case uses IMEX-SSP3(4,3,3).
 
 ## Zhdankin antenna calibration
 

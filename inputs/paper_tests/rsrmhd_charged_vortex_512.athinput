@@ -31,7 +31,7 @@ special_rel = true
 
 <time>
 evolution  = dynamic
-integrator = imex2
+integrator = imex3
 cfl_number = 0.5
 ndiag      = 100
 nlim       = -1

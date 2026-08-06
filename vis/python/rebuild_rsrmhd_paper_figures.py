@@ -20,7 +20,6 @@ import athena_read  # noqa: E402
 import bin_convert  # noqa: E402
 import plot_rsrmhd_decaying_pm_ideal as decaying  # noqa: E402
 import plot_rsrmhd_decaying_turbulence as decaying_base  # noqa: E402
-import plot_rsrmhd_driven_turbulence as driven  # noqa: E402
 import plot_rsrmhd_ohmic_decay as ohmic  # noqa: E402
 import plot_rsrmhd_viscous_phaseb as phaseb  # noqa: E402
 import plot_rsrmhd_viscous_shear_scan as shear  # noqa: E402
@@ -302,7 +301,7 @@ def plot_telegraph(root, figures):
                          "velocity_athenak", "velocity_exact",
                          "stress_athenak", "stress_exact"))
         writer.writerows(rows)
-    telegraph.make_plot(rows, scans, 1.0e-4, 8.0/3.0, figures)
+    telegraph.make_plot(rows, scans, 1.0e-4, 7.0/3.0, figures)
 
 
 def plot_phaseb(root, figures):
@@ -349,19 +348,19 @@ def plot_shear(root, figures):
 
 def plot_khi(root, figures, repo):
     inviscid = sorted(
-        (root/"09_viscous_khi"/"inviscid_512").glob(
+        (root/"09_viscous_khi"/"inviscid_384x768").glob(
             "kh_inviscid-rank*-profile.dat"
         )
     )
     viscous = sorted(
-        (root/"09_viscous_khi"/"viscous_512").glob(
+        (root/"09_viscous_khi"/"viscous_384x768").glob(
             "kh_viscous-rank*-profile.dat"
         )
     )
     command = [
         sys.executable, str(repo/"vis/python/plot_rsrmhd_viscous_kh.py"),
         "--inviscid", *map(str, inviscid), "--viscous", *map(str, viscous),
-        "--output", str(figures/"viscous_kh_fields.png"), "--time", "4",
+        "--output", str(figures/"viscous_kh_fields.png"), "--time", "3",
         "--viscosity", "0.0001",
     ]
     subprocess.run(command, check=True)
@@ -386,17 +385,32 @@ def plot_decaying(root, figures):
     )
 
 
-def plot_driven(root, figures):
-    history_path = (
-        root/"11_driven_turbulence"/"n64"/
-        "driven3d64_mach0p5_re50.user.hst"
-    )
-    history = driven.read_history(history_path)
-    driven.plot_histories(
-        history, figures/"driven_turbulence_integrals",
-        1.449137674618944, 0.5, 0.003450327796711771,
-        0.003450327796711771,
-    )
+def plot_driven_cooling(root, figures, repo, matplotlibrc):
+    command = [
+        sys.executable,
+        str(repo/"vis/python/plot_rsrmhd_driven_cooling_scan.py"),
+        "--root", str(root/"11_driven_cooling_scan"),
+        "--output-base", str(figures/"driven_cooling_scan"),
+        "--matplotlibrc", str(matplotlibrc),
+    ]
+    subprocess.run(command, check=True)
+
+
+def plot_antenna(root, figures, repo, matplotlibrc):
+    case = root/"12_antenna"/"fluid_calibrated"
+    primitive = sorted((case/"bin").glob("antenna_zhdankin32.prim.*.bin"))[-1]
+    antenna = sorted((case/"bin").glob("antenna_zhdankin32.antenna.*.bin"))[-1]
+    history = case/"antenna_zhdankin32.user.hst"
+    subprocess.run([
+        sys.executable, str(repo/"vis/python/plot_rsrmhd_antenna_slices.py"),
+        str(primitive), str(antenna),
+        "--output", str(figures/"antenna_driven_slices.pdf"),
+        "--matplotlibrc", str(matplotlibrc),
+    ], check=True)
+    subprocess.run([
+        sys.executable, str(repo/"vis/python/analyze_rsrmhd_antenna.py"),
+        str(history), "--output", str(case/"summary.json"),
+    ], check=True)
 
 
 def main():
@@ -411,7 +425,7 @@ def main():
         "--only", action="append",
         choices=("current_sheet", "ohmic_harris", "charged_vortex",
                  "telegraph", "phaseb", "shear_layer", "khi",
-                 "decaying", "driven"),
+                 "decaying", "driven_cooling", "antenna"),
         help="rebuild only the selected figure family",
     )
     args = parser.parse_args()
@@ -423,7 +437,6 @@ def main():
     import matplotlib.pyplot as pyplot
     mpl.pyplot = pyplot
     decaying_base.plt = pyplot
-    driven.plt = pyplot
 
     actions = {
         "current_sheet": lambda: plot_current_sheet(root, figures),
@@ -434,12 +447,19 @@ def main():
         "shear_layer": lambda: plot_shear(root, figures),
         "khi": lambda: plot_khi(root, figures, repo),
         "decaying": lambda: plot_decaying(root, figures),
-        "driven": lambda: plot_driven(root, figures),
+        "driven_cooling": lambda: plot_driven_cooling(
+            root, figures, repo, args.matplotlibrc,
+        ),
+        "antenna": lambda: plot_antenna(
+            root, figures, repo, args.matplotlibrc,
+        ),
     }
     selected = args.only if args.only else actions
     for name in selected:
         actions[name]()
-    shutil.copy2(__file__, root/"scripts"/Path(__file__).name)
+    scripts = root/"scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(__file__, scripts/Path(__file__).name)
 
 
 if __name__ == "__main__":

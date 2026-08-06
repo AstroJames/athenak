@@ -40,7 +40,7 @@ def telegraph_solution(time, nu, tau, wave_number, amplitude):
 def run_sweep(athena, input_file, scans, times, output_dir):
     """Run AthenaK at the requested sample times and return Fourier amplitudes."""
     amplitude = 1.0e-4
-    enthalpy_density = 1.0 + 5.0 / 3.0
+    enthalpy_density = 1.0 + 4.0 / 3.0
     rows = []
     for scan_id, cases in enumerate(scans):
         for nu, tau in cases:

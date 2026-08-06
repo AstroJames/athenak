@@ -171,7 +171,7 @@ def plot_fields(profiles, output_stem, final_crossing_time):
         colorbar.set_label(label, labelpad=5)
     axes[0, 2].text(
         0.97, 0.04,
-        "$512^2$\n" + rf"$t/t_{{\rm eddy}}={final_crossing_time:.2f}$",
+        "$512^2$\n" + rf"$t/t_0={final_crossing_time:.2f}$",
         transform=axes[0, 2].transAxes, ha="right", va="bottom",
         bbox=annotation_box(),
     )
@@ -234,7 +234,7 @@ def plot_histories(histories, output_stem, eddy_time):
             )
         axis.grid(alpha=0.18)
     for axis in axes[-1, :]:
-        axis.set_xlabel(r"$t/t_{\rm eddy}$")
+        axis.set_xlabel(r"$t/t_0$")
     fig.legend(
         handles, legend_labels, loc="outside upper center", ncol=4,
         frameon=False,

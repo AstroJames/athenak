@@ -3,8 +3,8 @@
 # This is the resolution counterpart of the cooled 32^3 production box.  The
 # gas starts exactly uniform and at rest: rho0=P0=1 and v=0.  A uniform guide
 # field B^z=sqrt(2 P0/beta0)=sqrt(2) gives beta0=1; there is no random magnetic
-# seed.  The target v_rms=0.3450327796711771 is used only to define
-# L_drive=L/k_peak=1/2, t0=L_drive/v_rms=1.449137674618944, and the nominal
+# seed.  The gamma=4/3 target v_rms=0.2581988897471611 defines
+# L_drive=L/k_peak=1/2, t0=L_drive/v_rms=1.9364916731037087, and the nominal
 # eta=nu_sh=v_rms*L_drive/50 for Re=Rm=50 and Pm=1.  One-sided covariant
 # entropy cooling relaxes toward K0=1 on tau_cool=t0.  The run spans 10 t0.
 
@@ -44,25 +44,25 @@ special_rel = true
 
 <time>
 evolution = dynamic
-integrator = imex2
+integrator = imex3
 cfl_number = 0.4
-tlim = 14.49137674618944
+tlim = 19.364916731037087
 nlim = -1
 ndiag = 100
 
 <mhd>
 eos = ideal
-gamma = 1.6666666666666667
+gamma = 1.3333333333333333
 resistive_rel = true
 resistivity_model = uniform
-resistivity = 0.003450327796711771
+resistivity = 0.002581988897471611
 relativistic_viscosity = true
 linearized_shear_target_1d = false
-shear_viscosity = 0.003450327796711771
+shear_viscosity = 0.002581988897471611
 shear_relaxation_time = 0.02
 shear_chi_max = 2.0
 relativistic_cooling = entropy
-cooling_time = 1.449137674618944
+cooling_time = 1.9364916731037087
 cooling_adiabat = 1.0
 cooling_cfl = 0.1
 rsolver = llf
@@ -88,7 +88,7 @@ iseed = 1837
 
 <turb_driving>
 relativistic_forcing = mechanical
-tcorr = 1.449137674618944
+tcorr = 1.9364916731037087
 accel_rms = 1.20
 nlow = 1
 nhigh = 3
@@ -101,7 +101,7 @@ parabola_width = 0.5
 # Fifty history samples and twenty full-resolution movie frames per turnover.
 <output1>
 file_type = hst
-dt = 0.02898275349237887
+dt = 0.03872983346207418
 user_hist_only = true
 data_format = %20.12e
 
@@ -109,10 +109,10 @@ data_format = %20.12e
 file_type = bin
 variable = mhd_w_bcc
 id = prim
-dt = 0.07245688373094719
+dt = 0.09682458365518544
 
 <output3>
 file_type = bin
 variable = turb_force
 id = force
-dt = 0.07245688373094719
+dt = 0.09682458365518544
