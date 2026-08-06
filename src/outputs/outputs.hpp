@@ -21,7 +21,7 @@
     #error NHISTORY > NREDUCTION in outputs.hpp
 #endif
 
-#define NOUTPUT_CHOICES 159
+#define NOUTPUT_CHOICES 160
 // choices for output variables used in <ouput> blocks in input file
 // TO ADD MORE CHOICES:
 //   - add more strings to array below, change NOUTPUT_CHOICES above appropriately
@@ -101,8 +101,8 @@ static const char *var_choice[NOUTPUT_CHOICES] = {
   // Resistive special-relativistic MHD electric field, charge, and resistivity
   // (152-157)
   "mhd_e1", "mhd_e2", "mhd_e3", "mhd_e", "mhd_q", "mhd_eta",
-  // Electromagnetic antenna (158)
-  "antenna_current"
+  // Electromagnetic antenna (158-159)
+  "antenna_current", "antenna_applied_current"
 };
 
 

@@ -178,17 +178,19 @@ void ProblemGenerator::ResistiveSRMHDDecayingTurbulence(ParameterInput *pin,
               << "the driven-box perturbation is supplied by the forcing" << std::endl;
     std::exit(EXIT_FAILURE);
   }
-  if (magnetic_configuration != "random"
-      && magnetic_configuration != "uniform_z") {
+  const bool uniform_magnetic_field =
+      (magnetic_configuration == "uniform_x"
+       || magnetic_configuration == "uniform_y"
+       || magnetic_configuration == "uniform_z");
+  if (magnetic_configuration != "random" && !uniform_magnetic_field) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-              << std::endl << "<problem>/magnetic_configuration must be random "
-              << "or uniform_z" << std::endl;
+              << std::endl << "<problem>/magnetic_configuration must be random, "
+              << "uniform_x, uniform_y, or uniform_z" << std::endl;
     std::exit(EXIT_FAILURE);
   }
-  if (magnetic_configuration == "uniform_z"
-      && (!pmy_mesh_->three_d || plasma_beta <= 0.0)) {
+  if (uniform_magnetic_field && (!pmy_mesh_->three_d || plasma_beta <= 0.0)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-              << std::endl << "uniform_z requires a three-dimensional mesh and "
+              << std::endl << "A uniform field requires a three-dimensional mesh and "
               << "<problem>/plasma_beta > 0" << std::endl;
     std::exit(EXIT_FAILURE);
   }
@@ -206,7 +208,15 @@ void ProblemGenerator::ResistiveSRMHDDecayingTurbulence(ParameterInput *pin,
   } else {
     Kokkos::deep_copy(pmhd->b0.x1f, 0.0);
     Kokkos::deep_copy(pmhd->b0.x2f, 0.0);
-    Kokkos::deep_copy(pmhd->b0.x3f, sqrt(2.0*pressure0/plasma_beta));
+    Kokkos::deep_copy(pmhd->b0.x3f, 0.0);
+    const Real uniform_field = sqrt(2.0*pressure0/plasma_beta);
+    if (magnetic_configuration == "uniform_x") {
+      Kokkos::deep_copy(pmhd->b0.x1f, uniform_field);
+    } else if (magnetic_configuration == "uniform_y") {
+      Kokkos::deep_copy(pmhd->b0.x2f, uniform_field);
+    } else {
+      Kokkos::deep_copy(pmhd->b0.x3f, uniform_field);
+    }
   }
   if (pmhd->use_electric_ct) {
     // With the required zero initial velocity, ideal E = -v cross B vanishes.
@@ -282,7 +292,7 @@ void SRRMHDDecayingTurbulenceHistory(HistoryData *pdata, Mesh *pm) {
   const int cooling_offset = driven ? 36 : 17;
   const int base_nhist = entropy_cooling ? cooling_offset + 10 : (driven ? 36 : 10);
   const int antenna_offset = base_nhist;
-  pdata->nhist = base_nhist + (antenna ? (driven ? 14 : 29) : 0);
+  pdata->nhist = base_nhist + (antenna ? (driven ? 16 : 31) : 0);
   pdata->label[0] = "volume";
   pdata->label[1] = "ekin";
   pdata->label[2] = "emag";
@@ -372,7 +382,9 @@ void SRRMHDDecayingTurbulenceHistory(HistoryData *pdata, Mesh *pm) {
       pdata->label[antenna_offset+26] = "q_visc";
       pdata->label[antenna_offset+27] = "v_alfven";
     }
-    pdata->label[antenna_offset+(driven ? 13 : 28)] = "jant_fc_cc";
+    pdata->label[antenna_offset+(driven ? 13 : 28)] = "jant_filt";
+    pdata->label[antenna_offset+(driven ? 14 : 29)] = "jant_app";
+    pdata->label[antenna_offset+(driven ? 15 : 30)] = "jant_comp";
   }
 
   auto w = pmhd->w0;
@@ -610,7 +622,11 @@ void SRRMHDDecayingTurbulenceHistory(HistoryData *pdata, Mesh *pm) {
     total.the_array[antenna_offset+11] = pantenna->magnetization_reference;
     total.the_array[antenna_offset+12] = pantenna->angular_frequency_reference;
     total.the_array[antenna_offset+(driven ? 13 : 28)] =
-        pantenna->last_face_cell_mismatch;
+        pantenna->last_layout_filter;
+    total.the_array[antenna_offset+(driven ? 14 : 29)] =
+        pantenna->last_applied_current_rms;
+    total.the_array[antenna_offset+(driven ? 15 : 30)] =
+        pantenna->last_compatibility_error;
   }
   for (int n=0; n<NHISTORY_VARIABLES; ++n) pdata->hdata[n]=total.the_array[n];
 }

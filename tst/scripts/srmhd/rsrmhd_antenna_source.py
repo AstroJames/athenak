@@ -1,6 +1,7 @@
 """Conservative-source regression for the SRRMHD antenna driver."""
 
 import logging
+from pathlib import Path
 
 import numpy as np
 
@@ -12,6 +13,8 @@ logger = logging.getLogger('athena' + __name__[7:])
 def run(**kwargs):
     logger.debug('Running test ' + __name__)
     for layout, electric_ct in (('cell', 'false'), ('face', 'true')):
+        Path(f'build/src/rsrmhd_antenna_source_{layout}.user.hst').unlink(
+            missing_ok=True)
         athena.run('tests/rsrmhd_antenna_source.athinput', [
             'job/basename=rsrmhd_antenna_source_' + layout,
             'problem/profile_name=rsrmhd_antenna_source_' + layout,
@@ -28,7 +31,7 @@ def analyze():
             f'build/src/rsrmhd_antenna_source_{layout}.user.hst'))
         history = history[np.concatenate(([True], np.diff(history[:, 0]) != 0.0))]
         histories[layout] = history
-        if history.shape != (9, 41) or not np.all(np.isfinite(history)):
+        if history.shape != (9, 43) or not np.all(np.isfinite(history)):
             logger.warning('%s antenna history is invalid: shape=%s',
                            layout, history.shape)
             success = False
@@ -53,16 +56,33 @@ def analyze():
             logger.warning('%s antenna current divergence = %.3e',
                            layout, np.max(np.abs(history[:, 14])))
             success = False
-        if np.max(np.abs(history[:, 40])) > 2.0e-12:
-            logger.warning('%s antenna face/cell mismatch = %.3e',
-                           layout, np.max(np.abs(history[:, 40])))
+        layout_filter = np.max(np.abs(history[:, 40]))
+        if layout == 'cell' and layout_filter > 2.0e-12:
+            logger.warning('CC-E antenna layout filter = %.3e', layout_filter)
+            success = False
+        if layout == 'face' and layout_filter <= 2.0e-12:
+            logger.warning('FC-E antenna did not apply the compatible layout filter')
+            success = False
+        applied_rms = history[:, 41]
+        expected_ratio = (1.0 if layout == 'cell'
+                          else np.cos(np.pi/8.0)**2)
+        if not np.allclose(applied_rms, expected_ratio*history[:, 13],
+                           rtol=0.0, atol=2.0e-12):
+            logger.warning('%s applied-current RMS has the wrong layout filter',
+                           layout)
+            success = False
+        if np.max(np.abs(history[:, 42])) > 2.0e-12:
+            logger.warning('%s face/cell compatibility residual = %.3e',
+                           layout, np.max(np.abs(history[:, 42])))
             success = False
 
-    if all(layout in histories and histories[layout].shape == (9, 41)
+    if all(layout in histories and histories[layout].shape == (9, 43)
            for layout in ('cell', 'face')):
-        # The compatible face representation averages to the CC current exactly.
-        if not np.array_equal(histories['cell'][:, 13:15],
-                              histories['face'][:, 13:15]):
+        # The canonical current is common to both layouts; only the actual FC source
+        # receives the expected A_i^T A_i filter.
+        if not np.allclose(histories['cell'][:, 13:15],
+                           histories['face'][:, 13:15],
+                           rtol=0.0, atol=2.0e-12):
             logger.warning('CC-E and FC-E current diagnostics differ')
             success = False
     return success

@@ -172,9 +172,11 @@ void MeshBlockPack::AddPhysics(ParameterInput *pin) {
   // Update the stochastic coefficients once per full step and insert the external
   // four-current after the explicit Maxwell update.
   TaskID antenna_stage(0);
+  TaskID antenna_update(0);
   if (pin->DoesBlockExist("antenna_driving")) {
     pantenna = new AntennaDriver(this, pin);
-    pantenna->IncludeUpdateTask(tl_map["before_timeintegrator"], none);
+    antenna_update = pantenna->IncludeUpdateTask(
+        tl_map["before_timeintegrator"], none);
     pantenna->IncludeApplyTask(tl_map["stagen"], none);
     antenna_stage = pantenna->stage_task_id;
   } else {
@@ -189,7 +191,8 @@ void MeshBlockPack::AddPhysics(ParameterInput *pin) {
   // task lists respectively.
   if (pin->DoesBlockExist("turb_driving")) {
     pturb = new TurbulenceDriver(this, pin);
-    pturb->IncludeInitializeModesTask(tl_map["before_timeintegrator"], none);
+    pturb->IncludeInitializeModesTask(
+        tl_map["before_timeintegrator"], antenna_update);
     pturb->IncludeAddForcingTask(tl_map["stagen"], antenna_stage);
   } else {
     pturb = nullptr;

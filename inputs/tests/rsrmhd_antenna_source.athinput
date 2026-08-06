@@ -42,7 +42,7 @@ ndiag = 1
 
 <mhd>
 eos = ideal
-gamma = 1.6666666666666667
+gamma = 1.3333333333333333
 resistive_rel = true
 electric_ct = false
 resistivity_model = uniform
@@ -77,11 +77,18 @@ spectrum = parabolic
 iseed = 918273
 
 <antenna_driving>
+model = fourier_oscillating_ou
 mode_set = zhdankin8
+nperp_min = 1
+nperp_max = 2
+nparallel_min = 1
+nparallel_max = 2
+current_envelope = band
 current_geometry = apar_double_curl
 guide_axis = z
 apply_source = true
 va_reference = initial_mean
+frequency_model = zhdankin2018
 frequency_factor = 0.6
 decorrelation_factor = 0.5
 amplitude_normalization = apar_rms

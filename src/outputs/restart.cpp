@@ -9,13 +9,16 @@
 #include <sys/stat.h>  // mkdir
 
 #include <algorithm>
+#include <array>
 #include <cstdio>      // fwrite(), fclose(), fopen(), fnprintf(), snprintf()
+#include <cstdint>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <utility> // make_pair
+#include <vector>
 
 #include "athena.hpp"
 #include "coordinates/cell_locations.hpp"
@@ -230,6 +233,7 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
   pin->SetInteger(out_params.block_name, "file_number", out_params.file_number);
   pin->SetReal(out_params.block_name, "last_time", out_params.last_time);
   pin->SetInteger("restart", "state_version", restart_state::version);
+  pin->SetBoolean("restart", "antenna_present", pantenna != nullptr);
 
   // create string holding input parameters (copy of input file)
   std::stringstream ost;
@@ -290,6 +294,18 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
       resfile.Write_any_type(state, sizeof(state), "byte");
     }
     if (pantenna != nullptr) {
+      const std::uint64_t mode_count = pantenna->RestartModeCount();
+      const std::uint64_t payload_bytes = restart_state::AntennaPayloadBytes(
+          mode_count, sizeof(RNG_State), sizeof(Real));
+      const std::array<std::uint64_t, restart_state::antenna_header_words> header = {
+          restart_state::antenna_record_magic,
+          restart_state::antenna_record_schema,
+          payload_bytes,
+          sizeof(RNG_State),
+          restart_state::antenna_diagnostics,
+          mode_count,
+          pantenna->RestartModeSetHash()};
+      resfile.Write_any_type(header.data(), sizeof(header), "byte");
       resfile.Write_any_type(&(pantenna->rstate), sizeof(RNG_State), "byte");
       const Real state[restart_state::antenna_diagnostics] = {
           pantenna->last_power, pantenna->last_current_rms,
@@ -299,19 +315,13 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
           pantenna->injected_momentum2, pantenna->injected_momentum3,
           pantenna->alfven_speed_reference, pantenna->magnetization_reference,
           pantenna->angular_frequency_reference, pantenna->apar_rms[0],
-          pantenna->apar_rms[1], pantenna->last_face_cell_mismatch};
+          pantenna->apar_rms[1], pantenna->last_layout_filter,
+          pantenna->last_applied_current_rms,
+          pantenna->last_compatibility_error};
       resfile.Write_any_type(state, sizeof(state), "byte");
-      pantenna->mode_state.template sync<HostMemSpace>();
-      Real modes[restart_state::antenna_modes];
-      int index = 0;
-      for (int family = 0; family < AntennaDriver::num_families; ++family) {
-        for (int mode = 0; mode < AntennaDriver::num_modes; ++mode) {
-          for (int q = 0; q < AntennaDriver::num_quadratures; ++q) {
-            modes[index++] = pantenna->mode_state.h_view(family, mode, q);
-          }
-        }
-      }
-      resfile.Write_any_type(modes, sizeof(modes), "byte");
+      std::vector<Real> modes;
+      pantenna->PackRestartModes(modes);
+      resfile.Write_any_type(modes.data(), modes.size()*sizeof(Real), "byte");
     }
     if (psrc != nullptr && psrc->relativistic_cooling_model
         == RelativisticCoolingModel::entropy) {
@@ -372,9 +382,9 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
                  + restart_state::turbulence_diagnostics*sizeof(Real);
   }
   if (pantenna != nullptr) {
-    step3size += sizeof(RNG_State)
-                 + (restart_state::antenna_diagnostics
-                    + restart_state::antenna_modes)*sizeof(Real);
+    const std::uint64_t payload_bytes = restart_state::AntennaPayloadBytes(
+        pantenna->RestartModeCount(), sizeof(RNG_State), sizeof(Real));
+    step3size += restart_state::antenna_header_bytes + payload_bytes;
   }
   if (psrc != nullptr && psrc->relativistic_cooling_model
       == RelativisticCoolingModel::entropy) {

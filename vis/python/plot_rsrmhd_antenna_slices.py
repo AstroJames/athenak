@@ -5,10 +5,12 @@ import argparse
 from pathlib import Path
 
 import matplotlib as mpl
-import matplotlib.pyplot as plt
 import numpy as np
 
 import bin_convert
+
+
+plt = None
 
 
 def merge_uniform(data):
@@ -46,6 +48,7 @@ def robust_limits(values, signed=False):
 
 
 def main():
+    global plt
     parser = argparse.ArgumentParser()
     parser.add_argument('primitive', type=Path)
     parser.add_argument('antenna', type=Path)
@@ -53,7 +56,14 @@ def main():
     parser.add_argument('--alfven-speed', type=float, default=0.576869744537761)
     parser.add_argument('--gamma', type=float, default=4.0/3.0)
     parser.add_argument('--slice-index', type=int)
+    parser.add_argument(
+        '--matplotlibrc', type=Path,
+        default=Path('~/.matplotlib/matplotlibrc').expanduser(),
+    )
     args = parser.parse_args()
+    mpl.rc_file(args.matplotlibrc)
+    import matplotlib.pyplot as pyplot
+    plt = pyplot
 
     primitive_data = bin_convert.read_binary(str(args.primitive))
     antenna_data = bin_convert.read_binary(str(args.antenna))
@@ -108,7 +118,6 @@ def main():
         (jant*lx/b0, r'$|\mathbf{J}_{\rm ant}|L/B_0$', 'inferno', False),
     )
 
-    mpl.rc_file('/Users/beattijr/.matplotlib/matplotlibrc')
     fig, axes = plt.subplots(2, 4, figsize=(13.2, 6.8),
                              layout='constrained')
     extent = (
@@ -123,7 +132,11 @@ def main():
             plane, origin='lower', interpolation='nearest', extent=extent,
             cmap=cmap, vmin=vmin, vmax=vmax, aspect='equal'
         )
-        axis.set_title(label)
+        axis.text(
+            0.97, 0.95, label, transform=axis.transAxes,
+            ha='right', va='top',
+            bbox={'facecolor': 'white', 'alpha': 0.82, 'edgecolor': 'none'},
+        )
         if index >= 4:
             axis.set_xlabel(r'$x/L$')
         else:
@@ -132,15 +145,21 @@ def main():
             axis.set_ylabel(r'$y/L$')
         else:
             axis.set_yticklabels([])
-        colorbar = fig.colorbar(image, ax=axis, orientation='horizontal',
-                               pad=0.02, fraction=0.05)
+        colorbar = fig.colorbar(
+            image, ax=axis, orientation='horizontal', location='top',
+            pad=0.02, fraction=0.05,
+        )
         colorbar.ax.tick_params(labelsize=7)
 
     z_position = primitive_data['x3min'] + (kslice + 0.5)*dz
     alfven_time = lx/args.alfven_speed
-    fig.suptitle(
-        rf'$t/t_{{\rm A0}}={primitive_data["time"]/alfven_time:.2f}$, '
-        rf'$z/L={z_position/lz:.3f}$; native ${nx}^3$ cells'
+    axes[0, 0].text(
+        0.03, 0.04,
+        rf'$t/t_{{\rm A0}}={primitive_data["time"]/alfven_time:.2f}$'
+        '\n'
+        rf'$z/L={z_position/lz:.3f}$, ${nx}^3$ cells',
+        transform=axes[0, 0].transAxes, ha='left', va='bottom',
+        bbox={'facecolor': 'white', 'alpha': 0.82, 'edgecolor': 'none'},
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.output, bbox_inches='tight')

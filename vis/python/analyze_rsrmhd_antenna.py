@@ -12,6 +12,15 @@ import athena_read
 
 def summarize(history_path):
     history = athena_read.hst(str(history_path))
+
+    def history_series(*names, required=True):
+        for name in names:
+            if name in history:
+                return np.asarray(history[name])
+        if required:
+            raise KeyError(f'none of the history fields {names!r} are present')
+        return None
+
     time = np.asarray(history['time'])
     volume = np.asarray(history['volume'])
     box_length = float(volume[0]**(1.0/3.0))
@@ -65,6 +74,8 @@ def summarize(history_path):
     velocity_ratio = velocity_rms/alfven_speed
     velocity_mean, velocity_std = mean_and_std(velocity_ratio)
     sigma_mean, sigma_std = mean_and_std(magnetization)
+    layout_filter = history_series('jant_filt', 'jant_layou', 'jant_fc_cc')
+    compatibility = history_series('jant_comp', 'jant_compa', required=False)
 
     return {
         'history': str(Path(history_path).resolve()),
@@ -93,8 +104,12 @@ def summarize(history_path):
         'max_discrete_current_divergence': float(
             np.max(np.abs(history['div_jant']))
         ),
-        'max_face_cell_current_mismatch': float(
-            np.max(np.abs(history['jant_fc_cc']))
+        'max_layout_filter': float(
+            np.max(np.abs(layout_filter))
+        ),
+        'max_face_cell_compatibility_residual': (
+            None if compatibility is None
+            else float(np.max(np.abs(compatibility)))
         ),
     }
 

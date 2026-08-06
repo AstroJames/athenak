@@ -251,7 +251,7 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
        << std::endl << "Input file must set <mhd>/resistive_rel=true" << std::endl;
     exit(EXIT_FAILURE);
   }
-  if ((!power_spectrum_alias) && (ivar==158)
+  if ((!power_spectrum_alias) && (ivar>=158) && (ivar<=159)
       && (pm->pmb_pack->pantenna == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
        << std::endl << "Antenna current output requested in <output> block '"
@@ -720,6 +720,14 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
       outvars.emplace_back("jant1", 0, &(pm->pmb_pack->pantenna->current));
       outvars.emplace_back("jant2", 1, &(pm->pmb_pack->pantenna->current));
       outvars.emplace_back("jant3", 2, &(pm->pmb_pack->pantenna->current));
+    }
+    if (variable.compare("antenna_applied_current") == 0) {
+      outvars.emplace_back("jant_applied1", 0,
+                           &(pm->pmb_pack->pantenna->applied_current));
+      outvars.emplace_back("jant_applied2", 1,
+                           &(pm->pmb_pack->pantenna->applied_current));
+      outvars.emplace_back("jant_applied3", 2,
+                           &(pm->pmb_pack->pantenna->applied_current));
     }
 
     // ADM variables, excluding gauge

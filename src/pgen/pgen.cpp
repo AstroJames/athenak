@@ -8,10 +8,14 @@
 //! Default constructor calls problem generator function, while  constructor for restarts
 //! reads data from restart file, as well as re-initializing problem-specific data.
 
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <utility>
-#include <algorithm>
+#include <vector>
 
 #include "athena.hpp"
 #include "geodesic-grid/geodesic_grid.hpp"
@@ -181,6 +185,23 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
                        : ((phydro != nullptr) ? phydro->psrc : nullptr);
   const int restart_version = pin->DoesParameterExist("restart", "state_version")
       ? pin->GetInteger("restart", "state_version") : 0;
+  if (restart_version > restart_state::version) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+              << std::endl << "Restart state version " << restart_version
+              << " is newer than this executable supports." << std::endl;
+    std::exit(EXIT_FAILURE);
+  }
+  if (restart_version >= 3) {
+    const bool stored_antenna =
+        pin->DoesParameterExist("restart", "antenna_present")
+        && pin->GetBoolean("restart", "antenna_present");
+    if (stored_antenna != (pantenna != nullptr)) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "The antenna presence in the restart record does not "
+                << "match the restarted input." << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+  }
   int nrad = 0, nhydro = 0, nmhd = 0, nmhd_state = 0, nvisc = 0;
   int nforce = 3, nadm = 0, nz4c = 0;
   if (phydro != nullptr) {
@@ -290,29 +311,81 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
                 << std::endl;
       exit(EXIT_FAILURE);
     }
-    char rng_data[sizeof(RNG_State)];
-    Real state[restart_state::antenna_diagnostics];
-    Real modes[restart_state::antenna_modes];
-    if (global_variable::my_rank == 0) {
-      if (resfile.Read_bytes(rng_data, 1, sizeof(RNG_State)) != sizeof(RNG_State)
-          || resfile.Read_Reals(state, restart_state::antenna_diagnostics)
-              != restart_state::antenna_diagnostics
-          || resfile.Read_Reals(modes, restart_state::antenna_modes)
-              != restart_state::antenna_modes) {
+    std::array<char, sizeof(RNG_State)> rng_data;
+    std::array<Real, restart_state::antenna_diagnostics> state;
+    state.fill(0.0);
+    std::vector<Real> modes;
+    if (restart_version == 2) {
+      if (!pantenna->IsLegacyV2ModeSet()) {
         std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-                  << std::endl << "Antenna state read from restart file is incorrect, "
-                  << "restart file is broken." << std::endl;
-        exit(EXIT_FAILURE);
+                  << std::endl << "Version-2 antenna restarts require the historical "
+                  << "zhdankin8 mode set." << std::endl;
+        std::exit(EXIT_FAILURE);
+      }
+      modes.resize(restart_state::antenna_v2_modes);
+      if (global_variable::my_rank == 0) {
+        if (resfile.Read_bytes(rng_data.data(), 1, sizeof(RNG_State))
+                != sizeof(RNG_State)
+            || resfile.Read_Reals(state.data(),
+                                  restart_state::antenna_v2_diagnostics)
+                != restart_state::antenna_v2_diagnostics
+            || resfile.Read_Reals(modes.data(), restart_state::antenna_v2_modes)
+                != restart_state::antenna_v2_modes) {
+          std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                    << std::endl << "Version-2 antenna state is incomplete or corrupt."
+                    << std::endl;
+          std::exit(EXIT_FAILURE);
+        }
+      }
+    } else {
+      std::array<std::uint64_t, restart_state::antenna_header_words> header;
+      if (global_variable::my_rank == 0
+          && resfile.Read_bytes(header.data(), 1, sizeof(header)) != sizeof(header)) {
+        std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                  << std::endl << "Antenna restart header is incomplete or corrupt."
+                  << std::endl;
+        std::exit(EXIT_FAILURE);
+      }
+#if MPI_PARALLEL_ENABLED
+      MPI_Bcast(header.data(), sizeof(header), MPI_CHAR, 0, MPI_COMM_WORLD);
+#endif
+      const std::uint64_t expected_payload = restart_state::AntennaPayloadBytes(
+          pantenna->RestartModeCount(), sizeof(RNG_State), sizeof(Real));
+      if (header[0] != restart_state::antenna_record_magic
+          || header[1] != restart_state::antenna_record_schema
+          || header[2] != expected_payload
+          || header[3] != sizeof(RNG_State)
+          || header[4] != restart_state::antenna_diagnostics
+          || header[5] != static_cast<std::uint64_t>(pantenna->RestartModeCount())
+          || header[6] != pantenna->RestartModeSetHash()) {
+        std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                  << std::endl << "Antenna restart metadata does not match the "
+                  << "configured mode set and stochastic model." << std::endl;
+        std::exit(EXIT_FAILURE);
+      }
+      modes.resize(restart_state::antenna_values_per_mode
+                   *pantenna->RestartModeCount());
+      if (global_variable::my_rank == 0) {
+        if (resfile.Read_bytes(rng_data.data(), 1, sizeof(RNG_State))
+                != sizeof(RNG_State)
+            || resfile.Read_Reals(state.data(), restart_state::antenna_diagnostics)
+                != restart_state::antenna_diagnostics
+            || resfile.Read_Reals(modes.data(), modes.size())
+                != static_cast<IOWrapperSizeT>(modes.size())) {
+          std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                    << std::endl << "Antenna restart payload is incomplete or corrupt."
+                    << std::endl;
+          std::exit(EXIT_FAILURE);
+        }
       }
     }
 #if MPI_PARALLEL_ENABLED
-    MPI_Bcast(rng_data, sizeof(RNG_State), MPI_CHAR, 0, MPI_COMM_WORLD);
-    MPI_Bcast(state, restart_state::antenna_diagnostics, MPI_ATHENA_REAL, 0,
+    MPI_Bcast(rng_data.data(), sizeof(RNG_State), MPI_CHAR, 0, MPI_COMM_WORLD);
+    MPI_Bcast(state.data(), restart_state::antenna_diagnostics, MPI_ATHENA_REAL, 0,
               MPI_COMM_WORLD);
-    MPI_Bcast(modes, restart_state::antenna_modes, MPI_ATHENA_REAL, 0,
-              MPI_COMM_WORLD);
+    MPI_Bcast(modes.data(), modes.size(), MPI_ATHENA_REAL, 0, MPI_COMM_WORLD);
 #endif
-    std::memcpy(&(pantenna->rstate), rng_data, sizeof(RNG_State));
+    std::memcpy(&(pantenna->rstate), rng_data.data(), sizeof(RNG_State));
     pantenna->last_power = state[0];
     pantenna->last_current_rms = state[1];
     pantenna->last_divergence = state[2];
@@ -328,15 +401,10 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
     pantenna->angular_frequency_reference = state[12];
     pantenna->apar_rms[0] = state[13];
     pantenna->apar_rms[1] = state[14];
-    pantenna->last_face_cell_mismatch = state[15];
-    int index = 0;
-    for (int family = 0; family < AntennaDriver::num_families; ++family) {
-      for (int mode = 0; mode < AntennaDriver::num_modes; ++mode) {
-        for (int q = 0; q < AntennaDriver::num_quadratures; ++q) {
-          pantenna->mode_state.h_view(family, mode, q) = modes[index++];
-        }
-      }
-    }
+    pantenna->last_layout_filter = state[15];
+    pantenna->last_applied_current_rms = state[16];
+    pantenna->last_compatibility_error = state[17];
+    pantenna->RestoreRestartModes(modes);
     pantenna->MarkRestarted();
   }
 
