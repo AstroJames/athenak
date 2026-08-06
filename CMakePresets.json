@@ -1,0 +1,126 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 19,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "release-base",
+      "hidden": true,
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_EXTENSIONS": "OFF"
+      }
+    },
+    {
+      "name": "beattie-cpu",
+      "inherits": "release-base",
+      "displayName": "Apple Silicon CPU",
+      "description": "CPU build for Apple Silicon with Homebrew LLVM and OpenMP",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "/opt/homebrew/opt/llvm/bin/clang",
+        "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
+        "Kokkos_ARCH_ARMV81": "ON",
+        "Athena_ENABLE_MPI": "ON",
+        "CMAKE_CXX_FLAGS": "-fopenmp -I/opt/homebrew/include",
+        "CMAKE_EXE_LINKER_FLAGS": "-L/opt/homebrew/lib -lomp -Wl,-rpath,/opt/homebrew/lib",
+        "Kokkos_ENABLE_OPENMP": "ON"
+      }
+    },
+    {
+      "name": "beattie-cpu-heffte",
+      "inherits": "beattie-cpu",
+      "displayName": "Apple Silicon CPU with HeFFTe",
+      "description": "Apple Silicon CPU build with MPI and HeFFTe from HEFFTE_PREFIX",
+      "cacheVariables": {
+        "Athena_ENABLE_FFT": "ON",
+        "Athena_ENABLE_HEFFTE": "ON",
+        "Heffte_DIR": "$env{HEFFTE_PREFIX}/lib/cmake/Heffte"
+      }
+    },
+    {
+      "name": "bee-gpu",
+      "inherits": "release-base",
+      "displayName": "BEE Volta GPU",
+      "description": "GPU build on BEE with Volta70 and Kokkos nvcc_wrapper",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "${sourceDir}/kokkos/bin/nvcc_wrapper",
+        "Kokkos_ENABLE_CUDA": "ON",
+        "Kokkos_ARCH_VOLTA70": "ON"
+      }
+    },
+    {
+      "name": "trillium-cpu-base",
+      "hidden": true,
+      "inherits": "release-base",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "mpicc",
+        "CMAKE_CXX_COMPILER": "mpicxx",
+        "Athena_ENABLE_MPI": "ON"
+      }
+    },
+    {
+      "name": "trillium-cpu-fftw",
+      "inherits": "trillium-cpu-base",
+      "displayName": "Trillium CPU with KokkosFFT/FFTW",
+      "description": "Trillium CPU build with MPI and the KokkosFFT/FFTW backend",
+      "cacheVariables": {
+        "Athena_ENABLE_FFT": "ON",
+        "Athena_ENABLE_HEFFTE": "OFF"
+      }
+    },
+    {
+      "name": "trillium-cpu-heffte",
+      "inherits": "trillium-cpu-base",
+      "displayName": "Trillium CPU with HeFFTe",
+      "description": "Trillium CPU build with MPI and HeFFTe from HEFFTE_PREFIX",
+      "cacheVariables": {
+        "Athena_ENABLE_FFT": "ON",
+        "Athena_ENABLE_HEFFTE": "ON",
+        "Heffte_DIR": "$env{HEFFTE_PREFIX}/lib64/cmake/Heffte"
+      }
+    },
+    {
+      "name": "trillium-gpu",
+      "inherits": "release-base",
+      "displayName": "Trillium Hopper GPU",
+      "description": "GPU build on Trillium with Hopper90 and Kokkos nvcc_wrapper",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "${sourceDir}/kokkos/bin/nvcc_wrapper",
+        "Kokkos_ENABLE_CUDA": "ON",
+        "Kokkos_ARCH_HOPPER90": "ON",
+        "Athena_ENABLE_MPI": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "beattie-cpu",
+      "configurePreset": "beattie-cpu"
+    },
+    {
+      "name": "beattie-cpu-heffte",
+      "configurePreset": "beattie-cpu-heffte"
+    },
+    {
+      "name": "bee-gpu",
+      "configurePreset": "bee-gpu"
+    },
+    {
+      "name": "trillium-cpu-fftw",
+      "configurePreset": "trillium-cpu-fftw"
+    },
+    {
+      "name": "trillium-cpu-heffte",
+      "configurePreset": "trillium-cpu-heffte"
+    },
+    {
+      "name": "trillium-gpu",
+      "configurePreset": "trillium-gpu"
+    }
+  ]
+}

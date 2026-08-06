@@ -27,6 +27,8 @@ manual_build/
 *.cmake
 *.c
 CMake*
+!CMakePresets.json
+CMakeUserPresets.json
 
 # Python cache files
 __pycache__/
