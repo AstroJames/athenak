@@ -40,6 +40,11 @@ def run(**kwargs):
             f'problem/profile_name=rsrmhd_turb_{name}',
         ])
 
+    # This weak-field 3D evolution formerly failed after several physical time units:
+    # the local implicit update left periodic ghost E and viscous stress out of sync,
+    # and all-cell primitive recovery eventually encountered an unphysical ghost state.
+    athena.run('tests/rsrmhd_implicit_ghost_exchange.athinput', [])
+
 
 def analyze():
     logger.debug('Analyzing test ' + __name__)
@@ -58,6 +63,21 @@ def analyze():
     hydro = histories['viscous_hydro']
     resistive = histories['resistive']
     combined = histories['viscoresistive']
+    ghost_exchange = np.atleast_2d(np.loadtxt(
+        'build/src/rsrmhd_turb_ssd_ghost_exchange.user.hst'))
+    if ghost_exchange.shape != (15, 48) or not np.all(np.isfinite(ghost_exchange)):
+        logger.warning('Post-implicit ghost-exchange history is invalid: shape=%s',
+                       ghost_exchange.shape)
+        return False
+    if not np.isclose(ghost_exchange[0, 4], 2.5e-6,
+                      rtol=1.0e-12, atol=1.0e-14):
+        logger.warning('Weak dynamo seed has wrong initial magnetic energy: %g',
+                       ghost_exchange[0, 4])
+        return False
+    if np.max(ghost_exchange[:, 11]) > 1.0e-20:
+        logger.warning('Ghost-exchange evolution violates divergence constraint: %g',
+                       np.max(ghost_exchange[:, 11]))
+        return False
     if not np.array_equal(hydro[0, [3, 6]], resistive[0, [3, 6]]) or \
             not np.array_equal(hydro[0, [3, 6]], combined[0, [3, 6]]):
         logger.warning('The three cases do not share the same initial velocity field')

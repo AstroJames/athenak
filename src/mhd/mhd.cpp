@@ -426,6 +426,11 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
     const int nect = nmhd + nscalars
                      + (relativistic_viscosity_data.enabled ? srrmhd::NVISC : 0);
     pbval_ect_u->InitializeBuffers(nect);
+  } else if (is_resistive_rel) {
+    pbval_impl_u = new MeshBoundaryValuesCC(ppack, pin, false);
+    const int nimpl = nmhd + nscalars
+                      + (relativistic_viscosity_data.enabled ? srrmhd::NVISC : 0);
+    pbval_impl_u->InitializeBuffers(nimpl);
   }
 
   // Orbital advection and shearing box BCs (if requested in input file)
@@ -607,6 +612,9 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
                           ncells3, ncells2, ncells1);
           Kokkos::realloc(ect_cell_state, nmb, nmhd+nscalars+srrmhd::NVISC,
                           ncells3, ncells2, ncells1);
+        } else if (is_resistive_rel) {
+          Kokkos::realloc(impl_cell_state, nmb, nmhd+nscalars+srrmhd::NVISC,
+                          ncells3, ncells2, ncells1);
         }
       }
       Kokkos::realloc(b1.x1f, nmb, ncells3, ncells2, ncells1+1);
@@ -676,6 +684,7 @@ MHD::~MHD() {
   if (pbval_e != nullptr) {delete pbval_e;}
   if (pbval_ect_face != nullptr) {delete pbval_ect_face;}
   if (pbval_ect_u != nullptr) {delete pbval_ect_u;}
+  if (pbval_impl_u != nullptr) {delete pbval_impl_u;}
   if (pvisc != nullptr) {delete pvisc;}
   if (presist!= nullptr) {delete presist;}
   if (pbier  != nullptr) {delete pbier;}

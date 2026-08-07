@@ -95,7 +95,12 @@ void MHD::AssembleMHDTasks(std::map<std::string, std::shared_ptr<TaskList>> tl) 
       id.c2p = tl["stagen"]->AddTask(&MHD::ConToPrim, this, id.impl_bcs);
     } else {
       id.impl = tl["stagen"]->AddTask(&MHD::ImpRKUpdate, this, id.prol);
-      id.c2p = tl["stagen"]->AddTask(&MHD::ConToPrim, this, id.impl);
+      id.impl_send = tl["stagen"]->AddTask(&MHD::SendImplicitState, this, id.impl);
+      id.impl_recv = tl["stagen"]->AddTask(&MHD::RecvImplicitState, this,
+                                            id.impl_send);
+      id.impl_bcs = tl["stagen"]->AddTask(&MHD::ApplyPhysicalBCs, this,
+                                           id.impl_recv);
+      id.c2p = tl["stagen"]->AddTask(&MHD::ConToPrim, this, id.impl_bcs);
     }
   } else {
     id.c2p = tl["stagen"]->AddTask(&MHD::ConToPrim, this, id.prol);
@@ -250,16 +255,117 @@ TaskStatus MHD::FirstTwoImpRK(Driver *pdrive, int stage) {
     return ConToPrim(pdrive, stage);
   }
 
-  Kokkos::deep_copy(DevExeSpace(), u1, u0);
-  if (relativistic_viscosity_data.enabled) {
-    Kokkos::deep_copy(DevExeSpace(), visc_u1, visc_u0);
+  if (cc_leading_stage == -2) {
+    Kokkos::deep_copy(DevExeSpace(), u1, u0);
+    if (relativistic_viscosity_data.enabled) {
+      Kokkos::deep_copy(DevExeSpace(), visc_u1, visc_u0);
+    }
+    Kokkos::deep_copy(DevExeSpace(), b1.x1f, b0.x1f);
+    Kokkos::deep_copy(DevExeSpace(), b1.x2f, b0.x2f);
+    Kokkos::deep_copy(DevExeSpace(), b1.x3f, b0.x3f);
+    cc_leading_stage = -1;
   }
-  Kokkos::deep_copy(DevExeSpace(), b1.x1f, b0.x1f);
-  Kokkos::deep_copy(DevExeSpace(), b1.x2f, b0.x2f);
-  Kokkos::deep_copy(DevExeSpace(), b1.x3f, b0.x3f);
-  TaskStatus status = ImpRKUpdate(pdrive, -1);
+  if (cc_leading_stage == -1) {
+    TaskStatus status = ImpRKUpdate(pdrive, -1);
+    if (status != TaskStatus::complete) return status;
+    cc_leading_stage = 0;
+    return TaskStatus::incomplete;
+  }
+  if (cc_leading_stage == 0) {
+    TaskStatus status = ImpRKUpdate(pdrive, 0);
+    if (status != TaskStatus::complete) return status;
+    cc_leading_stage = 1;
+    return TaskStatus::incomplete;
+  }
+  if (cc_leading_stage == 1) {
+    TaskStatus status = SendImplicitState(pdrive, stage);
+    if (status != TaskStatus::complete) return status;
+    cc_leading_stage = 2;
+    return TaskStatus::incomplete;
+  }
+  if (cc_leading_stage == 2) {
+    TaskStatus status = RecvImplicitState(pdrive, stage);
+    if (status != TaskStatus::complete) return status;
+    status = ApplyPhysicalBCs(pdrive, stage);
+    if (status != TaskStatus::complete) return status;
+    status = ConToPrim(pdrive, stage);
+    if (status == TaskStatus::complete) cc_leading_stage = -2;
+    return status;
+  }
+  return TaskStatus::fail;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn TaskStatus MHD::SendImplicitState()
+//! \brief Exchange the CC conserved state after a local implicit solve.
+//!
+//! The ordinary U exchange precedes the implicit update.  A second, independent buffer
+//! is required here because the conductive electric field and causal shear stress have
+//! changed locally and their ghost copies must match neighboring active cells before
+//! primitive recovery and the next reconstruction.
+
+TaskStatus MHD::SendImplicitState(Driver *pdrive, int stage) {
+  if (use_electric_ct || !is_resistive_rel) return TaskStatus::complete;
+  if (impl_comm_phase != 0) return TaskStatus::fail;
+
+  const bool viscosity = relativistic_viscosity_data.enabled;
+  const int nstate = nmhd + nscalars + (viscosity ? srrmhd::NVISC : 0);
+  DvceArray5D<Real> state = u0;
+  if (viscosity) {
+    state = impl_cell_state;
+    Kokkos::deep_copy(Kokkos::subview(state, Kokkos::ALL,
+                      std::make_pair(0, nmhd+nscalars), Kokkos::ALL,
+                      Kokkos::ALL, Kokkos::ALL), u0);
+    Kokkos::deep_copy(Kokkos::subview(state, Kokkos::ALL,
+                      std::make_pair(nmhd+nscalars, nstate), Kokkos::ALL,
+                      Kokkos::ALL, Kokkos::ALL), visc_u0);
+  }
+
+  TaskStatus status = pbval_impl_u->InitRecv(nstate);
   if (status != TaskStatus::complete) return status;
-  return ImpRKUpdate(pdrive, 0);
+  status = pbval_impl_u->PackAndSendCC(state, coarse_u0);
+  if (status == TaskStatus::complete) impl_comm_phase = 1;
+  return status;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn TaskStatus MHD::RecvImplicitState()
+//! \brief Finish the post-implicit CC exchange and unpack U and causal shear stress.
+
+TaskStatus MHD::RecvImplicitState(Driver *pdrive, int stage) {
+  if (use_electric_ct || !is_resistive_rel) return TaskStatus::complete;
+
+  const bool viscosity = relativistic_viscosity_data.enabled;
+  DvceArray5D<Real> state = viscosity ? impl_cell_state : u0;
+  TaskStatus status;
+  if (impl_comm_phase == 1) {
+    status = pbval_impl_u->RecvAndUnpackCC(state, coarse_u0);
+    if (status != TaskStatus::complete) return status;
+    impl_comm_phase = 2;
+  }
+  if (impl_comm_phase == 2) {
+    status = pbval_impl_u->ClearSend();
+    if (status != TaskStatus::complete) return status;
+    impl_comm_phase = 3;
+  }
+  if (impl_comm_phase == 3) {
+    status = pbval_impl_u->ClearRecv();
+    if (status != TaskStatus::complete) return status;
+    impl_comm_phase = 0;
+  } else {
+    return TaskStatus::fail;
+  }
+
+  if (viscosity) {
+    const int nstate = nmhd + nscalars + srrmhd::NVISC;
+    Kokkos::deep_copy(u0, Kokkos::subview(state, Kokkos::ALL,
+                      std::make_pair(0, nmhd+nscalars), Kokkos::ALL,
+                      Kokkos::ALL, Kokkos::ALL));
+    Kokkos::deep_copy(visc_u0, Kokkos::subview(state, Kokkos::ALL,
+                      std::make_pair(nmhd+nscalars, nstate), Kokkos::ALL,
+                      Kokkos::ALL, Kokkos::ALL));
+  }
+  return TaskStatus::complete;
 }
 
 //----------------------------------------------------------------------------------------

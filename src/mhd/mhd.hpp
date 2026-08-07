@@ -59,6 +59,8 @@ struct MHDTaskIDs {
   TaskID irecv;
   TaskID copyu;
   TaskID impl;
+  TaskID impl_send;
+  TaskID impl_recv;
   TaskID impl_bcs;
   TaskID flux;
   TaskID sendf;
@@ -140,6 +142,7 @@ class MHD {
   MeshBoundaryValuesFC *pbval_e = nullptr;         // explicit edge-B synchronization
   MeshBoundaryValuesFC *pbval_ect_face = nullptr;  // implicit face/star exchange
   MeshBoundaryValuesCC *pbval_ect_u = nullptr;     // implicit Picard-state exchange
+  MeshBoundaryValuesCC *pbval_impl_u = nullptr;    // post-implicit CC-state exchange
   MHDBoundaryFnPtr MHDBoundaryFunc[6];
 
   // Orbital advection and shearing box BCs
@@ -160,6 +163,7 @@ class MHD {
   DvceArray5D<Real> visc_u1;  // conservative shear, second register
   DvceArray5D<Real> visc_ustar;  // fixed shear RHS during face-E Picard iteration
   DvceArray5D<Real> ect_cell_state;  // combined U/shear state for Picard exchange
+  DvceArray5D<Real> impl_cell_state;  // combined U/shear state after a CC implicit solve
   DvceFaceFld4D<Real> b1;     // face-centered magnetic fields, second register
   DvceFaceFld4D<Real> e1;     // face-centered electric fields, second register
   DvceFaceFld4D<Real> jfc;    // face-centered current used by dual CT
@@ -172,6 +176,8 @@ class MHD {
   int ect_leading_stage = -2;
   int ect_picard_iteration = 0;
   int ect_comm_phase = 0;
+  int cc_leading_stage = -2;
+  int impl_comm_phase = 0;
   Real ect_local_residual = 0.0;
   Real ect_global_residual = 0.0;
 #if MPI_PARALLEL_ENABLED
@@ -215,6 +221,8 @@ class MHD {
   TaskStatus CopyCons(Driver *d, int stage);
   TaskStatus FirstTwoImpRK(Driver *d, int stage);
   TaskStatus ImpRKUpdate(Driver *d, int stage);
+  TaskStatus SendImplicitState(Driver *d, int stage);
+  TaskStatus RecvImplicitState(Driver *d, int stage);
   TaskStatus FaceImpRKUpdate(Driver *d, int stage);
   void FreezeFaceResistivity();
   TaskStatus ExchangeElectricFaces(DvceFaceFld4D<Real> &e);
