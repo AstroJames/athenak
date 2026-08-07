@@ -1,0 +1,75 @@
+# Initialization regression for a magnetization-normalized random magnetic seed.
+
+<job>
+basename = rsrmhd_sigma_seed
+
+<mesh>
+nghost = 4
+nx1 = 8
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+nx2 = 8
+x2min = 0.0
+x2max = 1.0
+ix2_bc = periodic
+ox2_bc = periodic
+nx3 = 8
+x3min = 0.0
+x3max = 1.0
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 8
+nx2 = 8
+nx3 = 8
+
+<coord>
+special_rel = true
+
+<time>
+evolution = dynamic
+integrator = imex3
+cfl_number = 0.4
+tlim = 0.1
+nlim = 0
+ndiag = 1
+
+<mhd>
+eos = ideal
+gamma = 1.3333333333333333
+resistive_rel = true
+electric_ct = false
+resistivity_model = uniform
+resistivity = 0.002
+relativistic_viscosity = false
+rsolver = llf
+reconstruct = wenoz
+fofc = true
+fofc_force = false
+
+<problem>
+pgen_name = rsrmhd_decaying_turbulence
+user_hist = true
+density = 1.0
+pressure = 1.0
+velocity_rms = 0.0
+magnetic_configuration = random
+sigma_rms = 0.01
+profile_name = rsrmhd_sigma_seed
+
+<magnetic_spectral_ic>
+nlow = 1
+nhigh = 3
+spectrum = driving_parabolic
+parabola_peak = 2.0
+parabola_width = 0.5
+iseed = 918273
+
+<output1>
+file_type = hst
+dt = 0.1
+user_hist_only = true
+data_format = %20.12e

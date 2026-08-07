@@ -152,7 +152,29 @@ void ProblemGenerator::ResistiveSRMHDDecayingTurbulence(ParameterInput *pin,
       "problem", "uniform_velocity3", 0.0);
   const std::string magnetic_configuration = pin->GetOrAddString(
       "problem", "magnetic_configuration", "random");
-  const Real magnetic_rms = pin->GetOrAddReal("problem", "magnetic_rms", 0.15);
+  const bool has_magnetic_rms = pin->DoesParameterExist("problem", "magnetic_rms");
+  const bool has_sigma_rms = pin->DoesParameterExist("problem", "sigma_rms");
+  if (has_magnetic_rms && has_sigma_rms) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+              << std::endl << "Specify only one of <problem>/magnetic_rms and "
+              << "<problem>/sigma_rms" << std::endl;
+    std::exit(EXIT_FAILURE);
+  }
+  Real magnetic_rms = 0.15;
+  if (has_sigma_rms) {
+    const Real sigma_rms = pin->GetReal("problem", "sigma_rms");
+    const Real gamma = pmhd->peos->eos_data.gamma;
+    const Real enthalpy0 = rho0 + gamma*pressure0/(gamma - 1.0);
+    if (sigma_rms < 0.0) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "<problem>/sigma_rms must be non-negative"
+                << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
+    magnetic_rms = std::sqrt(sigma_rms*enthalpy0);
+  } else {
+    magnetic_rms = pin->GetOrAddReal("problem", "magnetic_rms", magnetic_rms);
+  }
   const Real plasma_beta = pin->GetOrAddReal("problem", "plasma_beta", 1.0);
   if (rho0 <= 0.0 || pressure0 <= 0.0 || velocity_rms < 0.0
       || magnetic_rms < 0.0) {
@@ -182,6 +204,14 @@ void ProblemGenerator::ResistiveSRMHDDecayingTurbulence(ParameterInput *pin,
       (magnetic_configuration == "uniform_x"
        || magnetic_configuration == "uniform_y"
        || magnetic_configuration == "uniform_z");
+  if (has_sigma_rms && (velocity_rms != 0.0 || uniform_velocity1 != 0.0
+      || uniform_velocity2 != 0.0 || uniform_velocity3 != 0.0
+      || magnetic_configuration != "random")) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+              << std::endl << "<problem>/sigma_rms requires an initially stationary "
+              << "random magnetic field" << std::endl;
+    std::exit(EXIT_FAILURE);
+  }
   if (magnetic_configuration != "random" && !uniform_magnetic_field) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
               << std::endl << "<problem>/magnetic_configuration must be random, "
