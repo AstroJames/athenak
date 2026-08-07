@@ -1445,8 +1445,8 @@ void SRRMHDResistivityModelErrors() {
     result(0, 2) = srrmhd::EvaluateResistivity(
         effective, 1.0, 0.75, 0.0, 0.0, 0.0, 1.2, 0.0, 0.0, 0.0, 2.0);
 
-    // For E parallel to v, |E_*|=1.6.  With n=2*rho=1.6 and scale=0.5,
-    // eta is exactly 0.5.
+    // For E parallel to v, |E_*|=1.6.  With lab density
+    // n=2*Gamma*rho=2.0 and scale=0.5, eta is exactly 0.4.
     effective.eta_scale = 0.5;
     effective.number_per_mass = 2.0;
     result(0, 3) = srrmhd::EvaluateResistivity(
@@ -1455,7 +1455,7 @@ void SRRMHDResistivityModelErrors() {
   });
 
   auto r = Kokkos::create_mirror_view_and_copy(HostMemSpace(), result);
-  const Real expected[4] = {0.037, 10.0, 1.0e-8, 0.5};
+  const Real expected[4] = {0.037, 10.0, 1.0e-8, 0.4};
   Real max_error = 0.0;
   for (int n = 0; n < 4; ++n) {
     max_error = std::max(max_error, fabs(r(0, n) - expected[n]));

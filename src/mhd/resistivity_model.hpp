@@ -28,8 +28,9 @@ struct ResistivityData {
 //! Primitive velocities are AthenaK's spatial four-velocity components.  For the
 //! charge-starvation model,
 //!   eta = max(eta_floor, eta_scale |Gamma(E + v x B - (E.v)v)| / n),
-//! with n = number_per_mass*rho.  The caller freezes the returned value for an entire
-//! IMEX stage; this evaluator is never called from a Newton or Picard residual.
+//! with lab-frame carrier density n = number_per_mass*Gamma*rho.  The caller freezes
+//! the returned value for an entire IMEX stage; this evaluator is never called from a
+//! Newton or Picard residual.
 
 KOKKOS_INLINE_FUNCTION
 Real EvaluateResistivity(const ResistivityData &data, const Real rho, const Real u1,
@@ -45,7 +46,7 @@ Real EvaluateResistivity(const ResistivityData &data, const Real rho, const Real
   const Real es1 = lor*(e1 + v2*b3 - v3*b2 - edotv*v1);
   const Real es2 = lor*(e2 + v3*b1 - v1*b3 - edotv*v2);
   const Real es3 = lor*(e3 + v1*b2 - v2*b1 - edotv*v3);
-  const Real number_density = data.number_per_mass*rho;
+  const Real number_density = data.number_per_mass*lor*rho;
   const Real eta_eff = data.eta_scale
                      * sqrt(SQR(es1) + SQR(es2) + SQR(es3))/number_density;
   if (!(eta_eff >= 0.0) || !isfinite(eta_eff)) return data.eta_floor;
