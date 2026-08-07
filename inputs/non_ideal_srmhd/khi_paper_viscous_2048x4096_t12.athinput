@@ -1,0 +1,95 @@
+# High-resolution, long-time viscous relativistic KHI paper setup.
+# Published reference: 384 x 768 to t/t_c=3.  This run: 2048 x 4096 to t/t_c=12.
+# Source reference: inputs/tests/rsrmhd_viscous_kh.athinput at 72d475d67cb2.
+
+<job>
+basename  = khi_paper_viscous_2048x4096_t12
+
+<mesh>
+nghost    = 4
+nx1       = 2048
+x1min     = -0.5
+x1max     = 0.5
+ix1_bc    = periodic
+ox1_bc    = periodic
+nx2       = 4096
+x2min     = -1.0
+x2max     = 1.0
+ix2_bc    = periodic
+ox2_bc    = periodic
+nx3       = 1
+x3min     = -0.5
+x3max     = 0.5
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1       = 128
+nx2       = 128
+nx3       = 1
+
+<coord>
+special_rel = true
+
+<time>
+evolution  = dynamic
+integrator = imex3
+cfl_number = 0.4
+tlim       = 12.0
+nlim       = -1
+ndiag      = 100
+
+<mhd>
+eos                        = ideal
+gamma                      = 1.3333333333333333
+resistive_rel              = true
+electric_ct                = false
+resistivity_model          = uniform
+resistivity                = 1.0
+eta_floor                  = 1.0e-4
+eta_scale                  = 1.0
+number_per_mass            = 1.0
+relativistic_viscosity     = true
+linearized_shear_target_1d = false
+shear_viscosity            = 0.0001
+shear_relaxation_time      = 0.2
+shear_chi_max              = 2.0
+rsolver                    = llf
+reconstruct                = wenoz
+fofc                       = true
+fofc_force                 = false
+
+<problem>
+pgen_name                = rsrmhd_roundtrip
+user_hist                = true
+viscous_kh               = true
+viscous_diagnostic_name  = khi_paper_viscous_2048x4096_t12
+viscous_profile_name     = khi_paper_viscous_2048x4096_t12
+shear_four_velocity      = 1.0
+shear_width              = 0.05
+perturbation             = 0.01
+perturbation_width       = 0.2
+density_contrast         = 1.0
+pressure                 = 10.0
+background_b1            = 0.0
+background_b2            = 0.0
+background_b3            = 0.0
+background_e1            = 0.0
+background_e2            = 0.0
+background_e3            = 0.0
+
+<output1>
+file_type       = hst
+dt              = 0.01
+user_hist_only  = true
+data_format     = %20.12e
+
+<output2>
+file_type       = bin
+variable        = mhd_w
+id              = prim
+dt              = 0.2
+
+<output3>
+file_type       = rst
+dt              = 1.0
