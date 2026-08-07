@@ -65,10 +65,23 @@ SpectralICGenerator::SpectralICGenerator(MeshBlockPack *pmbp, ParameterInput *pi
     spectrum_form = SpectrumForm::kBand;
   } else if (spec_str.compare("parabolic") == 0) {
     spectrum_form = SpectrumForm::kParabolic;
+  } else if (spec_str.compare("driving_parabolic") == 0
+             || spec_str.compare("matched_parabolic") == 0) {
+    spectrum_form = SpectrumForm::kDrivingParabolic;
   } else {
     spectrum_form = SpectrumForm::kPowerLaw;
   }
   spectral_index = pin->GetOrAddReal(block, "spectral_index", 5.0/3.0);
+  parabola_peak = pin->GetOrAddReal(
+      block, "parabola_peak", 0.5*static_cast<Real>(nlow + nhigh));
+  parabola_width = pin->GetOrAddReal(
+      block, "parabola_width", 0.5*static_cast<Real>(nhigh - nlow));
+  if (spectrum_form == SpectrumForm::kDrivingParabolic && parabola_width <= 0.0) {
+    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+              << std::endl << "parabola_width must be positive in <" << block << ">"
+              << std::endl;
+    std::exit(EXIT_FAILURE);
+  }
 
   // Initialize RNG
   int64_t iseed = pin->GetOrAddInteger(block, "iseed", 210989);
@@ -148,8 +161,8 @@ void SpectralICGenerator::CountModes() {
 //!               The power-law form uses n_mag as well; the overall amplitude scale is
 //!               irrelevant because NormalizeRmsB rescales the field to the target RMS.
 
-Real SpectralICGenerator::ModeAmplitude(Real n_mag) const {
-  if (n_mag < 1.0e-16) return 0.0;
+Real SpectralICGenerator::ModeAmplitude(Real n_mag, Real k_mag) const {
+  if (n_mag < 1.0e-16 || k_mag < 1.0e-16) return 0.0;
   switch (spectrum_form) {
     case SpectrumForm::kBand:
       return 1.0;
@@ -160,6 +173,10 @@ Real SpectralICGenerator::ModeAmplitude(Real n_mag) const {
       if (dn < 1.0e-16) return 1.0;
       Real val = 1.0 - 4.0*SQR(n_mag - n_mid)/SQR(dn);
       return std::max(0.0, val);
+    }
+    case SpectrumForm::kDrivingParabolic: {
+      Real profile = 1.0 - SQR((n_mag - parabola_peak)/parabola_width);
+      return (profile > 0.0) ? std::sqrt(profile)/k_mag : 0.0;
     }
     case SpectrumForm::kPowerLaw:
       // A-amplitude ∝ n^{-(spectral_index+4)/2} so that E_B(n) ∝ n^{-spectral_index}.
@@ -209,7 +226,8 @@ void SpectralICGenerator::GenerateModeCoefficients() {
         ky_mode.h_view(n) = ky;
         kz_mode.h_view(n) = kz;
 
-        Real amp = ModeAmplitude(n_mag);
+        Real k_mag = std::sqrt(SQR(kx) + SQR(ky) + SQR(kz));
+        Real amp = ModeAmplitude(n_mag, k_mag);
 
         // Generate 8 trig coefficients per component.
         // A term is non-zero only when the sin() factor involves a non-zero wavenumber;
@@ -539,7 +557,9 @@ std::string SpectralICGenerator::GenerateVectorPotentialFFT(DvceArray4D<Real> &a
             if (in_band) {
               const Real n_mag =
                   std::sqrt(static_cast<Real>(kx*kx + ky*ky + kz*kz));
-              const Real amp = ModeAmplitude(n_mag);
+              const Real k_mag = std::sqrt(SQR(dk1*kx) + SQR(dk2*ky)
+                                           + SQR(dk3*kz));
+              const Real amp = ModeAmplitude(n_mag, k_mag);
               const Real Gr_x = amp * RanGaussianSt(&rng);
               const Real Gr_y = amp * RanGaussianSt(&rng);
               const Real Gr_z = amp * RanGaussianSt(&rng);
@@ -566,7 +586,9 @@ std::string SpectralICGenerator::GenerateVectorPotentialFFT(DvceArray4D<Real> &a
             if (in_band) {
               const Real n_mag =
                   std::sqrt(static_cast<Real>(kx*kx + ky*ky + kz*kz));
-              const Real amp = ModeAmplitude(n_mag);
+              const Real k_mag = std::sqrt(SQR(dk1*kx) + SQR(dk2*ky)
+                                           + SQR(dk3*kz));
+              const Real amp = ModeAmplitude(n_mag, k_mag);
               const Real Gr_x = amp * RanGaussianSt(&rng);
               const Real Gi_x = amp * RanGaussianSt(&rng);
               const Real Gr_y = amp * RanGaussianSt(&rng);
@@ -844,7 +866,9 @@ std::string SpectralICGenerator::GenerateVectorPotentialFFT(DvceArray4D<Real> &a
 
             if (in_band) {
               const Real n_mag = std::sqrt(static_cast<Real>(kx*kx + ky*ky + kz*kz));
-              const Real amp = ModeAmplitude(n_mag);
+              const Real k_mag = std::sqrt(SQR(dk1*kx) + SQR(dk2*ky)
+                                           + SQR(dk3*kz));
+              const Real amp = ModeAmplitude(n_mag, k_mag);
               const Real Gr_x = amp * RanGaussianSt(&rng);
               const Real Gr_y = amp * RanGaussianSt(&rng);
               const Real Gr_z = amp * RanGaussianSt(&rng);
@@ -862,7 +886,9 @@ std::string SpectralICGenerator::GenerateVectorPotentialFFT(DvceArray4D<Real> &a
             // 0 < kz < nz/2
             if (in_band) {
               const Real n_mag = std::sqrt(static_cast<Real>(kx*kx + ky*ky + kz*kz));
-              const Real amp = ModeAmplitude(n_mag);
+              const Real k_mag = std::sqrt(SQR(dk1*kx) + SQR(dk2*ky)
+                                           + SQR(dk3*kz));
+              const Real amp = ModeAmplitude(n_mag, k_mag);
               const Real Gr_x = amp * RanGaussianSt(&rng);
               const Real Gi_x = amp * RanGaussianSt(&rng);
               const Real Gr_y = amp * RanGaussianSt(&rng);

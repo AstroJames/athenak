@@ -40,7 +40,7 @@
 class SpectralICGenerator {
  public:
   // Spectrum form options
-  enum class SpectrumForm { kBand, kParabolic, kPowerLaw };
+  enum class SpectrumForm { kBand, kParabolic, kDrivingParabolic, kPowerLaw };
 
   // Constructor: reads parameters from the given input-file block
   SpectralICGenerator(MeshBlockPack *pmbp, ParameterInput *pin,
@@ -69,6 +69,8 @@ class SpectralICGenerator {
 
   SpectrumForm spectrum_form;
   Real spectral_index;  // power-law exponent: E_B(k) ∝ k^{-spectral_index}
+  Real parabola_peak;   // peak mode index for the driving-matched parabola
+  Real parabola_width;  // half-width in mode-index units
 
   RNG_State rstate;     // random state for mode coefficient generation
 
@@ -91,8 +93,10 @@ class SpectralICGenerator {
   // Returns spectral weight for A-field mode amplitude at mode magnitude n_mag
   // (= sqrt(nkx^2+nky^2+nkz^2) in mode-index units, consistent with nlow/nhigh).
   // For power-law form: 1/n^((s+4)/2), so E_B(n) ∝ n^{-s}.
-  // For band form: 1.  For parabolic form: smooth bump centred on (nlow+nhigh)/2.
-  Real ModeAmplitude(Real n_mag) const;
+  // For band form: 1.  For legacy parabolic form: smooth A-field bump centred on
+  // (nlow+nhigh)/2.  For driving_parabolic: sqrt(P(n))/|k|, so curl(A) has the
+  // same field-amplitude envelope sqrt(P) as the mechanical driving field.
+  Real ModeAmplitude(Real n_mag, Real k_mag) const;
 
   void CountModes();
   void GenerateModeCoefficients();
