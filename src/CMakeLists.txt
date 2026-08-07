@@ -125,6 +125,7 @@ add_executable(
         pgen/tests/rad_hohlraum.cpp
         pgen/tests/rad_linear_wave.cpp
         pgen/tests/rsrmhd_current_sheet.cpp
+        pgen/tests/rsrmhd_reconnection.cpp
         pgen/tests/rsrmhd_ohmic_decay.cpp
         pgen/tests/rsrmhd_charged_vortex.cpp
         pgen/tests/rsrmhd_ect.cpp
