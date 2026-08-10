@@ -1,5 +1,6 @@
 # 256^3 production version of the fluid-calibrated Zhdankin antenna benchmark.
-# rho0=1, P0=100, beta0=1, sigma0=200/401, Re=Rm=50, no cooling.
+# rho0=1, P0=100, beta0=1, sigma0=200/401, Re=Rm=1000, no cooling.
+# Here Ldrive=1/k0=1/(2 pi), so eta=nu_sh=vA0*Ldrive/1000.
 
 <job>
 basename = antenna_zhdankin_f0p65_256
@@ -44,10 +45,10 @@ gamma = 1.3333333333333333
 resistive_rel = true
 electric_ct = false
 resistivity_model = uniform
-resistivity = 0.001836233427266871
+resistivity = 9.181167136334355e-05
 relativistic_viscosity = true
 linearized_shear_target_1d = false
-shear_viscosity = 0.001836233427266871
+shear_viscosity = 9.181167136334355e-05
 shear_relaxation_time = 0.02
 shear_chi_max = 2.0
 rsolver = llf
