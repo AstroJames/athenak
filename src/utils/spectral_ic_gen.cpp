@@ -28,7 +28,7 @@
 #include <mpi.h>
 #endif
 
-#if FFT_ENABLED
+#if KOKKOS_FFT_ENABLED
 #include <Kokkos_Complex.hpp>
 #include <KokkosFFT.hpp>
 #endif
@@ -453,7 +453,7 @@ void SpectralICGenerator::GenerateVectorPotential(DvceArray4D<Real> &ax,
 //!
 //! Backend priority (compile-time):
 //!   1. heFFTe (HEFFTE_ENABLED) — MPI-distributed r2c IFFT.
-//!   2. KokkosFFT (FFT_ENABLED) — all ranks compute independently (no MPI comms).
+//!   2. KokkosFFT (KOKKOS_FFT_ENABLED) — all ranks compute independently (no MPI comms).
 //!   3. Direct synthesis fallback (always available).
 //!
 //! Returns: "heffte", "kokkos_fft", or "direct".
@@ -823,7 +823,7 @@ std::string SpectralICGenerator::GenerateVectorPotentialFFT(DvceArray4D<Real> &a
 
 //----------------------------------------------------------------------------------------
 // KokkosFFT path: all ranks compute the full IFFT independently (no MPI comms needed)
-#elif FFT_ENABLED
+#elif KOKKOS_FFT_ENABLED
   {
     using h_complex_t = Kokkos::View<Kokkos::complex<Real>***,
                                      Kokkos::LayoutRight, Kokkos::HostSpace>;

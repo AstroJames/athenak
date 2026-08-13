@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-#if FFT_ENABLED
+#if KOKKOS_FFT_ENABLED
 #include <Kokkos_Complex.hpp>
 #include <KokkosFFT.hpp>
 #endif
@@ -33,7 +33,7 @@
 
 namespace {
 
-#if FFT_ENABLED
+#if KOKKOS_FFT_ENABLED
 using real_view_t =
     Kokkos::View<Real***, Kokkos::LayoutRight, Kokkos::DefaultExecutionSpace>;
 using complex_view_t =
@@ -45,6 +45,9 @@ using PlanType =
                     complex_view_t,
                     3>;
 
+#endif
+
+#if FFT_ENABLED
 enum class SpectrumFieldType {
   kDensity,
   kVelocity,
@@ -95,10 +98,12 @@ void ValidateFieldAvailability(const SpectrumFieldType type, Mesh *pm) {
     std::exit(EXIT_FAILURE);
   }
 }
+#endif  // FFT_ENABLED
 
-class LegacyPowerSpectrumBackend final : public PowerSpectrumBackend {
+#if KOKKOS_FFT_ENABLED
+class KokkosFftPowerSpectrumBackend final : public PowerSpectrumBackend {
  public:
-  explicit LegacyPowerSpectrumBackend(Mesh *pm) {
+  explicit KokkosFftPowerSpectrumBackend(Mesh *pm) {
     const auto &g = pm->mesh_indcs;
     nx_ = g.nx1;
     ny_ = g.nx2;
@@ -106,7 +111,7 @@ class LegacyPowerSpectrumBackend final : public PowerSpectrumBackend {
     nbins_ = std::min({nx_/2, ny_/2, nz_/2});
 
     if (pm->multilevel) {
-      std::cout << "### FATAL ERROR in LegacyPowerSpectrumBackend\n"
+      std::cout << "### FATAL ERROR in KokkosFftPowerSpectrumBackend\n"
                 << "power_spectrum currently supports only single-level meshes.\n";
       std::exit(EXIT_FAILURE);
     }
@@ -328,7 +333,7 @@ class LegacyPowerSpectrumBackend final : public PowerSpectrumBackend {
   complex_view_t fft_out_;
   std::unique_ptr<PlanType> plan_;
 };
-#endif  // FFT_ENABLED
+#endif  // KOKKOS_FFT_ENABLED
 
 #if HEFFTE_ENABLED
 struct HeffteCellSample {
@@ -593,27 +598,18 @@ class HefftePowerSpectrumBackend final : public PowerSpectrumBackend {
 
 std::unique_ptr<PowerSpectrumBackend> BuildPowerSpectrumBackend(
     Mesh *pm, const OutputParameters &out_params) {
-#if FFT_ENABLED
-  if (out_params.fft_backend.compare("legacy") == 0) {
-    return std::make_unique<LegacyPowerSpectrumBackend>(pm);
-  }
-  if (out_params.fft_backend.compare("heffte") == 0) {
-#if HEFFTE_ENABLED
-    return std::make_unique<HefftePowerSpectrumBackend>(pm);
+#if KOKKOS_FFT_ENABLED
+  static_cast<void>(out_params);
+  return std::make_unique<KokkosFftPowerSpectrumBackend>(pm);
+#elif HEFFTE_ENABLED
+  static_cast<void>(out_params);
+  return std::make_unique<HefftePowerSpectrumBackend>(pm);
 #else
-    std::cout << "### FATAL ERROR in BuildPowerSpectrumBackend\n"
-              << "fft_backend='heffte' requested, but this binary was compiled without "
-              << "Athena_ENABLE_HEFFTE.\n";
-    std::exit(EXIT_FAILURE);
-#endif
-  }
-  std::cout << "### FATAL ERROR in BuildPowerSpectrumBackend\n"
-            << "Unknown fft_backend='" << out_params.fft_backend << "' requested.\n";
-  std::exit(EXIT_FAILURE);
-#else
+  static_cast<void>(pm);
+  static_cast<void>(out_params);
   std::cout << "### FATAL ERROR in BuildPowerSpectrumBackend\n"
             << "power_spectrum output requested, but this binary was compiled with "
-            << "Athena_ENABLE_FFT=OFF.\n";
+            << "Athena_FFT_BACKEND=NONE.\n";
   std::exit(EXIT_FAILURE);
 #endif
 }

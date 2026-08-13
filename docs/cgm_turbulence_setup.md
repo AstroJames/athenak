@@ -92,14 +92,15 @@ For production MHD runs, build with the distributed heFFTe FFT backend:
 cmake -S . -B build_cgm_heffte \
   -DPROBLEM=turb_cgm \
   -DAthena_ENABLE_MPI=ON \
-  -DAthena_ENABLE_HEFFTE=ON \
+  -DAthena_FFT_BACKEND=HEFFTE \
   -DCMAKE_PREFIX_PATH=/Users/beattijr/.local/heffte-install
 cmake --build build_cgm_heffte -j8
 ```
 
-When AthenaK is compiled with `HEFFTE_ENABLED=1`, `SpectralICGenerator` uses
-heFFTe automatically for the initial vector-potential transform and reports
-`backend='heffte'` at startup.
+When AthenaK is compiled with `Athena_FFT_BACKEND=HEFFTE`,
+`SpectralICGenerator` uses heFFTe automatically for the initial
+vector-potential transform and reports `backend='heffte'` at startup.
+KokkosFFT is not added to this configuration.
 
 ## Hydrostatic Atmosphere
 
