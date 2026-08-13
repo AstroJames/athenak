@@ -12,8 +12,8 @@
 //! Two generation paths are available:
 //!   - GenerateVectorPotential: direct Fourier synthesis (O(N_modes × N_cells)).
 //!   - GenerateVectorPotentialFFT: FFT-based synthesis using one of three backends
-//!     selected at compile time: heFFTe (MPI-distributed, HEFFTE_ENABLED) → KokkosFFT
-//!     (serial per-rank, FFT_ENABLED) → direct synthesis fallback.
+//!     selected at compile time: heFFTe (MPI-distributed, HEFFTE_ENABLED), KokkosFFT
+//!     (serial per-rank, KOKKOS_FFT_ENABLED), or direct synthesis fallback.
 //!
 //! The vector potential A is generated with spectral amplitudes set by the chosen
 //! spectrum form.  B = curl(A) is then computed by the caller using a standard

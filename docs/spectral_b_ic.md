@@ -147,14 +147,14 @@ and falls to zero at nlow and nhigh.
 ## Backends and build flags
 
 The vector potential is generated in Fourier space and transformed to real
-space via an inverse FFT.  The backend is selected automatically at compile
-time in priority order:
+space via an inverse FFT. Exactly one backend is selected at compile time with
+`Athena_FFT_BACKEND`:
 
-| Priority | Backend | Build flag | Notes |
-|----------|---------|------------|-------|
-| 1 | **heFFTe** | `Athena_ENABLE_HEFFTE=ON` | MPI-distributed r2c IFFT. Scales to any number of ranks. Recommended for production. |
-| 2 | **KokkosFFT** | `Athena_ENABLE_FFT=ON` | Each MPI rank independently generates and IFFTs the full complex array — no MPI communication. Correct for any rank count but uses more memory. |
-| 3 | **Direct synthesis** | (always available) | Evaluates A(x) = Σ_n amplitude_n × trig terms. O(N_modes × N_cells). Suitable for small mode counts (nhigh ≲ 8). |
+| Value | Backend | Notes |
+|-------|---------|-------|
+| `HEFFTE` | **heFFTe** | MPI-distributed r2c IFFT. Scales to any number of ranks. Recommended for production. |
+| `KOKKOS` | **KokkosFFT** | Each MPI rank independently generates and IFFTs the full complex array. Correct for any rank count but uses more memory. CPU builds use FFTW. |
+| `NONE` | **Direct synthesis** | Evaluates A(x) = Σ_n amplitude_n × trig terms. O(N_modes × N_cells). Suitable for small mode counts (nhigh ≲ 8). Power-spectrum output is unavailable. |
 
 The active backend is printed at startup:
 
@@ -172,7 +172,6 @@ Use the built-in `power_spectrum` output type to measure E_B(k) at t = 0:
 <output1>
 file_type   = power_spectrum
 variable    = magnetic_field
-fft_backend = legacy          # legacy (KokkosFFT) or heffte
 dcycle      = 1
 ```
 
@@ -265,7 +264,6 @@ iseed          = -42
 <output1>
 file_type   = power_spectrum
 variable    = magnetic_field
-fft_backend = legacy
 dcycle      = 10
 
 <output2>

@@ -7,7 +7,7 @@
 #  2. The peak bin contains >99% of the total spectral power.
 #  3. Results are consistent between single-block and multi-block runs.
 #
-# Requires: Athena_ENABLE_FFT=ON (default).
+# Requires: Athena_FFT_BACKEND=KOKKOS (default).
 
 import glob
 import logging

@@ -67,25 +67,23 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
   if (is_power_spectrum && FFT_ENABLED == 0) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Power spectrum output in block '" << out_params.block_name
-       << "' requested, but this binary was compiled with Athena_ENABLE_FFT=OFF."
+       << "' requested, but this binary was compiled with Athena_FFT_BACKEND=NONE."
        << std::endl;
     exit(EXIT_FAILURE);
   }
-  if (is_power_spectrum &&
-      !(out_params.fft_backend.compare("legacy") == 0 ||
-        out_params.fft_backend.compare("heffte") == 0)) {
+  bool fft_backend_matches_build =
+      (out_params.fft_backend.compare(FFT_BACKEND_NAME) == 0);
+#if KOKKOS_FFT_ENABLED
+  // Accept the historical input name while using "kokkos" as the canonical name.
+  fft_backend_matches_build = fft_backend_matches_build ||
+                              (out_params.fft_backend.compare("legacy") == 0);
+#endif
+  if (is_power_spectrum && !fft_backend_matches_build) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Power spectrum output in block '" << out_params.block_name
-       << "' requested unsupported fft_backend='" << out_params.fft_backend
-       << "'. Supported choices are 'legacy' and 'heffte'." << std::endl;
-    exit(EXIT_FAILURE);
-  }
-  if (is_power_spectrum && out_params.fft_backend.compare("heffte") == 0 &&
-      HEFFTE_ENABLED == 0) {
-    std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
-       << "Power spectrum output in block '" << out_params.block_name
-       << "' requested fft_backend='heffte', but this binary was compiled without "
-       << "Athena_ENABLE_HEFFTE." << std::endl;
+       << "' requested fft_backend='" << out_params.fft_backend
+       << "', but this binary was compiled with Athena_FFT_BACKEND="
+       << FFT_BACKEND_NAME << "." << std::endl;
     exit(EXIT_FAILURE);
   }
 

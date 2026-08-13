@@ -98,7 +98,7 @@ Outputs::Outputs(ParameterInput *pin, Mesh *pm) {
         if (opar.file_type.compare("power_spectrum") == 0) {
           opar.variable = pin->GetOrAddString(opar.block_name, "variable", "velocity");
           opar.fft_backend =
-              pin->GetOrAddString(opar.block_name, "fft_backend", "legacy");
+              pin->GetOrAddString(opar.block_name, "fft_backend", FFT_BACKEND_NAME);
         } else {
           opar.variable = pin->GetString(opar.block_name, "variable");
         }
@@ -195,7 +195,7 @@ Outputs::Outputs(ParameterInput *pin, Mesh *pm) {
         if (opar.file_type.compare("power_spectrum") == 0) {
           opar.variable = pin->GetOrAddString(opar.block_name, "variable", "velocity");
           opar.fft_backend =
-              pin->GetOrAddString(opar.block_name, "fft_backend", "legacy");
+              pin->GetOrAddString(opar.block_name, "fft_backend", FFT_BACKEND_NAME);
         } else {
           opar.variable = pin->GetString(opar.block_name, "variable");
         }

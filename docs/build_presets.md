@@ -18,9 +18,11 @@ Load the AthenaK environment before configuring or building:
 source ~/.env/athenak_env
 ```
 
-The loader must provide the MPI compiler wrappers and FFTW modules. For the
-HeFFTe preset it must also export `HEFFTE_PREFIX`, the installation prefix of
-the local HeFFTe package.
+The loader must provide the MPI compiler wrappers. The `trillium-cpu-fftw`
+preset selects `Athena_FFT_BACKEND=KOKKOS` and requires FFTW for KokkosFFT.
+The `trillium-cpu-heffte` preset selects `Athena_FFT_BACKEND=HEFFTE` and
+requires `HEFFTE_PREFIX`, the installation prefix of the local HeFFTe
+package. The HeFFTe preset does not add KokkosFFT.
 
 Configure and build a turbulence problem with HeFFTe:
 
@@ -30,6 +32,12 @@ cmake --build --preset trillium-cpu-heffte --parallel 48
 ```
 
 Use `trillium-cpu-fftw` for the KokkosFFT/FFTW configuration.
+
+The backend setting is mutually exclusive:
+
+- `KOKKOS`: KokkosFFT, backed by FFTW on Trillium CPUs.
+- `HEFFTE`: MPI-distributed HeFFTe without KokkosFFT.
+- `NONE`: no FFT dependency or power-spectrum output.
 
 ## Other systems
 

@@ -25,11 +25,17 @@
 // use OpenMP parallelization? default=0 (false)
 #define OPENMP_PARALLEL_ENABLED @OPENMP_PARALLEL_ENABLED@
 
-// include FFT support for power_spectrum output? default=1 (true)
+// include any FFT support for spectral operations? default=1 (true)
 #define FFT_ENABLED @FFT_ENABLED@
 
-// use heFFTe distributed FFT backend? default=0 (false)
+// use the KokkosFFT backend? default=1 (true)
+#define KOKKOS_FFT_ENABLED @KOKKOS_FFT_ENABLED@
+
+// use the heFFTe distributed FFT backend? default=0 (false)
 #define HEFFTE_ENABLED @HEFFTE_ENABLED@
+
+// canonical name of the selected FFT backend
+#define FFT_BACKEND_NAME "@FFT_BACKEND_NAME@"
 
 // Kokkos tight loop layout
 //#define @PAR_LOOP_LAYOUT@
