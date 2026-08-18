@@ -67,11 +67,8 @@ void Hydro::CalculateFluxes(Driver *pdriver, int stage) {
   int il = is, iu = ie+1, jl = js, ju = je, kl = ks, ku = ke;
   if (use_fofc) {
     il = is-1, iu = ie+2;
-    if (pmy_pack->pmesh->two_d) {
-      jl = js-1, ju = je+1, kl = ks, ku = ke;
-    } else {
-      jl = js-1, ju = je+1, kl = ks-1, ku = ke+1;
-    }
+    if (pmy_pack->pmesh->multi_d) { jl = js-1, ju = je+1; }
+    if (pmy_pack->pmesh->three_d) { kl = ks-1, ku = ke+1; }
   }
 
   par_for_outer("hflux_x1",DevExeSpace(), scr_size, scr_level, 0, nmb1, kl, ku, jl, ju,
