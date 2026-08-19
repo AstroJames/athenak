@@ -11,7 +11,7 @@ import scripts.utils.athena as athena
 logger = logging.getLogger('athena' + __name__[7:])
 
 _INPUT = 'hydro/sod.athinput'
-_RECONSTRUCTIONS = ('plm', 'wenoz', 'teno5', 'teno5_opt')
+_RECONSTRUCTIONS = ('plm', 'wenoz', 'teno5', 'teno5_opt', 'teno6', 'teno6_opt')
 
 
 def run(**kwargs):
