@@ -19,6 +19,7 @@
 #include "reconstruct/plm.hpp"
 #include "reconstruct/ppm.hpp"
 #include "reconstruct/teno5.hpp"
+#include "reconstruct/teno6.hpp"
 #include "reconstruct/wenoz.hpp"
 #include "mhd/rsolvers/advect_mhd.hpp"
 #include "mhd/rsolvers/llf_mhd.hpp"
@@ -164,6 +165,18 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
         TENO5X1<true>(member, eos_, teno_cutoff_, false,
                       m, k, j, il-1, iu, b0_, bl, br);
         break;
+      case ReconstructionMethod::teno6:
+        TENO6X1<false>(member, eos_, teno_cutoff_, true,
+                       m, k, j, il, iu, w0_, wl, wr);
+        TENO6X1<false>(member, eos_, teno_cutoff_, false,
+                       m, k, j, il, iu, b0_, bl, br);
+        break;
+      case ReconstructionMethod::teno6_opt:
+        TENO6X1<true>(member, eos_, teno_cutoff_, true,
+                      m, k, j, il, iu, w0_, wl, wr);
+        TENO6X1<true>(member, eos_, teno_cutoff_, false,
+                      m, k, j, il, iu, b0_, bl, br);
+        break;
       default:
         break;
     }
@@ -295,6 +308,22 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
             TENO5X2<true>(member, eos_, teno_cutoff_, false,
                           m, k, j, is-1, ie+1, b0_, bl_jp1, br);
             break;
+          case ReconstructionMethod::teno6:
+            if (j > jl) {
+              TENO6X2<false>(member, eos_, teno_cutoff_, true,
+                             m, k, j, is-1, ie+1, w0_, wl, wr);
+              TENO6X2<false>(member, eos_, teno_cutoff_, false,
+                             m, k, j, is-1, ie+1, b0_, bl, br);
+            }
+            break;
+          case ReconstructionMethod::teno6_opt:
+            if (j > jl) {
+              TENO6X2<true>(member, eos_, teno_cutoff_, true,
+                            m, k, j, is-1, ie+1, w0_, wl, wr);
+              TENO6X2<true>(member, eos_, teno_cutoff_, false,
+                            m, k, j, is-1, ie+1, b0_, bl, br);
+            }
+            break;
           default:
             break;
         }
@@ -347,7 +376,7 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
         }
 
         // calculate fluxes of scalars (if any)
-        if (nvars > nmhd_) {
+        if (nvars > nmhd_ && j > jl) {
           for (int n=nmhd_; n<nvars; ++n) {
             par_for_inner(member, is, ie, [&](const int i) {
               if (flx2_(m,IDN,k,j,i) >= 0.0) {
@@ -432,6 +461,22 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
             TENO5X3<true>(member, eos_, teno_cutoff_, false,
                           m, k, j, is-1, ie+1, b0_, bl_kp1, br);
             break;
+          case ReconstructionMethod::teno6:
+            if (k > kl) {
+              TENO6X3<false>(member, eos_, teno_cutoff_, true,
+                             m, k, j, is-1, ie+1, w0_, wl, wr);
+              TENO6X3<false>(member, eos_, teno_cutoff_, false,
+                             m, k, j, is-1, ie+1, b0_, bl, br);
+            }
+            break;
+          case ReconstructionMethod::teno6_opt:
+            if (k > kl) {
+              TENO6X3<true>(member, eos_, teno_cutoff_, true,
+                            m, k, j, is-1, ie+1, w0_, wl, wr);
+              TENO6X3<true>(member, eos_, teno_cutoff_, false,
+                            m, k, j, is-1, ie+1, b0_, bl, br);
+            }
+            break;
           default:
             break;
         }
@@ -484,7 +529,7 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
         }
 
         // calculate fluxes of scalars (if any)
-        if (nvars > nmhd_) {
+        if (nvars > nmhd_ && k > kl) {
           for (int n=nmhd_; n<nvars; ++n) {
             par_for_inner(member, is, ie, [&](const int i) {
               if (flx3_(m,IDN,k,j,i) >= 0.0) {

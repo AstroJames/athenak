@@ -23,6 +23,7 @@
 #include "reconstruct/plm.hpp"
 #include "reconstruct/ppm.hpp"
 #include "reconstruct/teno5.hpp"
+#include "reconstruct/teno6.hpp"
 #include "reconstruct/wenoz.hpp"
 #include "dyn_grmhd/rsolvers/llf_dyn_grmhd.hpp"
 #include "dyn_grmhd/rsolvers/hlle_dyn_grmhd.hpp"
@@ -129,6 +130,18 @@ TaskStatus DynGRMHDPS<EOSPolicy, ErrorPolicy>::CalcFluxes(Driver *pdriver, int s
                       m, k, j, il-1, iu, w0_, wl, wr);
         TENO5X1<true>(member, eos_, teno_cutoff_, false,
                       m, k, j, il-1, iu, b0_, bl, br);
+        break;
+      case ReconstructionMethod::teno6:
+        TENO6X1<false>(member, eos_, teno_cutoff_, false,
+                       m, k, j, il, iu, w0_, wl, wr);
+        TENO6X1<false>(member, eos_, teno_cutoff_, false,
+                       m, k, j, il, iu, b0_, bl, br);
+        break;
+      case ReconstructionMethod::teno6_opt:
+        TENO6X1<true>(member, eos_, teno_cutoff_, false,
+                      m, k, j, il, iu, w0_, wl, wr);
+        TENO6X1<true>(member, eos_, teno_cutoff_, false,
+                      m, k, j, il, iu, b0_, bl, br);
         break;
       default:
         break;
@@ -254,6 +267,22 @@ TaskStatus DynGRMHDPS<EOSPolicy, ErrorPolicy>::CalcFluxes(Driver *pdriver, int s
             TENO5X2<true>(member, eos_, teno_cutoff_, false,
                           m, k, j, is-1, ie+1, b0_, bl_jp1, br);
             break;
+          case ReconstructionMethod::teno6:
+            if (j > jl) {
+              TENO6X2<false>(member, eos_, teno_cutoff_, false,
+                             m, k, j, is-1, ie+1, w0_, wl, wr);
+              TENO6X2<false>(member, eos_, teno_cutoff_, false,
+                             m, k, j, is-1, ie+1, b0_, bl, br);
+            }
+            break;
+          case ReconstructionMethod::teno6_opt:
+            if (j > jl) {
+              TENO6X2<true>(member, eos_, teno_cutoff_, false,
+                            m, k, j, is-1, ie+1, w0_, wl, wr);
+              TENO6X2<true>(member, eos_, teno_cutoff_, false,
+                            m, k, j, is-1, ie+1, b0_, bl, br);
+            }
+            break;
           default:
             break;
         }
@@ -285,7 +314,7 @@ TaskStatus DynGRMHDPS<EOSPolicy, ErrorPolicy>::CalcFluxes(Driver *pdriver, int s
         member.team_barrier();
 
         // Calculate fluxes of scalars (if any)
-        if (nvars > nhyd) {
+        if (nvars > nhyd && j > jl) {
           for (int n=nhyd; n<nvars; ++n) {
             par_for_inner(member, is-1, ie+1, [&](const int i) {
               if (flx2(m,IDN,k,j,i) >= 0.0) {
@@ -374,6 +403,22 @@ TaskStatus DynGRMHDPS<EOSPolicy, ErrorPolicy>::CalcFluxes(Driver *pdriver, int s
             TENO5X3<true>(member, eos_, teno_cutoff_, false,
                           m, k, j, is-1, ie+1, b0_, bl_kp1, br);
             break;
+          case ReconstructionMethod::teno6:
+            if (k > kl) {
+              TENO6X3<false>(member, eos_, teno_cutoff_, false,
+                             m, k, j, is-1, ie+1, w0_, wl, wr);
+              TENO6X3<false>(member, eos_, teno_cutoff_, false,
+                             m, k, j, is-1, ie+1, b0_, bl, br);
+            }
+            break;
+          case ReconstructionMethod::teno6_opt:
+            if (k > kl) {
+              TENO6X3<true>(member, eos_, teno_cutoff_, false,
+                            m, k, j, is-1, ie+1, w0_, wl, wr);
+              TENO6X3<true>(member, eos_, teno_cutoff_, false,
+                            m, k, j, is-1, ie+1, b0_, bl, br);
+            }
+            break;
           default:
             break;
         }
@@ -405,7 +450,7 @@ TaskStatus DynGRMHDPS<EOSPolicy, ErrorPolicy>::CalcFluxes(Driver *pdriver, int s
         member.team_barrier();
 
         // Calculate fluxes of scalars (if any)
-        if (nvars > nhyd) {
+        if (nvars > nhyd && k > kl) {
           for (int n=nhyd; n<nvars; ++n) {
             par_for_inner(member, is-1, ie+1, [&](const int i) {
               if (flx3(m,IDN,k,j,i) >= 0.0) {
