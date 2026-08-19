@@ -71,6 +71,7 @@ class Hydro {
 
   // data
   ReconstructionMethod recon_method;
+  Real teno_cutoff = 1.0e-5;  // TENO stencil-selection cutoff C_T
   Hydro_RSolver rsolver_method;
   EquationOfState *peos;  // chosen EOS
 

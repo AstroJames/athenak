@@ -110,6 +110,7 @@ class MHD {
 
   // data
   ReconstructionMethod recon_method;
+  Real teno_cutoff = 1.0e-5;  // TENO stencil-selection cutoff C_T
   MHD_RSolver rsolver_method;
   EquationOfState *peos;   // chosen EOS
 

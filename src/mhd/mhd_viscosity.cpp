@@ -12,6 +12,7 @@
 #include "reconstruct/dc.hpp"
 #include "reconstruct/plm.hpp"
 #include "reconstruct/ppm.hpp"
+#include "reconstruct/teno5.hpp"
 #include "reconstruct/wenoz.hpp"
 #include "mhd/mhd.hpp"
 
@@ -205,6 +206,7 @@ void MHD::CalculateViscousFluxes() {
   const int nmb1 = pmy_pack->nmb_thispack - 1;
   const int nmhd_local = nmhd;
   const auto recon = recon_method;
+  const Real teno_cutoff_ = teno_cutoff;
   const bool extrema = (recon_method == ReconstructionMethod::ppmx);
   auto eos = peos->eos_data;
   auto w = w0;
@@ -270,6 +272,18 @@ void MHD::CalculateViscousFluxes() {
       case ReconstructionMethod::wenoz:
         WENOZX1(member, eos, true, m, k, j, is-1, ie+1, w, wl, wr);
         WENOZX1(member, eos, false, m, k, j, is-1, ie+1, pi, pil, pir);
+        break;
+      case ReconstructionMethod::teno5:
+        TENO5X1<false>(member, eos, teno_cutoff_, true,
+                       m, k, j, is-1, ie+1, w, wl, wr);
+        TENO5X1<false>(member, eos, teno_cutoff_, false,
+                       m, k, j, is-1, ie+1, pi, pil, pir);
+        break;
+      case ReconstructionMethod::teno5_opt:
+        TENO5X1<true>(member, eos, teno_cutoff_, true,
+                      m, k, j, is-1, ie+1, w, wl, wr);
+        TENO5X1<true>(member, eos, teno_cutoff_, false,
+                      m, k, j, is-1, ie+1, pi, pil, pir);
         break;
       default:
         break;
@@ -363,6 +377,18 @@ void MHD::CalculateViscousFluxes() {
           case ReconstructionMethod::wenoz:
             WENOZX2(member, eos, true, m, k, j, is, ie, w, wl_jp1, wr);
             WENOZX2(member, eos, false, m, k, j, is, ie, pi, pil_jp1, pir);
+            break;
+          case ReconstructionMethod::teno5:
+            TENO5X2<false>(member, eos, teno_cutoff_, true,
+                           m, k, j, is, ie, w, wl_jp1, wr);
+            TENO5X2<false>(member, eos, teno_cutoff_, false,
+                           m, k, j, is, ie, pi, pil_jp1, pir);
+            break;
+          case ReconstructionMethod::teno5_opt:
+            TENO5X2<true>(member, eos, teno_cutoff_, true,
+                          m, k, j, is, ie, w, wl_jp1, wr);
+            TENO5X2<true>(member, eos, teno_cutoff_, false,
+                          m, k, j, is, ie, pi, pil_jp1, pir);
             break;
           default:
             break;
@@ -458,6 +484,18 @@ void MHD::CalculateViscousFluxes() {
           case ReconstructionMethod::wenoz:
             WENOZX3(member, eos, true, m, k, j, is, ie, w, wl_kp1, wr);
             WENOZX3(member, eos, false, m, k, j, is, ie, pi, pil_kp1, pir);
+            break;
+          case ReconstructionMethod::teno5:
+            TENO5X3<false>(member, eos, teno_cutoff_, true,
+                           m, k, j, is, ie, w, wl_kp1, wr);
+            TENO5X3<false>(member, eos, teno_cutoff_, false,
+                           m, k, j, is, ie, pi, pil_kp1, pir);
+            break;
+          case ReconstructionMethod::teno5_opt:
+            TENO5X3<true>(member, eos, teno_cutoff_, true,
+                          m, k, j, is, ie, w, wl_kp1, wr);
+            TENO5X3<true>(member, eos, teno_cutoff_, false,
+                          m, k, j, is, ie, pi, pil_kp1, pir);
             break;
           default:
             break;

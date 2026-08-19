@@ -18,6 +18,7 @@
 #include "reconstruct/dc.hpp"
 #include "reconstruct/plm.hpp"
 #include "reconstruct/ppm.hpp"
+#include "reconstruct/teno5.hpp"
 #include "reconstruct/wenoz.hpp"
 #include "mhd/rsolvers/advect_mhd.hpp"
 #include "mhd/rsolvers/llf_mhd.hpp"
@@ -49,6 +50,7 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
   int nvars = nmhd + nscalars;
   int nmb1 = pmy_pack->nmb_thispack - 1;
   const auto recon_method_ = recon_method;
+  const Real teno_cutoff_ = teno_cutoff;
   bool extrema = false;
   if (recon_method == ReconstructionMethod::ppmx) {
     extrema = true;
@@ -150,6 +152,18 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
       case ReconstructionMethod::wenoz:
         WENOZX1(member, eos_, true,  m, k, j, il-1, iu, w0_, wl, wr);
         WENOZX1(member, eos_, false, m, k, j, il-1, iu, b0_, bl, br);
+        break;
+      case ReconstructionMethod::teno5:
+        TENO5X1<false>(member, eos_, teno_cutoff_, true,
+                       m, k, j, il-1, iu, w0_, wl, wr);
+        TENO5X1<false>(member, eos_, teno_cutoff_, false,
+                       m, k, j, il-1, iu, b0_, bl, br);
+        break;
+      case ReconstructionMethod::teno5_opt:
+        TENO5X1<true>(member, eos_, teno_cutoff_, true,
+                      m, k, j, il-1, iu, w0_, wl, wr);
+        TENO5X1<true>(member, eos_, teno_cutoff_, false,
+                      m, k, j, il-1, iu, b0_, bl, br);
         break;
       default:
         break;
@@ -271,6 +285,18 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
           case ReconstructionMethod::wenoz:
             WENOZX2(member, eos_, true,  m, k, j, is-1, ie+1, w0_, wl_jp1, wr);
             WENOZX2(member, eos_, false, m, k, j, is-1, ie+1, b0_, bl_jp1, br);
+            break;
+          case ReconstructionMethod::teno5:
+            TENO5X2<false>(member, eos_, teno_cutoff_, true,
+                           m, k, j, is-1, ie+1, w0_, wl_jp1, wr);
+            TENO5X2<false>(member, eos_, teno_cutoff_, false,
+                           m, k, j, is-1, ie+1, b0_, bl_jp1, br);
+            break;
+          case ReconstructionMethod::teno5_opt:
+            TENO5X2<true>(member, eos_, teno_cutoff_, true,
+                          m, k, j, is-1, ie+1, w0_, wl_jp1, wr);
+            TENO5X2<true>(member, eos_, teno_cutoff_, false,
+                          m, k, j, is-1, ie+1, b0_, bl_jp1, br);
             break;
           default:
             break;
@@ -399,6 +425,18 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
           case ReconstructionMethod::wenoz:
             WENOZX3(member, eos_, true,  m, k, j, is-1, ie+1, w0_, wl_kp1, wr);
             WENOZX3(member, eos_, false, m, k, j, is-1, ie+1, b0_, bl_kp1, br);
+            break;
+          case ReconstructionMethod::teno5:
+            TENO5X3<false>(member, eos_, teno_cutoff_, true,
+                           m, k, j, is-1, ie+1, w0_, wl_kp1, wr);
+            TENO5X3<false>(member, eos_, teno_cutoff_, false,
+                           m, k, j, is-1, ie+1, b0_, bl_kp1, br);
+            break;
+          case ReconstructionMethod::teno5_opt:
+            TENO5X3<true>(member, eos_, teno_cutoff_, true,
+                          m, k, j, is-1, ie+1, w0_, wl_kp1, wr);
+            TENO5X3<true>(member, eos_, teno_cutoff_, false,
+                          m, k, j, is-1, ie+1, b0_, bl_kp1, br);
             break;
           default:
             break;
