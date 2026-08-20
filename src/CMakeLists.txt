@@ -107,6 +107,7 @@ add_executable(
         outputs/pdf.cpp
 
         pgen/pgen.cpp
+        pgen/rt.cpp
         pgen/tests/advection.cpp
         pgen/tests/biermann_gradient.cpp
         pgen/tests/collapse.cpp
@@ -172,7 +173,9 @@ add_executable(
 # specify on command line using '-D PROBLEM=file' where 'file' is name of file in
 # pgen/ directory (not including .cpp extension)
 
-if (NOT ${PROBLEM} STREQUAL "built_in_pgens")
+if (${PROBLEM} STREQUAL "rt")
+  target_compile_definitions(athena PRIVATE RT_USER_PROBLEM_ENABLED=1)
+elseif (NOT ${PROBLEM} STREQUAL "built_in_pgens")
   target_sources(athena
       PRIVATE
           pgen/${PROBLEM}.cpp

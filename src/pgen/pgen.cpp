@@ -70,6 +70,8 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm) :
     Monopole(pin, false);
   } else if (pgen_fun_name.compare("orszag_tang") == 0) {
     OrszagTang(pin, false);
+  } else if (pgen_fun_name.compare("rt") == 0) {
+    RayleighTaylor(pin, false);
   } else if (pgen_fun_name.compare("rad_linear_wave") == 0) {
     RadiationLinearWave(pin, false);
   } else if (pgen_fun_name.compare("biermann_gradient") == 0) {
@@ -652,6 +654,8 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
     Monopole(pin, true);
   } else if (pgen_fun_name.compare("orszag_tang") == 0) {
     OrszagTang(pin, true);
+  } else if (pgen_fun_name.compare("rt") == 0) {
+    RayleighTaylor(pin, true);
   } else if (pgen_fun_name.compare("rad_linear_wave") == 0) {
     RadiationLinearWave(pin, true);
   } else if (pgen_fun_name.compare("biermann_gradient") == 0) {

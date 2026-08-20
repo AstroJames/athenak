@@ -49,6 +49,7 @@ gamma       = 1.666666667     # gamma = C_p/C_v
 # Note: OT pgen does not read any parameters from input file
 <problem>
 pgen_name   = orszag_tang     # problem generator name
+check_symmetry = false        # write exact final half-turn parity diagnostics
 
 <output1>
 file_type   = hst      # History data dump
