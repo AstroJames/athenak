@@ -204,29 +204,44 @@ Driver::Driver(ParameterInput *pin, Mesh *pmesh, Real wtlim, Kokkos::Timer* ptim
       gam1[2] = 1.0/3.0;
       beta[2] = 2.0/3.0;
 
-      Real a = 0.24169426078821;
-      Real b = 0.06042356519705;
-      Real e = 0.12915286960590;
-      a_twid[0][0] = -2.0*a;
-      a_twid[0][1] = 0.0;
-      a_twid[0][2] = 0.0;
-      a_twid[0][3] = 0.0;
+      // Published implicit tableau, with c=(a,0,1,1/2) and
+      // w=(0,1/6,1/6,2/3).  The explicit tableau has c_twid=(0,0,1,1/2),
+      // rows (0), (0), (0,1), (0,1/4,1/4), and the same weights.
+      const Real a = 0.24169426078821;
+      const Real b = 0.06042356519705;
+      const Real e = 0.12915286960590;
+      const Real a_imex[4][4] = {
+        {a, 0.0, 0.0, 0.0},
+        {-a, a, 0.0, 0.0},
+        {0.0, 1.0-a, a, 0.0},
+        {b, e, 0.5-b-e-a, a}
+      };
+      const Real w_imex[4] = {0.0, 1.0/6.0, 1.0/6.0, 2.0/3.0};
 
-      a_twid[1][0] = a;
-      a_twid[1][1] = 1.0 - 2.0*a;
-      a_twid[1][2] = 0.0;
-      a_twid[1][3] = 0.0;
+      for (int row=0; row<4; ++row) {
+        for (int s=0; s<4; ++s) a_twid[row][s] = 0.0;
+      }
 
-      a_twid[2][0] = b;
-      a_twid[2][1] = e - ((1.0-a)/4.0);
-      a_twid[2][2] = 0.5 - b - e - 1.25*a;
-      a_twid[2][3] = 0.0;
+      // The second DIRK stage is assembled directly from the first one.
+      a_twid[0][0] = a_imex[1][0] - a_imex[0][0];
 
-      a_twid[3][0] = (-2.0/3.0)*b;
-      a_twid[3][1] = (1.0 - 4.0*e)/6.0;
-      a_twid[3][2] = (4.0*(b + e + a) - 1.0)/6.0;
-      a_twid[3][3] = 2.0*(1.0 - a)/3.0;
-      a_impl = a;
+      // Each remaining DIRK stage starts after the SSPRK low-storage state
+      // combination gam0*Y_previous + gam1*U^n.  Subtract exactly that retained
+      // stiff history from the target Butcher row; the diagonal a is solved below.
+      for (int target=2; target<4; ++target) {
+        const int explicit_stage = target - 2;
+        for (int s=0; s<target; ++s) {
+          a_twid[target-1][s] = a_imex[target][s]
+                                - gam0[explicit_stage]*a_imex[target-1][s];
+        }
+      }
+
+      // The last explicit SSPRK combination is followed by the published output
+      // weights, not another DIRK stage.
+      for (int s=0; s<4; ++s) {
+        a_twid[3][s] = w_imex[s] - gam0[2]*a_imex[3][s];
+      }
+      a_impl = a_imex[0][0];
     } else if (integrator == "imex+") {
       // IMEX(2,3,2): Krapp et al. (2024, arXiv:2310.04435), Eq.30.
       // three-stage explicit, two-stage implicit, second-order ImEx

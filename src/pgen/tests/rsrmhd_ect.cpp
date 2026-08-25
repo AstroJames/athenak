@@ -292,60 +292,57 @@ void SRRMHDECTDynamicErrors(ParameterInput *pin, Mesh *pm) {
   const Real dt = pm->time;
   const Real h = dt/eta;
   const bool imex3 = pin->GetString("time", "integrator") == "imex3";
-  const int nexp_stages = imex3 ? 3 : 2;
-  const Real a = imex3 ? 0.24169426078821 : 0.5;
-  Real gam0[3] = {0.0, 0.5, 0.0};
-  Real gam1[3] = {1.0, 0.5, 0.0};
-  Real a_twid[4][4] = {};
+  const int nimp_stages = imex3 ? 4 : 3;
+  Real a_imex[4][4] = {};
+  Real w_imex[4] = {};
   if (imex3) {
+    const Real a = 0.24169426078821;
     const Real b = 0.06042356519705;
     const Real e = 0.12915286960590;
-    gam0[1] = 0.25;
-    gam1[1] = 0.75;
-    gam0[2] = 2.0/3.0;
-    gam1[2] = 1.0/3.0;
-    a_twid[0][0] = -2.0*a;
-    a_twid[1][0] = a;
-    a_twid[1][1] = 1.0 - 2.0*a;
-    a_twid[2][0] = b;
-    a_twid[2][1] = e - (1.0-a)/4.0;
-    a_twid[2][2] = 0.5 - b - e - 1.25*a;
-    a_twid[3][0] = (-2.0/3.0)*b;
-    a_twid[3][1] = (1.0 - 4.0*e)/6.0;
-    a_twid[3][2] = (4.0*(b + e + a) - 1.0)/6.0;
-    a_twid[3][3] = 2.0*(1.0 - a)/3.0;
+    a_imex[0][0] = a;
+    a_imex[1][0] = -a;
+    a_imex[1][1] = a;
+    a_imex[2][1] = 1.0 - a;
+    a_imex[2][2] = a;
+    a_imex[3][0] = b;
+    a_imex[3][1] = e;
+    a_imex[3][2] = 0.5 - b - e - a;
+    a_imex[3][3] = a;
+    w_imex[0] = 0.0;
+    w_imex[1] = 1.0/6.0;
+    w_imex[2] = 1.0/6.0;
+    w_imex[3] = 2.0/3.0;
   } else {
-    a_twid[0][0] = -1.0;
-    a_twid[1][0] = 0.5;
-    a_twid[2][1] = 0.25;
-    a_twid[2][2] = 0.25;
+    a_imex[0][0] = 0.5;
+    a_imex[1][0] = -0.5;
+    a_imex[1][1] = 0.5;
+    a_imex[2][0] = 0.5;
+    a_imex[2][2] = 0.5;
+    w_imex[0] = 0.25;
+    w_imex[1] = 0.25;
+    w_imex[2] = 0.5;
   }
 
-  // Reproduce the implemented IMEX tableau for dE/dt=-E/eta.  The positive
-  // factors give each diagonal-stage electric field divided by its initial value.
+  // Solve the original Butcher stages for dE/dt=-E/eta.  This deliberately does
+  // not use Driver's low-storage transformation.
   Real source_factor[4] = {};
-  Real factor = 1.0/(1.0 + a*h);
-  source_factor[0] = factor;
-  factor = (factor - a_twid[0][0]*h*source_factor[0])/(1.0 + a*h);
-  source_factor[1] = factor;
-  for (int stage = 1; stage <= nexp_stages; ++stage) {
-    factor = gam0[stage-1]*factor + gam1[stage-1];
-    for (int s = 0; s <= stage; ++s) {
-      factor -= a_twid[stage][s]*h*source_factor[s];
+  for (int stage=0; stage<nimp_stages; ++stage) {
+    Real rhs = 1.0;
+    for (int s=0; s<stage; ++s) {
+      rhs -= h*a_imex[stage][s]*source_factor[s];
     }
-    if (stage < nexp_stages) {
-      factor /= 1.0 + a*h;
-      source_factor[stage+1] = factor;
-    }
+    source_factor[stage] = rhs/(1.0 + h*a_imex[stage][stage]);
   }
-  const Real final_factor = factor;
+  Real final_factor = 1.0;
+  for (int stage=0; stage<nimp_stages; ++stage) {
+    final_factor -= h*w_imex[stage]*source_factor[stage];
+  }
   const Real source_factor0 = source_factor[0];
   const Real source_factor1 = source_factor[1];
   const Real source_factor2 = source_factor[2];
   const Real source_factor3 = source_factor[3];
   auto &mbsize = pm->pmb_pack->pmb->mb_size;
   auto e = pmhd->e0;
-  auto en = pmhd->e1;
   auto re = pmhd->ect_src;
   auto w = pmhd->w0;
 
@@ -355,46 +352,12 @@ void SRRMHDECTDynamicErrors(ParameterInput *pin, Mesh *pm) {
   KOKKOS_LAMBDA(int m, int i, Real &max_error) {
     const Real idx1 = 1.0/mbsize.d_view(m).dx1;
     const Real q1 = (e.x1f(m,ks,js,i+1) - e.x1f(m,ks,js,i))*idx1;
-    Real pred_left, pred_right;
-    if (imex3) {
-      const Real b = 0.06042356519705;
-      const Real ee = 0.12915286960590;
-      const Real stage1_left = en.x1f(m,ks,js,i) + dt*(
-          a*re.x1f(m,0,ks,js,i) + (1.0-2.0*a)*re.x1f(m,1,ks,js,i)
-          + a*re.x1f(m,2,ks,js,i));
-      const Real stage1_right = en.x1f(m,ks,js,i+1) + dt*(
-          a*re.x1f(m,0,ks,js,i+1) + (1.0-2.0*a)*re.x1f(m,1,ks,js,i+1)
-          + a*re.x1f(m,2,ks,js,i+1));
-      const Real stage2_left = 0.25*stage1_left + 0.75*en.x1f(m,ks,js,i)
-          + dt*(b*re.x1f(m,0,ks,js,i)
-          + (ee-(1.0-a)/4.0)*re.x1f(m,1,ks,js,i)
-          + (0.5-b-ee-1.25*a)*re.x1f(m,2,ks,js,i)
-          + a*re.x1f(m,3,ks,js,i));
-      const Real stage2_right = 0.25*stage1_right + 0.75*en.x1f(m,ks,js,i+1)
-          + dt*(b*re.x1f(m,0,ks,js,i+1)
-          + (ee-(1.0-a)/4.0)*re.x1f(m,1,ks,js,i+1)
-          + (0.5-b-ee-1.25*a)*re.x1f(m,2,ks,js,i+1)
-          + a*re.x1f(m,3,ks,js,i+1));
-      pred_left = (2.0/3.0)*stage2_left + (1.0/3.0)*en.x1f(m,ks,js,i)
-          + dt*((-2.0/3.0)*b*re.x1f(m,0,ks,js,i)
-          + (1.0-4.0*ee)/6.0*re.x1f(m,1,ks,js,i)
-          + (4.0*(b+ee+a)-1.0)/6.0*re.x1f(m,2,ks,js,i)
-          + 2.0*(1.0-a)/3.0*re.x1f(m,3,ks,js,i));
-      pred_right = (2.0/3.0)*stage2_right + (1.0/3.0)*en.x1f(m,ks,js,i+1)
-          + dt*((-2.0/3.0)*b*re.x1f(m,0,ks,js,i+1)
-          + (1.0-4.0*ee)/6.0*re.x1f(m,1,ks,js,i+1)
-          + (4.0*(b+ee+a)-1.0)/6.0*re.x1f(m,2,ks,js,i+1)
-          + 2.0*(1.0-a)/3.0*re.x1f(m,3,ks,js,i+1));
-    } else {
-      const Real stage1_left = en.x1f(m,ks,js,i)
-          + 0.5*dt*(re.x1f(m,0,ks,js,i) + re.x1f(m,2,ks,js,i));
-      const Real stage1_right = en.x1f(m,ks,js,i+1)
-          + 0.5*dt*(re.x1f(m,0,ks,js,i+1) + re.x1f(m,2,ks,js,i+1));
-      pred_left = 0.5*(stage1_left + en.x1f(m,ks,js,i))
-          + 0.25*dt*(re.x1f(m,1,ks,js,i) + re.x1f(m,2,ks,js,i));
-      pred_right = 0.5*(stage1_right + en.x1f(m,ks,js,i+1))
-          + 0.25*dt*(re.x1f(m,1,ks,js,i+1) + re.x1f(m,2,ks,js,i+1));
-    }
+    const Real xleft = LeftEdgeX(i-is, indcs.nx1, mbsize.d_view(m).x1min,
+                                 mbsize.d_view(m).x1max);
+    const Real xright = LeftEdgeX(i+1-is, indcs.nx1, mbsize.d_view(m).x1min,
+                                  mbsize.d_view(m).x1max);
+    const Real pred_left = final_factor*DynamicElectric1(xleft, amplitude);
+    const Real pred_right = final_factor*DynamicElectric1(xright, amplitude);
     const Real qpred = (pred_right - pred_left)*idx1;
     max_error = fmax(max_error, fabs(q1 - qpred));
   }, Kokkos::Max<Real>(charge_error));

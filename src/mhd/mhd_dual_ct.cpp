@@ -574,6 +574,8 @@ void MHD::FreezeFaceResistivity() {
 //! preserving the matching charge continuity equation under the IMEX tableau.
 
 TaskStatus MHD::FaceImpRKUpdate(Driver *pdriver, int estage) {
+ // estage==nexp_stages assembles the published output weights.  It is not a fifth
+ // DIRK stage and therefore has no new diagonal source evaluation.
  const int istage = estage + 2;
  auto &indcs      = pmy_pack->pmesh->mb_indcs;
  const int is = indcs.is, ie = indcs.ie;

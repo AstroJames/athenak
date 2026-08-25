@@ -42,7 +42,7 @@ class Driver {
   int nexp_stages;                 // number of explicit stages (both SSP-RK and ImEx)
   Real gam0[4], gam1[4], beta[4];  // weights and fractional timestep per explicit stage
   Real delta[4];                   // weights for updating the intermediate stage (u1)
-  Real a_twid[4][4], a_impl;       // matrix elements for implicit stages in ImEx
+  Real a_twid[4][4], a_impl;       // stiff-history corrections and SDIRK diagonal
   Real cfl_limit;                  // maximum CFL number for integrator
   Kokkos::Timer* pwall_clock_;     // timer for tracking the wall clock
   Real wall_time;

@@ -380,6 +380,8 @@ TaskStatus MHD::RecvImplicitState(Driver *pdrive, int stage) {
 //! unchanged.  The new conductive source is stored for later tableau rows.
 
 TaskStatus MHD::ImpRKUpdate(Driver *pdriver, int estage) {
+  // estage==nexp_stages assembles the published output weights.  It is not a fifth
+  // DIRK stage and therefore has no new diagonal source evaluation.
   const int istage = estage + 2;
   auto &indcs = pmy_pack->pmesh->mb_indcs;
   const int n1 = indcs.nx1 + 2*indcs.ng;
@@ -418,7 +420,8 @@ TaskStatus MHD::ImpRKUpdate(Driver *pdriver, int estage) {
     });
   }
 
-  if (estage < pdriver->nexp_stages) {
+  const bool diagonal_solve = estage < pdriver->nexp_stages;
+  if (diagonal_solve) {
     const Real a_dt = pdriver->a_impl*dt;
     const bool nonuniform_eta =
         eta_data.model != srrmhd::ResistivityModel::uniform;
