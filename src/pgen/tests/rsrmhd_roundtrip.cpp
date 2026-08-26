@@ -38,12 +38,39 @@ void SRRMHDViscosityKinematicsErrors(Mesh *pm);
 void SRRMHDViscousImplicitErrors(Mesh *pm);
 void SRRMHDViscousTransportErrors(ParameterInput *pin, Mesh *pm);
 void SRRMHDViscousRelaxationErrors(ParameterInput *pin, Mesh *pm);
+void SRRMHDMovingEquilibriumErrors(ParameterInput *pin, Mesh *pm);
 void SRRMHDViscousTelegraphErrors(ParameterInput *pin, Mesh *pm);
 void SRRMHDViscousBoostedErrors(ParameterInput *pin, Mesh *pm);
 void SRRMHDViscousLongitudinalErrors(ParameterInput *pin, Mesh *pm);
 void SRRMHDViscousShearLayerErrors(ParameterInput *pin, Mesh *pm);
 void SRRMHDViscousKHErrors(ParameterInput *pin, Mesh *pm);
 void SRRMHDViscousKHHistory(HistoryData *pdata, Mesh *pm);
+
+namespace {
+
+Real moving_equilibrium_momentum_rate = 0.0;
+
+//----------------------------------------------------------------------------------------
+//! \brief Accelerate a uniform fluid through a fixed transverse magnetic field.
+//!
+//! In the linear limit the explicit source gives v1 proportional to time, so the real
+//! conductive solve sees the moving equilibrium E3=-v1*B2 at the explicit companion
+//! stage abscissae.  The test uses small v1 and B2 to suppress nonlinear fluid feedback.
+
+void SRRMHDMovingEquilibriumSource(Mesh *pm, const Real beta_dt) {
+  auto &indcs = pm->mb_indcs;
+  auto *pmbp = pm->pmb_pack;
+  auto u = pmbp->pmhd->u0;
+  const Real delta_momentum = beta_dt*moving_equilibrium_momentum_rate;
+  par_for("moving_equilibrium_momentum", DevExeSpace(),
+          0, pmbp->nmb_thispack-1, indcs.ks, indcs.ke, indcs.js, indcs.je,
+          indcs.is, indcs.ie,
+  KOKKOS_LAMBDA(int m, int k, int j, int i) {
+    u(m, IM1, k, j, i) += delta_momentum;
+  });
+}
+
+} // namespace
 
 //----------------------------------------------------------------------------------------
 //! \fn ProblemGenerator::ResistiveSRMHDRoundTrip()
@@ -54,6 +81,8 @@ void ProblemGenerator::ResistiveSRMHDRoundTrip(ParameterInput *pin, const bool r
                                                     false);
   const bool relaxation_test = pin->GetOrAddBoolean(
       "problem", "viscous_relaxation", false);
+  const bool moving_equilibrium_test = pin->GetOrAddBoolean(
+      "problem", "moving_equilibrium", false);
   const bool telegraph_test = pin->GetOrAddBoolean(
       "problem", "viscous_telegraph", false);
   const bool boosted_test = pin->GetOrAddBoolean(
@@ -64,9 +93,16 @@ void ProblemGenerator::ResistiveSRMHDRoundTrip(ParameterInput *pin, const bool r
       "problem", "viscous_shear_layer", false);
   const bool kh_test = pin->GetOrAddBoolean(
       "problem", "viscous_kh", false);
-  if (transport_test || relaxation_test || telegraph_test || boosted_test
+  if (transport_test || relaxation_test || moving_equilibrium_test
+      || telegraph_test || boosted_test
       || longitudinal_test || shear_layer_test || kh_test) {
-    if (relaxation_test) {
+    if (moving_equilibrium_test) {
+      pgen_final_func = SRRMHDMovingEquilibriumErrors;
+      user_srcs = true;
+      user_srcs_func = SRRMHDMovingEquilibriumSource;
+      moving_equilibrium_momentum_rate = pin->GetOrAddReal(
+          "problem", "moving_momentum_rate", 0.03733333333333333);
+    } else if (relaxation_test) {
       pgen_final_func = SRRMHDViscousRelaxationErrors;
     } else if (telegraph_test) {
       pgen_final_func = SRRMHDViscousTelegraphErrors;
@@ -411,6 +447,80 @@ void SRRMHDViscousRelaxationErrors(ParameterInput *pin, Mesh *pm) {
       file << " " << electric_sum[n]/static_cast<Real>(ncells);
     }
     file << std::endl;
+  }
+}
+
+//----------------------------------------------------------------------------------------
+//! \brief Measure the accepted endpoint for a stiff, linearly moving Ohmic equilibrium.
+
+void SRRMHDMovingEquilibriumErrors(ParameterInput *pin, Mesh *pm) {
+  auto &indcs = pm->mb_indcs;
+  auto *pmhd = pm->pmb_pack->pmhd;
+  auto w = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->w0);
+  auto bcc = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->bcc0);
+  const Real momentum_rate = pin->GetReal("problem", "moving_momentum_rate");
+  const Real gamma = pin->GetReal("mhd", "gamma");
+  const Real prescribed_u1 = momentum_rate*pm->time/(1.0 + gamma);
+  const Real eta = pin->GetReal("mhd", "resistivity");
+  Real u1_sum = 0.0;
+  Real b2_sum = 0.0;
+  Real e3_sum = 0.0;
+  Real residual_sum = 0.0;
+  Real qohm_sum = 0.0;
+  Real velocity_error = 0.0;
+  int ncells = 0;
+  for (int m = 0; m < pm->pmb_pack->nmb_thispack; ++m) {
+    for (int k = indcs.ks; k <= indcs.ke; ++k) {
+      for (int j = indcs.js; j <= indcs.je; ++j) {
+        for (int i = indcs.is; i <= indcs.ie; ++i) {
+          const Real u1 = w(m, IVX, k, j, i);
+          const Real u2 = w(m, IVY, k, j, i);
+          const Real u3 = w(m, IVZ, k, j, i);
+          const Real lor = sqrt(1.0 + SQR(u1) + SQR(u2) + SQR(u3));
+          const Real v1 = u1/lor;
+          const Real b2 = bcc(m, IBY, k, j, i);
+          const Real e3 = w(m, srrmhd::IRE3, k, j, i);
+          const Real residual = e3 + v1*b2;
+          u1_sum += u1;
+          b2_sum += b2;
+          e3_sum += e3;
+          residual_sum += residual;
+          qohm_sum += SQR(lor*residual)/eta;
+          velocity_error = std::max(velocity_error, fabs(u1-prescribed_u1));
+          velocity_error = std::max(velocity_error, fabs(u2));
+          velocity_error = std::max(velocity_error, fabs(u3));
+          ++ncells;
+        }
+      }
+    }
+  }
+#if MPI_PARALLEL_ENABLED
+  Real sums[5] = {u1_sum, b2_sum, e3_sum, residual_sum, qohm_sum};
+  MPI_Allreduce(MPI_IN_PLACE, sums, 5, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(MPI_IN_PLACE, &velocity_error, 1, MPI_ATHENA_REAL, MPI_MAX,
+                MPI_COMM_WORLD);
+  MPI_Allreduce(MPI_IN_PLACE, &ncells, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  u1_sum = sums[0];
+  b2_sum = sums[1];
+  e3_sum = sums[2];
+  residual_sum = sums[3];
+  qohm_sum = sums[4];
+#endif
+  if (global_variable::my_rank == 0) {
+    std::string filename = "rsrmhd_moving_equilibrium-errs.dat";
+    if (pin->DoesParameterExist("problem", "moving_diagnostic_name")) {
+      const std::string name = pin->GetString("problem", "moving_diagnostic_name");
+      if (name.compare("none") != 0) filename = name + "-errs.dat";
+    }
+    const Real inv_cells = 1.0/static_cast<Real>(ncells);
+    std::ofstream file(filename);
+    file << "# Nx Ncycle time mean_u1 mean_B2 mean_E3 mean_residual "
+         << "mean_qohm velocity_error\n"
+         << std::setprecision(17)
+         << pm->mesh_indcs.nx1 << " " << pm->ncycle << " " << pm->time << " "
+         << u1_sum*inv_cells << " " << b2_sum*inv_cells << " "
+         << e3_sum*inv_cells << " " << residual_sum*inv_cells << " "
+         << qohm_sum*inv_cells << " " << velocity_error << std::endl;
   }
 }
 

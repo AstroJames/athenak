@@ -1,0 +1,61 @@
+# One-step manufactured moving-Ohm-equilibrium regression.
+
+<job>
+basename = rsrmhd_moving_equilibrium
+
+<mesh>
+nghost = 2
+nx1 = 4
+x1min = 0.0
+x1max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+nx2 = 1
+x2min = -0.5
+x2max = 0.5
+ix2_bc = periodic
+ox2_bc = periodic
+nx3 = 1
+x3min = -0.5
+x3max = 0.5
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 4
+nx2 = 1
+nx3 = 1
+
+<coord>
+special_rel = true
+
+<time>
+evolution = dynamic
+integrator = imex3
+cfl_number = 0.5
+tlim = 0.125
+nlim = 1
+
+<mhd>
+eos = ideal
+gamma = 1.3333333333333333
+resistive_rel = true
+electric_ct = false
+resistivity_model = uniform
+resistivity = 0.01
+relativistic_viscosity = false
+rsolver = llf
+reconstruct = plm
+fofc = false
+
+<problem>
+pgen_name = rsrmhd_roundtrip
+moving_equilibrium = true
+moving_momentum_rate = 0.03733333333333333
+moving_diagnostic_name = none
+background_b1 = 0.0
+background_b2 = 5.0e-5
+background_b3 = 0.0
+background_e1 = 0.0
+background_e2 = 0.0
+background_e3 = 0.0
