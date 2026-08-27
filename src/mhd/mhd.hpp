@@ -117,6 +117,7 @@ class MHD {
   int nscalars;            // number of passive scalars
   bool is_resistive_rel = false;  // true for full resistive SRMHD with evolved E
   bool use_electric_ct = false;   // true for charge-conserving face-centered E prototype
+  bool use_ars443 = false;        // true for the three-register ARS(4,4,3) path
   Real resistivity = 0.0;         // scalar relativistic resistivity eta
   srrmhd::ResistivityData resistivity_data;
   srrmhd::RelativisticViscosityData relativistic_viscosity_data;
@@ -160,11 +161,14 @@ class MHD {
 
   // following only used for time-evolving flow
   DvceArray5D<Real> u1;       // conserved variables, second register
+  DvceArray5D<Real> u2;       // ARS explicit accumulator, third register
   DvceArray5D<Real> visc_u1;  // conservative shear, second register
+  DvceArray5D<Real> visc_u2;  // ARS shear accumulator, third register
   DvceArray5D<Real> visc_ustar;  // fixed shear RHS during face-E Picard iteration
   DvceArray5D<Real> ect_cell_state;  // combined U/shear state for Picard exchange
   DvceArray5D<Real> impl_cell_state;  // combined U/shear state after a CC implicit solve
   DvceFaceFld4D<Real> b1;     // face-centered magnetic fields, second register
+  DvceFaceFld4D<Real> b2;     // ARS magnetic accumulator, third register
   DvceFaceFld4D<Real> e1;     // face-centered electric fields, second register
   DvceFaceFld4D<Real> jfc;    // face-centered current used by dual CT
   DvceFaceFld4D<Real> estar;  // face-centered right-hand side of an implicit stage

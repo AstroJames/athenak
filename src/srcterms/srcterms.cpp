@@ -392,19 +392,36 @@ void SourceTerms::RelCooling(const DvceArray5D<Real> &w0, const EOS_Data &eos_da
     cooled_momentum2_start_ = cooled_momentum2;
     cooled_momentum3_start_ = cooled_momentum3;
     limited_cooling_energy_start_ = limited_cooling_energy;
+    cooled_energy_accum_ = 0.0;
+    cooled_momentum1_accum_ = 0.0;
+    cooled_momentum2_accum_ = 0.0;
+    cooled_momentum3_accum_ = 0.0;
+    limited_cooling_energy_accum_ = 0.0;
+  } else if (pdrive->use_3s) {
+    const Real delta = pdrive->delta[stage-1];
+    cooled_energy_accum_ += delta*cooled_energy;
+    cooled_momentum1_accum_ += delta*cooled_momentum1;
+    cooled_momentum2_accum_ += delta*cooled_momentum2;
+    cooled_momentum3_accum_ += delta*cooled_momentum3;
+    limited_cooling_energy_accum_ += delta*limited_cooling_energy;
   }
   const Real gam0 = pdrive->gam0[stage-1];
   const Real gam1 = pdrive->gam1[stage-1];
   cooled_energy = gam0*cooled_energy + gam1*cooled_energy_start_
+                  + pdrive->gam2[stage-1]*cooled_energy_accum_
                   + bdt*last_cooling_power;
   cooled_momentum1 = gam0*cooled_momentum1 + gam1*cooled_momentum1_start_
+                     + pdrive->gam2[stage-1]*cooled_momentum1_accum_
                      + bdt*last_cooling_momentum1;
   cooled_momentum2 = gam0*cooled_momentum2 + gam1*cooled_momentum2_start_
+                     + pdrive->gam2[stage-1]*cooled_momentum2_accum_
                      + bdt*last_cooling_momentum2;
   cooled_momentum3 = gam0*cooled_momentum3 + gam1*cooled_momentum3_start_
+                     + pdrive->gam2[stage-1]*cooled_momentum3_accum_
                      + bdt*last_cooling_momentum3;
   limited_cooling_energy = gam0*limited_cooling_energy
-      + gam1*limited_cooling_energy_start_ + bdt*last_limited_cooling_power;
+      + gam1*limited_cooling_energy_start_
+      + pdrive->gam2[stage-1]*limited_cooling_energy_accum_ + bdt*last_limited_cooling_power;
 
   par_for("entropy_rel_cooling", DevExeSpace(), 0, nmb1, ks, ke, js, je, is, ie,
   KOKKOS_LAMBDA(const int m, const int k, const int j, const int i) {

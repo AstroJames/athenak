@@ -44,10 +44,13 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
     coarse_b0("cB_fc",1,1,1,1),
     coarse_e0("cE_fc",1,1,1,1),
     u1("cons1",1,1,1,1,1),
+    u2("cons2",1,1,1,1,1),
     visc_u1("visc_cons1",1,1,1,1,1),
+    visc_u2("visc_cons2",1,1,1,1,1),
     visc_ustar("visc_cons_star",1,1,1,1,1),
     ect_cell_state("ect_cell_state",1,1,1,1,1),
     b1("B_fc1",1,1,1,1),
+    b2("B_fc2",1,1,1,1),
     e1("E_fc1",1,1,1,1),
     jfc("J_fc",1,1,1,1),
     estar("E_fc_star",1,1,1,1),
@@ -308,7 +311,15 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
       std::exit(EXIT_FAILURE);
     }
     std::string integrator = pin->GetOrAddString("time", "integrator", "rk2");
-    const bool supported_imex = integrator == "imex2" || integrator == "imex3";
+    use_ars443 = integrator == "imex3_ars443";
+    const bool supported_imex = integrator == "imex2" || integrator == "imex3"
+                                || use_ars443;
+    if (use_electric_ct && use_ars443) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "imex3_ars443 currently supports only cell-centered E"
+                << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
     if (use_electric_ct) {
       if (pmy_pack->pmesh->one_d && pmy_pack->pmesh->nmb_total != 1) {
         std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
@@ -326,7 +337,7 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
     } else if (!supported_imex) {
       std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
                 << std::endl << "Dynamic resistive SRMHD requires "
-                << "<time>/integrator=imex2 or imex3" << std::endl;
+                << "<time>/integrator=imex2, imex3, or imex3_ars443" << std::endl;
       std::exit(EXIT_FAILURE);
     }
   }
@@ -605,8 +616,14 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
       int ncells2 = (indcs.nx2 > 1)? (indcs.nx2 + 2*(indcs.ng)) : 1;
       int ncells3 = (indcs.nx3 > 1)? (indcs.nx3 + 2*(indcs.ng)) : 1;
       Kokkos::realloc(u1,     nmb, (nmhd+nscalars), ncells3, ncells2, ncells1);
+      if (use_ars443) {
+        Kokkos::realloc(u2, nmb, (nmhd+nscalars), ncells3, ncells2, ncells1);
+      }
       if (relativistic_viscosity_data.enabled) {
         Kokkos::realloc(visc_u1, nmb, srrmhd::NVISC, ncells3, ncells2, ncells1);
+        if (use_ars443) {
+          Kokkos::realloc(visc_u2, nmb, srrmhd::NVISC, ncells3, ncells2, ncells1);
+        }
         if (use_electric_ct) {
           Kokkos::realloc(visc_ustar, nmb, srrmhd::NVISC,
                           ncells3, ncells2, ncells1);
@@ -620,6 +637,11 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
       Kokkos::realloc(b1.x1f, nmb, ncells3, ncells2, ncells1+1);
       Kokkos::realloc(b1.x2f, nmb, ncells3, ncells2+1, ncells1);
       Kokkos::realloc(b1.x3f, nmb, ncells3+1, ncells2, ncells1);
+      if (use_ars443) {
+        Kokkos::realloc(b2.x1f, nmb, ncells3, ncells2, ncells1+1);
+        Kokkos::realloc(b2.x2f, nmb, ncells3, ncells2+1, ncells1);
+        Kokkos::realloc(b2.x3f, nmb, ncells3+1, ncells2, ncells1);
+      }
 
       // allocate fluxes, electric fields
       Kokkos::realloc(uflx.x1f, nmb, (nmhd+nscalars), ncells3, ncells2, ncells1+1);

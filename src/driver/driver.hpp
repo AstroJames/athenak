@@ -40,9 +40,10 @@ class Driver {
   std::string integrator;          // integrator name (rk1, rk2, rk3)
   int nimp_stages;                 // number of implicit stages (ImEx only)
   int nexp_stages;                 // number of explicit stages (both SSP-RK and ImEx)
-  Real gam0[4], gam1[4], beta[4];  // weights and fractional timestep per explicit stage
+  Real gam0[4], gam1[4], gam2[4], beta[4];  // explicit low-storage weights
   Real delta[4];                   // weights for updating the intermediate stage (u1)
   Real a_twid[4][4], a_impl;       // stiff-history corrections and SDIRK diagonal
+  bool use_3s = false;             // explicit update uses a third solution register
   Real cfl_limit;                  // maximum CFL number for integrator
   Kokkos::Timer* pwall_clock_;     // timer for tracking the wall clock
   Real wall_time;

@@ -515,13 +515,17 @@ void MHD::FOFCResistive(Driver *pdriver, int stage) {
 
   const Real gam0 = pdriver->gam0[stage-1];
   const Real gam1 = pdriver->gam1[stage-1];
+  const Real gam2 = pdriver->gam2[stage-1];
+  const bool use_3s = pdriver->use_3s;
   const Real beta_dt = pdriver->beta[stage-1]*pmy_pack->pmesh->dt;
   auto u0_ = u0;
   auto u1_ = u1;
+  auto u2_ = u2;
   auto utest_ = utest;
   auto bcc0_ = bcc0;
   auto bcctest_ = bcctest;
   auto b1_ = b1;
+  auto b2_ = b2;
   auto flx1 = uflx.x1f;
   auto flx2 = uflx.x2f;
   auto flx3 = uflx.x3f;
@@ -557,7 +561,9 @@ void MHD::FOFCResistive(Driver *pdriver, int stage) {
       if (three_d) {
         divf += dtodx3*(flx3(m,n,k+1,j,i) - flx3(m,n,k,j,i));
       }
-      utest_(m,n,k,j,i) = gam0*u0_(m,n,k,j,i) + gam1*u1_(m,n,k,j,i) - divf;
+      Real updated = gam0*u0_(m,n,k,j,i) + gam1*u1_(m,n,k,j,i);
+      if (use_3s) updated += gam2*u2_(m,n,k,j,i);
+      utest_(m,n,k,j,i) = updated - divf;
     }
 
     const Real b1old = 0.5*(b1_.x1f(m,k,j,i) + b1_.x1f(m,k,j,i+1));
@@ -566,6 +572,11 @@ void MHD::FOFCResistive(Driver *pdriver, int stage) {
     bcctest_(m,IBX,k,j,i) = gam0*bcc0_(m,IBX,k,j,i) + gam1*b1old;
     bcctest_(m,IBY,k,j,i) = gam0*bcc0_(m,IBY,k,j,i) + gam1*b2old;
     bcctest_(m,IBZ,k,j,i) = gam0*bcc0_(m,IBZ,k,j,i) + gam1*b3old;
+    if (use_3s) {
+      bcctest_(m,IBX,k,j,i) += gam2*0.5*(b2_.x1f(m,k,j,i) + b2_.x1f(m,k,j,i+1));
+      bcctest_(m,IBY,k,j,i) += gam2*0.5*(b2_.x2f(m,k,j,i) + b2_.x2f(m,k,j+1,i));
+      bcctest_(m,IBZ,k,j,i) += gam2*0.5*(b2_.x3f(m,k,j,i) + b2_.x3f(m,k+1,j,i));
+    }
     bcctest_(m,IBY,k,j,i) += dtodx1*(e3x1_(m,k,j,i+1) - e3x1_(m,k,j,i));
     bcctest_(m,IBZ,k,j,i) -= dtodx1*(e2x1_(m,k,j,i+1) - e2x1_(m,k,j,i));
     if (multi_d) {
@@ -581,6 +592,7 @@ void MHD::FOFCResistive(Driver *pdriver, int stage) {
   if (relativistic_viscosity_data.enabled) {
     auto visc_u0_ = visc_u0;
     auto visc_u1_ = visc_u1;
+    auto visc_u2_ = visc_u2;
     auto visc_utest_ = visc_utest;
     auto visc_flx1 = visc_flx.x1f;
     auto visc_flx2 = visc_flx.x2f;
@@ -598,8 +610,10 @@ void MHD::FOFCResistive(Driver *pdriver, int stage) {
         divf += beta_dt*(visc_flx3(m,n,k+1,j,i) - visc_flx3(m,n,k,j,i))
                     /size.d_view(m).dx3;
       }
-      visc_utest_(m,n,k,j,i) = gam0*visc_u0_(m,n,k,j,i)
-                                + gam1*visc_u1_(m,n,k,j,i) - divf;
+      Real updated = gam0*visc_u0_(m,n,k,j,i)
+                     + gam1*visc_u1_(m,n,k,j,i);
+      if (use_3s) updated += gam2*visc_u2_(m,n,k,j,i);
+      visc_utest_(m,n,k,j,i) = updated - divf;
     });
 
     // Recover with the provisional spatial shear held fixed.  This removes its temporal

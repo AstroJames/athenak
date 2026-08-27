@@ -1708,16 +1708,30 @@ TaskStatus TurbulenceDriver::AddForcing(Driver *pdrive, int stage) {
       injected_momentum1_start = injected_momentum1;
       injected_momentum2_start = injected_momentum2;
       injected_momentum3_start = injected_momentum3;
+      injected_energy_accum = 0.0;
+      injected_momentum1_accum = 0.0;
+      injected_momentum2_accum = 0.0;
+      injected_momentum3_accum = 0.0;
+    } else if (pdrive->use_3s) {
+      const Real delta = pdrive->delta[stage-1];
+      injected_energy_accum += delta*injected_energy;
+      injected_momentum1_accum += delta*injected_momentum1;
+      injected_momentum2_accum += delta*injected_momentum2;
+      injected_momentum3_accum += delta*injected_momentum3;
     }
     Real gam0 = pdrive->gam0[stage-1];
     Real gam1 = pdrive->gam1[stage-1];
     injected_energy = gam0*injected_energy + gam1*injected_energy_start
+                      + pdrive->gam2[stage-1]*injected_energy_accum
                       + bdt*forcing_power;
     injected_momentum1 = gam0*injected_momentum1 + gam1*injected_momentum1_start
+                         + pdrive->gam2[stage-1]*injected_momentum1_accum
                          + bdt*last_net_force1;
     injected_momentum2 = gam0*injected_momentum2 + gam1*injected_momentum2_start
+                         + pdrive->gam2[stage-1]*injected_momentum2_accum
                          + bdt*last_net_force2;
     injected_momentum3 = gam0*injected_momentum3 + gam1*injected_momentum3_start
+                         + pdrive->gam2[stage-1]*injected_momentum3_accum
                          + bdt*last_net_force3;
   }
 

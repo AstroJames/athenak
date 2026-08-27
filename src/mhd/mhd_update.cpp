@@ -32,11 +32,14 @@ TaskStatus MHD::RKUpdate(Driver *pdriver, int stage) {
 
   Real &gam0 = pdriver->gam0[stage-1];
   Real &gam1 = pdriver->gam1[stage-1];
+  const Real gam2 = pdriver->gam2[stage-1];
+  const bool use_3s = pdriver->use_3s;
   Real beta_dt = (pdriver->beta[stage-1])*(pmy_pack->pmesh->dt);
   int nmb1 = pmy_pack->nmb_thispack - 1;
   int nv1 = nmhd + nscalars - 1;
   auto u0_ = u0;
   auto u1_ = u1;
+  auto u2_ = u2;
   auto flx1 = uflx.x1f;
   auto flx2 = uflx.x2f;
   auto flx3 = uflx.x3f;
@@ -77,12 +80,15 @@ TaskStatus MHD::RKUpdate(Driver *pdriver, int stage) {
     }
 
     par_for_inner(member, is, ie, [&](const int i) {
-      u0_(m,n,k,j,i) = gam0*u0_(m,n,k,j,i) + gam1*u1_(m,n,k,j,i) - beta_dt*divf(i);
+      Real updated = gam0*u0_(m,n,k,j,i) + gam1*u1_(m,n,k,j,i);
+      if (use_3s) updated += gam2*u2_(m,n,k,j,i);
+      u0_(m,n,k,j,i) = updated - beta_dt*divf(i);
     });
   });
   if (relativistic_viscosity_data.enabled) {
     auto visc_u0_ = visc_u0;
     auto visc_u1_ = visc_u1;
+    auto visc_u2_ = visc_u2;
     auto visc_flx1 = visc_flx.x1f;
     auto visc_flx2 = visc_flx.x2f;
     auto visc_flx3 = visc_flx.x3f;
@@ -101,9 +107,10 @@ TaskStatus MHD::RKUpdate(Driver *pdriver, int stage) {
         divergence += (visc_flx3(m, n, k+1, j, i)
                          - visc_flx3(m, n, k, j, i))/mbsize.d_view(m).dx3;
       }
-      visc_u0_(m, n, k, j, i) = gam0*visc_u0_(m, n, k, j, i)
-                                  + gam1*visc_u1_(m, n, k, j, i)
-                                  - beta_dt*divergence;
+      Real updated = gam0*visc_u0_(m, n, k, j, i)
+                     + gam1*visc_u1_(m, n, k, j, i);
+      if (use_3s) updated += gam2*visc_u2_(m, n, k, j, i);
+      visc_u0_(m, n, k, j, i) = updated - beta_dt*divergence;
     });
   }
   return TaskStatus::complete;

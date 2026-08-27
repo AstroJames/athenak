@@ -127,6 +127,7 @@ add_executable(
         pgen/tests/rsrmhd_current_sheet.cpp
         pgen/tests/rsrmhd_reconnection.cpp
         pgen/tests/rsrmhd_ohmic_decay.cpp
+        pgen/tests/rsrmhd_maxwell_ohm.cpp
         pgen/tests/rsrmhd_charged_vortex.cpp
         pgen/tests/rsrmhd_ect.cpp
         pgen/tests/rsrmhd_decaying_turbulence.cpp

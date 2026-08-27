@@ -99,6 +99,8 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm) :
     ResistiveSRMHDReconnection(pin, false);
   } else if (pgen_fun_name.compare("rsrmhd_ohmic_decay") == 0) {
     ResistiveSRMHDOhmicDecay(pin, false);
+  } else if (pgen_fun_name.compare("rsrmhd_maxwell_ohm") == 0) {
+    ResistiveSRMHDMaxwellOhm(pin, false);
   } else if (pgen_fun_name.compare("rsrmhd_charged_vortex") == 0) {
     ResistiveSRMHDChargedVortex(pin, false);
   } else if (pgen_fun_name.compare("rsrmhd_ect") == 0) {
@@ -1000,6 +1002,8 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
     ResistiveSRMHDReconnection(pin, true);
   } else if (pgen_fun_name.compare("rsrmhd_ohmic_decay") == 0) {
     ResistiveSRMHDOhmicDecay(pin, true);
+  } else if (pgen_fun_name.compare("rsrmhd_maxwell_ohm") == 0) {
+    ResistiveSRMHDMaxwellOhm(pin, true);
   } else if (pgen_fun_name.compare("rsrmhd_charged_vortex") == 0) {
     ResistiveSRMHDChargedVortex(pin, true);
   } else if (pgen_fun_name.compare("rsrmhd_ect") == 0) {

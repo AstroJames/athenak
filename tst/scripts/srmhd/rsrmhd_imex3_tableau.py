@@ -17,8 +17,15 @@ _IMPLICIT_A = np.array([
     [0.0, 1.0 - _ALPHA, _ALPHA, 0.0],
     [_BETA, _ETA, 0.5 - _BETA - _ETA - _ALPHA, _ALPHA],
 ])
+_EXPLICIT_A = np.array([
+    [0.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.25, 0.25, 0.0],
+])
 _WEIGHTS = np.array([0.0, 1.0/6.0, 1.0/6.0, 2.0/3.0])
 _H_VALUES = (1.0, 10.0, 100.0, 1000.0)
+_FORCED_H_VALUES = (1.0, 10.0, 61.476, 100.0)
 _LAYOUTS = (('cell', False), ('face', True))
 _INITIAL_STRESS = np.array((0.004, -0.001, -0.003, 0.002, -0.0015, 0.01))
 _INITIAL_ELECTRIC = np.array((0.02, -0.015, 0.01))
@@ -31,6 +38,20 @@ def _stability_function(h):
         np.eye(_IMPLICIT_A.shape[0]) + h*_IMPLICIT_A,
         np.ones(_IMPLICIT_A.shape[0]))
     return 1.0 - h*np.dot(_WEIGHTS, stages)
+
+
+def _forced_equilibrium_response(h):
+    """Advance y'=1-y from the exact equilibrium with step h.
+
+    The constant source is assigned to the explicit tableau and the linear
+    relaxation to the implicit tableau, matching the Maxwell--Ohm split.  A
+    well-balanced stiff method would return one for every h.
+    """
+    stages = np.linalg.solve(
+        np.eye(_IMPLICIT_A.shape[0]) + h*_IMPLICIT_A,
+        np.ones(_IMPLICIT_A.shape[0]) + h*_EXPLICIT_A.dot(
+            np.ones(_IMPLICIT_A.shape[0])))
+    return 1.0 + h - h*np.dot(_WEIGHTS, stages)
 
 
 def _run_relaxation(basename, electric_ct, resolution, eta, tlim):
@@ -112,6 +133,21 @@ def analyze():
         logger.warning('Published-tableau stability values changed: %s',
                        tableau_values)
         return False
+
+    forced_reference = np.array([
+        0.9943701778620725,
+        -0.6224214540324023,
+        -15.275160034842772,
+        -26.272452501313774,
+    ])
+    forced_values = np.array([
+        _forced_equilibrium_response(h) for h in _FORCED_H_VALUES])
+    if not np.allclose(forced_values, forced_reference, rtol=0.0, atol=5.0e-14):
+        logger.warning('Published-tableau forced responses changed: %s',
+                       forced_values)
+        return False
+    # This locks down the legacy response for A/B comparisons; the ARS test
+    # separately requires exact forced-equilibrium preservation.
 
     one_step_results = {}
     for layout, _ in _LAYOUTS:

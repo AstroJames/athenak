@@ -1,0 +1,55 @@
+# One-step linear Maxwell--Ohm slow-mode diagnostic.
+
+<job>
+basename  = rsrmhd_maxwell_ohm
+
+<mesh>
+nghost    = 4
+nx1       = 64
+x1min     = 0.0
+x1max     = 1.0
+ix1_bc    = periodic
+ox1_bc    = periodic
+nx2       = 1
+x2min     = -0.5
+x2max     = 0.5
+ix2_bc    = periodic
+ox2_bc    = periodic
+nx3       = 1
+x3min     = -0.5
+x3max     = 0.5
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1       = 64
+nx2       = 1
+nx3       = 1
+
+<coord>
+special_rel = true
+
+<time>
+evolution  = dynamic
+integrator = imex3
+cfl_number = 0.5
+nlim       = 1
+tlim       = 0.0078125
+
+<mhd>
+eos               = ideal
+gamma             = 1.3333333333333333
+resistive_rel     = true
+electric_ct       = false
+resistivity_model = uniform
+resistivity       = 0.0078125
+rsolver           = llf
+reconstruct       = wenoz
+fofc              = false
+
+<problem>
+pgen_name  = rsrmhd_maxwell_ohm
+amplitude  = 1.0e-4
+density    = 1.0
+pressure   = 1.0
+mode_number = 1

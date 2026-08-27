@@ -83,6 +83,16 @@ Driver::Driver(ParameterInput *pin, Mesh *pmesh, Real wtlim, Kokkos::Timer* ptim
 
   // read <time> parameters controlling driver if run requires time-evolution
   if (time_evolution != TimeEvolution::tstatic) {
+    for (int s=0; s<4; ++s) {
+      gam0[s] = 0.0;
+      gam1[s] = 0.0;
+      gam2[s] = 0.0;
+      beta[s] = 0.0;
+      delta[s] = 0.0;
+      for (int j=0; j<4; ++j) a_twid[s][j] = 0.0;
+    }
+    a_impl = 0.0;
+
     integrator = pin->GetOrAddString("time", "integrator", "rk2");
     tlim = pin->GetReal("time", "tlim");
     nlim = pin->GetOrAddInteger("time", "nlim", -1);
@@ -242,6 +252,67 @@ Driver::Driver(ParameterInput *pin, Mesh *pmesh, Real wtlim, Kokkos::Timer* ptim
         a_twid[3][s] = w_imex[s] - gam0[2]*a_imex[3][s];
       }
       a_impl = a_imex[0][0];
+    } else if (integrator == "imex3_ars443") {
+      const bool standalone_resistive_srmhd =
+          pin->DoesBlockExist("mhd")
+          && pin->DoesParameterExist("mhd", "resistive_rel")
+          && pin->GetBoolean("mhd", "resistive_rel")
+          && !pin->DoesBlockExist("hydro")
+          && !pin->DoesBlockExist("radiation")
+          && !pin->DoesBlockExist("adm")
+          && !pin->DoesBlockExist("z4c");
+      if (!standalone_resistive_srmhd) {
+        std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                  << std::endl << "imex3_ars443 currently requires standalone "
+                  << "resistive SRMHD" << std::endl;
+        std::exit(EXIT_FAILURE);
+      }
+      // ARS(4,4,3): Ascher, Ruuth & Spiteri (1997), Section 2.8.
+      // This third-order IMEX pair is globally stiffly accurate.  Its explicit
+      // tableau is represented in a three-register form with
+      //   S2 <- S2 + delta*S1,
+      //   S1 <- gam0*S1 + gam1*U^n + gam2*S2 + beta*dt*F(S1).
+      // The exact rational factorization below reproduces the published ERK
+      // tableau; a_twid removes inherited stiff history before each SDIRK solve.
+      nimp_stages = 4;
+      nexp_stages = 4;
+      cfl_limit = 1.0;
+      use_3s = true;
+
+      gam0[0] = 0.0;
+      gam1[0] = 1.0;
+      gam2[0] = 0.0;
+      beta[0] = 1.0/2.0;
+      delta[0] = 0.0;
+
+      gam0[1] = 11.0/9.0;
+      gam1[1] = -2.0/9.0;
+      gam2[1] = 0.0;
+      beta[1] = 1.0/18.0;
+      delta[1] = 8.0;
+
+      gam0[2] = 15.0/17.0;
+      gam1[2] = -4.0;
+      gam2[2] = 5.0/2.0;
+      beta[2] = 1.0/2.0;
+      delta[2] = -108.0/17.0;
+
+      gam0[3] = 3.0/2.0;
+      gam1[3] = 27.0/2.0;
+      gam2[3] = -17.0/2.0;
+      beta[3] = -7.0/4.0;
+      delta[3] = 0.0;
+
+      // Rows correspond to the four explicit transitions Y1->Y2 ... Y4->Y5.
+      // Each row corrects only already available stiff-source evaluations; the
+      // common SDIRK diagonal is applied by the local implicit solve.
+      a_twid[1][0] = -4.0/9.0;
+      a_twid[2][0] = -8.0;
+      a_twid[2][1] = 8.0;
+      a_twid[3][0] = 109.0/4.0;
+      a_twid[3][1] = -117.0/4.0;
+      a_twid[3][2] = -1.0/4.0;
+      a_impl = 1.0/2.0;
     } else if (integrator == "imex+") {
       // IMEX(2,3,2): Krapp et al. (2024, arXiv:2310.04435), Eq.30.
       // three-stage explicit, two-stage implicit, second-order ImEx
@@ -273,7 +344,8 @@ Driver::Driver(ParameterInput *pin, Mesh *pmesh, Real wtlim, Kokkos::Timer* ptim
     } else {
       std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
          << std::endl << "integrator=" << integrator << " not implemented. "
-         << "Valid choices are [rk1,rk2,rk3,imex2,imex3]." << std::endl;
+         << "Valid choices are [rk1,rk2,rk3,rk4,imex2,imex3,"
+         << "imex3_ars443,imex+]." << std::endl;
       exit(EXIT_FAILURE);
     }
   }

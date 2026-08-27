@@ -131,9 +131,13 @@ class AntennaDriver {
   Real current_reference_parallel = 1.0;
   Real amplitude_fraction[num_families] = {1.0, 1.0};
   Real injected_energy_start = 0.0;
+  Real injected_energy_accum = 0.0;
   Real injected_momentum1_start = 0.0;
+  Real injected_momentum1_accum = 0.0;
   Real injected_momentum2_start = 0.0;
+  Real injected_momentum2_accum = 0.0;
   Real injected_momentum3_start = 0.0;
+  Real injected_momentum3_accum = 0.0;
   Real current_sum_local[3] = {0.0, 0.0, 0.0};
   Real current_sum_global[3] = {0.0, 0.0, 0.0};
   Real current_max_local[3] = {0.0, 0.0, 0.0};

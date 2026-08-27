@@ -224,6 +224,66 @@ TaskStatus MHD::CopyCons(Driver *pdrive, int stage) {
 //! the second leading implicit state and are ready for reconstruction.  B is unchanged.
 
 TaskStatus MHD::FirstTwoImpRK(Driver *pdrive, int stage) {
+  if (use_ars443) {
+    if (stage == 1) {
+      Kokkos::deep_copy(DevExeSpace(), u1, u0);
+      Kokkos::deep_copy(DevExeSpace(), u2, 0.0);
+      if (relativistic_viscosity_data.enabled) {
+        Kokkos::deep_copy(DevExeSpace(), visc_u1, visc_u0);
+        Kokkos::deep_copy(DevExeSpace(), visc_u2, 0.0);
+      }
+      Kokkos::deep_copy(DevExeSpace(), b1.x1f, b0.x1f);
+      Kokkos::deep_copy(DevExeSpace(), b1.x2f, b0.x2f);
+      Kokkos::deep_copy(DevExeSpace(), b1.x3f, b0.x3f);
+      Kokkos::deep_copy(DevExeSpace(), b2.x1f, 0.0);
+      Kokkos::deep_copy(DevExeSpace(), b2.x2f, 0.0);
+      Kokkos::deep_copy(DevExeSpace(), b2.x3f, 0.0);
+      return TaskStatus::complete;
+    }
+
+    const Real delta = pdrive->delta[stage-1];
+    if (delta == 0.0) return TaskStatus::complete;
+    auto &indcs = pmy_pack->pmesh->mb_indcs;
+    const int n1 = indcs.nx1 + 2*indcs.ng;
+    const int n2 = (indcs.nx2 > 1) ? indcs.nx2 + 2*indcs.ng : 1;
+    const int n3 = (indcs.nx3 > 1) ? indcs.nx3 + 2*indcs.ng : 1;
+    const int nmb1 = pmy_pack->nmb_thispack - 1;
+    auto u = u0;
+    auto ua = u2;
+    par_for("srrmhd_ars_accum_u", DevExeSpace(), 0, nmb1,
+            0, nmhd+nscalars-1, 0, n3-1, 0, n2-1, 0, n1-1,
+    KOKKOS_LAMBDA(int m, int n, int k, int j, int i) {
+      ua(m,n,k,j,i) += delta*u(m,n,k,j,i);
+    });
+    if (relativistic_viscosity_data.enabled) {
+      auto vu = visc_u0;
+      auto vua = visc_u2;
+      par_for("srrmhd_ars_accum_visc", DevExeSpace(), 0, nmb1,
+              0, srrmhd::NVISC-1, 0, n3-1, 0, n2-1, 0, n1-1,
+      KOKKOS_LAMBDA(int m, int n, int k, int j, int i) {
+        vua(m,n,k,j,i) += delta*vu(m,n,k,j,i);
+      });
+    }
+    auto b = b0;
+    auto ba = b2;
+    par_for("srrmhd_ars_accum_b1", DevExeSpace(), 0, nmb1,
+            0, n3-1, 0, n2-1, 0, n1,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      ba.x1f(m,k,j,i) += delta*b.x1f(m,k,j,i);
+    });
+    par_for("srrmhd_ars_accum_b2", DevExeSpace(), 0, nmb1,
+            0, n3-1, 0, n2, 0, n1-1,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      ba.x2f(m,k,j,i) += delta*b.x2f(m,k,j,i);
+    });
+    par_for("srrmhd_ars_accum_b3", DevExeSpace(), 0, nmb1,
+            0, n3, 0, n2-1, 0, n1-1,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      ba.x3f(m,k,j,i) += delta*b.x3f(m,k,j,i);
+    });
+    return TaskStatus::complete;
+  }
+
   if (stage != 1) return TaskStatus::complete;
 
   if (use_electric_ct) {
@@ -380,9 +440,11 @@ TaskStatus MHD::RecvImplicitState(Driver *pdrive, int stage) {
 //! unchanged.  The new conductive source is stored for later tableau rows.
 
 TaskStatus MHD::ImpRKUpdate(Driver *pdriver, int estage) {
-  // estage==nexp_stages assembles the published output weights.  It is not a fifth
-  // DIRK stage and therefore has no new diagonal source evaluation.
+  const bool ars443 = pdriver->integrator == "imex3_ars443";
   const int istage = estage + 2;
+  const int history_count = ars443 ? estage - 1 : istage - 1;
+  const int history_row = ars443 ? estage - 1 : istage - 2;
+  const int source_stage = ars443 ? estage - 1 : istage - 1;
   auto &indcs = pmy_pack->pmesh->mb_indcs;
   const int n1 = indcs.nx1 + 2*indcs.ng;
   const int n2 = (indcs.nx2 > 1) ? indcs.nx2 + 2*indcs.ng : 1;
@@ -402,12 +464,12 @@ TaskStatus MHD::ImpRKUpdate(Driver *pdriver, int estage) {
   const Real uniform_eta = resistivity;
   const auto viscosity_data = relativistic_viscosity_data;
 
-  if (istage > 1) {
+  if (history_count > 0) {
     auto &a_twid = pdriver->a_twid;
     par_for("srrmhd_imex_history", DevExeSpace(), 0, nmb1, 0, n3-1, 0, n2-1,
             0, n1-1, KOKKOS_LAMBDA(int m, int k, int j, int i) {
-      for (int s = 0; s <= istage-2; ++s) {
-        const Real adt = a_twid[istage-2][s]*dt;
+      for (int s = 0; s < history_count; ++s) {
+        const Real adt = a_twid[history_row][s]*dt;
         u(m, srrmhd::IRE1, k, j, i) += adt*ru(s, m, 0, k, j, i);
         u(m, srrmhd::IRE2, k, j, i) += adt*ru(s, m, 1, k, j, i);
         u(m, srrmhd::IRE3, k, j, i) += adt*ru(s, m, 2, k, j, i);
@@ -420,7 +482,7 @@ TaskStatus MHD::ImpRKUpdate(Driver *pdriver, int estage) {
     });
   }
 
-  const bool diagonal_solve = estage < pdriver->nexp_stages;
+  const bool diagonal_solve = ars443 || estage < pdriver->nexp_stages;
   if (diagonal_solve) {
     const Real a_dt = pdriver->a_impl*dt;
     const bool nonuniform_eta =
@@ -536,7 +598,6 @@ TaskStatus MHD::ImpRKUpdate(Driver *pdriver, int estage) {
         bcc(m, IBX, k, j, i) = recovered.bx;
         bcc(m, IBY, k, j, i) = recovered.by;
         bcc(m, IBZ, k, j, i) = recovered.bz;
-        const int source_stage = istage - 1;
         ru(source_stage, m, 0, k, j, i) = (recovered.ex - ex_star)/a_dt;
         ru(source_stage, m, 1, k, j, i) = (recovered.ey - ey_star)/a_dt;
         ru(source_stage, m, 2, k, j, i) = (recovered.ez - ez_star)/a_dt;

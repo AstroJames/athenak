@@ -129,10 +129,15 @@ class SourceTerms {
   Real sn_event_accum_;
   bool sn_rinj_warned_;
   Real cooled_energy_start_ = 0.0;
+  Real cooled_energy_accum_ = 0.0;
   Real cooled_momentum1_start_ = 0.0;
+  Real cooled_momentum1_accum_ = 0.0;
   Real cooled_momentum2_start_ = 0.0;
+  Real cooled_momentum2_accum_ = 0.0;
   Real cooled_momentum3_start_ = 0.0;
+  Real cooled_momentum3_accum_ = 0.0;
   Real limited_cooling_energy_start_ = 0.0;
+  Real limited_cooling_energy_accum_ = 0.0;
 };
 
 #endif  // SRCTERMS_SRCTERMS_HPP_

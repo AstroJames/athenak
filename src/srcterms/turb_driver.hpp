@@ -74,9 +74,13 @@ class TurbulenceDriver {
   void NormalizeMechanicalAcceleration(const DvceArray5D<Real> &prim,
                                        Real gamma);
   Real injected_energy_start = 0.0;
+  Real injected_energy_accum = 0.0;
   Real injected_momentum1_start = 0.0;
+  Real injected_momentum1_accum = 0.0;
   Real injected_momentum2_start = 0.0;
+  Real injected_momentum2_accum = 0.0;
   Real injected_momentum3_start = 0.0;
+  Real injected_momentum3_accum = 0.0;
   bool first_time = true;   // flag to enable initialization on first call
   MeshBlockPack *pmy_pack;  // ptr to MeshBlockPack containing this TurbulenceDriver
 };

@@ -1163,16 +1163,30 @@ TaskStatus AntennaDriver::ApplyAntenna(Driver *pdrive, int stage) {
     injected_momentum1_start = injected_momentum1;
     injected_momentum2_start = injected_momentum2;
     injected_momentum3_start = injected_momentum3;
+    injected_energy_accum = 0.0;
+    injected_momentum1_accum = 0.0;
+    injected_momentum2_accum = 0.0;
+    injected_momentum3_accum = 0.0;
+  } else if (pdrive->use_3s) {
+    const Real delta = pdrive->delta[stage-1];
+    injected_energy_accum += delta*injected_energy;
+    injected_momentum1_accum += delta*injected_momentum1;
+    injected_momentum2_accum += delta*injected_momentum2;
+    injected_momentum3_accum += delta*injected_momentum3;
   }
   const Real gam0 = pdrive->gam0[stage - 1];
   const Real gam1 = pdrive->gam1[stage - 1];
   injected_energy = gam0*injected_energy + gam1*injected_energy_start
+                    + pdrive->gam2[stage-1]*injected_energy_accum
                     + beta_dt*last_power;
   injected_momentum1 = gam0*injected_momentum1 + gam1*injected_momentum1_start
+                       + pdrive->gam2[stage-1]*injected_momentum1_accum
                        + beta_dt*last_momentum1;
   injected_momentum2 = gam0*injected_momentum2 + gam1*injected_momentum2_start
+                       + pdrive->gam2[stage-1]*injected_momentum2_accum
                        + beta_dt*last_momentum2;
   injected_momentum3 = gam0*injected_momentum3 + gam1*injected_momentum3_start
+                       + pdrive->gam2[stage-1]*injected_momentum3_accum
                        + beta_dt*last_momentum3;
 
   par_for("antenna_total_four_force", DevExeSpace(), 0, nmb - 1, ks, ke, js, je,
