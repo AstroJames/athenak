@@ -22,6 +22,7 @@
 #include "shearing_box/shearing_box.hpp"
 #include "bvals/bvals.hpp"
 #include "mhd/mhd.hpp"
+#include "mhd/fofc_boundary.hpp"
 
 namespace mhd {
 //----------------------------------------------------------------------------------------
@@ -186,6 +187,22 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
   if (evolution_t.compare("stationary") != 0) {
     // determine if FOFC is enabled
     use_fofc = pin->GetOrAddBoolean("mhd","fofc",false);
+    fofc_max_iterations = pin->GetOrAddInteger("mhd","fofc_max_iterations",1);
+    fofc_diagnostics = pin->GetOrAddBoolean("mhd","fofc_diagnostics",false);
+    if (fofc_max_iterations < 1 || (fofc_max_iterations > 1 &&
+        (!use_fofc || !peos->eos_data.is_ideal ||
+         pmy_pack->pcoord->is_special_relativistic ||
+         pmy_pack->pcoord->is_general_relativistic ||
+         pmy_pack->pcoord->is_dynamical_relativistic ||
+         pmy_pack->pmesh->multilevel || pmy_pack->pmesh->nmb_packs_thisrank != 1 ||
+         nscalars != 0 || pvisc != nullptr || presist != nullptr ||
+         pbier != nullptr || pcond != nullptr || psrc->shearing_box))) {
+      std::cout << "### FATAL ERROR: fofc_max_iterations must be positive. Iterative "
+                << "FOFC requires Newtonian ideal MHD, fofc=true, one pack per rank, "
+                << "a uniform mesh, no passive scalars, no explicit diffusion, "
+                << "and no shearing box." << std::endl;
+      std::exit(EXIT_FAILURE);
+    }
 
     // determine if h-correction is enabled (Sanders, Morano & Druguet 1998)
     use_hcorr = pin->GetOrAddBoolean("mhd","h_correction",false);

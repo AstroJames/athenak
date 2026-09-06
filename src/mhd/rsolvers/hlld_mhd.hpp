@@ -185,6 +185,24 @@ void HLLD(TeamMember_t const &member, const EOS_Data &eos,
       // Real ptstl = ptl + ul.d*sdl*(sdl-sdml); // these eqns had issues when averaged
       // Real ptstr = ptr + ur.d*sdr*(sdr-sdmr);
       Real ptst = 0.5*(ptstr + ptstl);  // total pressure (star state)
+#ifdef ATHENAK_HLLD_DIAGNOSTICS
+      // Diagnostic: HLLD assumes positive, finite star densities and total pressure.
+      // Stop at the first violated assumption so it can be tied to the WENOZ trigger.
+      if (spd[0] < 0.0 && spd[4] > 0.0 && !(isfinite(spd[0]) && isfinite(spd[2]) && isfinite(spd[4]) &&
+            isfinite(sdml) && isfinite(sdmr) && isfinite(ulst.d) &&
+            isfinite(urst.d) && isfinite(ptst) && ulst.d > 0.0 &&
+            urst.d > 0.0 && ptst > 0.0)) {
+        Kokkos::printf(
+          "HLLD_CORE_BAD m=%d k=%d j=%d i=%d ivx=%d "
+          "rhoL=%.17e rhoR=%.17e pL=%.17e pR=%.17e bx=%.17e "
+          "SL=%.17e SM=%.17e SR=%.17e sdml=%.17e sdmr=%.17e "
+          "rhoLs=%.17e rhoRs=%.17e ptst=%.17e\n",
+          m, k, j, i, ivx, wl_idn, wr_idn, wl_ipr, wr_ipr, bxi,
+          spd[0], spd[2], spd[4], sdml, sdmr, ulst.d, urst.d, ptst);
+        Kokkos::abort("HLLD core star state is inadmissible.\n");
+      }
+#endif
+
 
       // ul* - eqn (39) of M&K
       ulst.mx = ulst.d * spd[2];
@@ -282,6 +300,51 @@ void HLLD(TeamMember_t const &member, const EOS_Data &eos,
         uldst.e = ulst.e - sqrtdl*bxsig*(vbstl - tmp);
         urdst.e = urst.e + sqrtdr*bxsig*(vbstr - tmp);
       }
+
+
+#ifdef ATHENAK_HLLD_DIAGNOSTICS
+      // Diagnostic: only the state selected by the HLLD wave fan can affect this
+      // interface flux.  Unselected star states may be inadmissible but are not causal.
+      Real p_selected = 0.0;
+      int selected_region = 0;
+      if (spd[0] >= 0.0) {
+        p_selected = wl_ipr;
+        selected_region = 0;
+      } else if (spd[4] <= 0.0) {
+        p_selected = wr_ipr;
+        selected_region = 4;
+      } else if (spd[1] >= 0.0) {
+        p_selected = gm1*(ulst.e -
+            0.5*(SQR(ulst.mx) + SQR(ulst.my) + SQR(ulst.mz))/ulst.d -
+            0.5*(bxsq + SQR(ulst.by) + SQR(ulst.bz)));
+        selected_region = 1;
+      } else if (spd[2] >= 0.0) {
+        p_selected = gm1*(uldst.e -
+            0.5*(SQR(uldst.mx) + SQR(uldst.my) + SQR(uldst.mz))/uldst.d -
+            0.5*(bxsq + SQR(uldst.by) + SQR(uldst.bz)));
+        selected_region = 2;
+      } else if (spd[3] > 0.0) {
+        p_selected = gm1*(urdst.e -
+            0.5*(SQR(urdst.mx) + SQR(urdst.my) + SQR(urdst.mz))/urdst.d -
+            0.5*(bxsq + SQR(urdst.by) + SQR(urdst.bz)));
+        selected_region = 3;
+      } else {
+        p_selected = gm1*(urst.e -
+            0.5*(SQR(urst.mx) + SQR(urst.my) + SQR(urst.mz))/urst.d -
+            0.5*(bxsq + SQR(urst.by) + SQR(urst.bz)));
+        selected_region = 5;
+      }
+      if (!(isfinite(p_selected) && p_selected > 0.0)) {
+        Kokkos::printf(
+          "HLLD_SELECTED_BAD m=%d k=%d j=%d i=%d ivx=%d region=%d "
+          "rhoL=%.17e rhoR=%.17e pL=%.17e pR=%.17e bx=%.17e "
+          "SL=%.17e SLa=%.17e SM=%.17e SRa=%.17e SR=%.17e "
+          "ptst=%.17e p_selected=%.17e\n",
+          m, k, j, i, ivx, selected_region, wl_idn, wr_idn, wl_ipr, wr_ipr, bxi,
+          spd[0], spd[1], spd[2], spd[3], spd[4], ptst, p_selected);
+        Kokkos::abort("Selected HLLD state is inadmissible.\n");
+      }
+#endif
 
       //--- Step 6.  Compute flux
       uldst.d = spd[1] * (uldst.d - ulst.d);

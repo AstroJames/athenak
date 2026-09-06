@@ -34,6 +34,7 @@ class Driver;
 // function ptr for user-defined MHD boundary functions enrolled in problem generator
 namespace mhd {
 using MHDBoundaryFnPtr = void (*)(int m, Mesh* pm, MHD* pmhd, DvceArray5D<Real> &u);
+class FOFCBoundary;
 }
 
 // constants that enumerate MHD Riemann Solver options
@@ -144,6 +145,8 @@ class MHD {
   // following used for FOFC algorithm
   DvceArray4D<bool> fofc;  // flag for each cell to indicate if FOFC is needed
   bool use_fofc = false;   // flag to enable FOFC
+  int fofc_max_iterations = 1;  // opt-in iterative correction (Newtonian ideal MHD)
+  bool fofc_diagnostics = false;
 
   // following used for h-correction (Sanders, Morano & Druguet 1998)
   DvceArray4D<Real> eta1, eta2, eta3;  // max |eigenvalue| in x1, x2, x3 per cell
@@ -203,6 +206,7 @@ class MHD {
   DvceArray5D<Real> utest, bcctest;  // scratch arrays for FOFC
 
  private:
+  std::unique_ptr<FOFCBoundary> fofc_boundary;
   MeshBlockPack* pmy_pack;   // ptr to MeshBlockPack containing this MHD
   // temporary variables used to store face-centered electric fields returned by RS
   DvceArray4D<Real> e1_cc, e2_cc, e3_cc;

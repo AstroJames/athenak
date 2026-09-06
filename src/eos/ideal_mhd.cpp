@@ -38,6 +38,7 @@ void IdealMHD::ConsToPrim(DvceArray5D<Real> &cons, const DvceFaceFld4D<Real> &b,
   int &nmb = pmy_pack->nmb_thispack;
   auto &eos = eos_data;
   auto &fofc_ = pmy_pack->pmhd->fofc;
+  const bool guard_state = pmy_pack->pmhd->fofc_max_iterations > 1;
 
   const int ni   = (iu - il + 1);
   const int nji  = (ju - jl + 1)*ni;
@@ -75,15 +76,35 @@ void IdealMHD::ConsToPrim(DvceArray5D<Real> &cons, const DvceFaceFld4D<Real> &b,
       u.bz = 0.5*(b.x3f(m,k,j,i) + b.x3f(m,k+1,j,i));
     }
 
+    // A nonfinite trial state must trigger FOFC.  Ordinary floor comparisons do not
+    // catch NaNs (all comparisons with NaN are false), so without this check a
+    // nonfinite high-order flux can bypass FOFC and contaminate the real update.
+    bool nonfinite = !(isfinite(u.d) && isfinite(u.mx) && isfinite(u.my) &&
+                       isfinite(u.mz) && isfinite(u.e) && isfinite(u.bx) &&
+                       isfinite(u.by) && isfinite(u.bz));
+
+    if (guard_state && !only_testfloors && (nonfinite || !(u.d > 0.0))) {
+      Kokkos::printf("FOFC_ACCEPTED_BAD m=%d k=%d j=%d i=%d rho=%.17e\n",
+                     m, k, j, i, u.d);
+      Kokkos::abort("Invalid accepted MHD state before primitive recovery.");
+    }
+
     // call c2p function
     // (inline function in ideal_c2p_mhd.hpp file)
     HydPrim1D w;
     bool dfloor_used=false, efloor_used=false, tfloor_used=false;
-    SingleC2P_IdealMHD(u, eos, w, dfloor_used, efloor_used, tfloor_used);
+    if (!nonfinite || !only_testfloors) {
+      SingleC2P_IdealMHD(u, eos, w, dfloor_used, efloor_used, tfloor_used);
+      nonfinite = !(isfinite(w.d) && isfinite(w.vx) && isfinite(w.vy) &&
+                    isfinite(w.vz) && isfinite(w.e) && isfinite(u.e));
+      if (guard_state && !only_testfloors && nonfinite) {
+        Kokkos::abort("Nonfinite accepted MHD primitive state.");
+      }
+    }
 
     // set FOFC flag and quit loop if this function called only to check floors
     if (only_testfloors) {
-      if (dfloor_used || efloor_used || tfloor_used) {
+      if (nonfinite || dfloor_used || efloor_used || tfloor_used) {
         fofc_(m,k,j,i) = true;
         sumd++;  // use dfloor as counter for when either is true
       }
