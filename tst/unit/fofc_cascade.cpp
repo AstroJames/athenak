@@ -20,6 +20,9 @@ int main(int argc, char **argv) {
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &global_variable::my_rank);
   MPI_Comm_size(MPI_COMM_WORLD, &global_variable::nranks);
+#else
+  global_variable::my_rank = 0;
+  global_variable::nranks = 1;
 #endif
   Kokkos::initialize(argc, argv);
   int errors = 0;

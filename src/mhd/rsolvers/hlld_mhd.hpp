@@ -319,7 +319,6 @@ void HLLD(TeamMember_t const &member, const EOS_Data &eos,
         urdst.e = urst.e + de_r;
       }
 
-
       //--- Step 6.  Compute flux
       uldst.d = spd[1] * (uldst.d - ulst.d);
       uldst.mx = spd[1] * (uldst.mx - ulst.mx);

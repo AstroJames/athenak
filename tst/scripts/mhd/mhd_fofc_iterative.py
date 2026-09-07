@@ -41,7 +41,7 @@ def run(**kwargs):
         prefix = launcher + ['-n', str(count)] if count > 1 else []
         for mode in _MODES:
             result = subprocess.run(prefix + [str(executable), mode],
-                                    cwd=build / 'src', text=True,
+                                    cwd=build / 'src', universal_newlines=True,
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, timeout=120)
             if mode in ('limit', 'invalid'):
