@@ -14,7 +14,8 @@ import athena_read  # noqa
 athena_read.check_nan_flag = True
 logger = logging.getLogger('athena' + __name__[7:])  # set logger name
 _int = ['rk2', 'rk3']
-_recon = ['plm', 'ppmx', 'wenoz']
+_recon = ['plm', 'ppmx', 'wenoz', 'teno5']
+_teno_recon = ('teno5', 'teno5_opt')
 _flux = ['llf', 'hlle', 'hlld']
 _wave = ['L-fast', 'R-fast', 'L-Alfven', 'R-Alfven',
          'L-slow', 'R-slow', 'entropy']
@@ -76,6 +77,63 @@ def run(**kwargs):
                                              'problem/vflow=1.0']
                     athena.run('tests/linear_wave_mhd.athinput', args_entr)
 
+    # The high-order ideal-MHD production configuration uses RK3.  Exercise
+    # TENO5-opt explicitly with RK3 instead of adding an unneeded RK2 cross-product.
+    for fv in _flux:
+        for res in (16, 32):
+            arguments = ['job/basename=mhd_teno5_opt_lin_wave',
+                         'time/tlim=1.0',
+                         'time/nlim=1000',
+                         'time/integrator=rk3',
+                         'mesh/nghost=3',
+                         'mesh/nx1=' + repr(res),
+                         'mesh/nx2=' + repr(res/2),
+                         'mesh/nx3=' + repr(res/2),
+                         'meshblock/nx1=' + repr(res/4),
+                         'meshblock/nx2=' + repr(res/4),
+                         'meshblock/nx3=' + repr(res/4),
+                         'mhd/reconstruct=teno5_opt',
+                         'mhd/rsolver=' + fv,
+                         'problem/amp=1.0e-6',
+                         'output1/dt=-1.0',
+                         'output2/dt=-1.0',
+                         'output3/dt=-1.0',
+                         'output4/dt=-1.0',
+                         'output5/dt=-1.0']
+            for wave_flag, vflow in ((0, 0.0), (6, 0.0), (1, 0.0), (5, 0.0),
+                                     (2, 0.0), (4, 0.0), (3, 1.0)):
+                args = arguments + ['problem/wave_flag=' + repr(wave_flag),
+                                    'problem/vflow=' + repr(vflow)]
+                athena.run('tests/linear_wave_mhd.athinput', args)
+
+    # TENO5 can be more accurate at N=16 than at N=32 relative to the asymptotic
+    # CT-limited trend, making the historical 16->32 fast-wave ratio misleading.
+    # Add N=64 HLLD fast waves to check absolute accuracy and fine-grid convergence.
+    for rv in _teno_recon:
+        arguments = ['job/basename=mhd_teno_lin_wave',
+                     'time/tlim=1.0',
+                     'time/nlim=1000',
+                     'time/integrator=rk3',
+                     'mesh/nghost=3',
+                     'mesh/nx1=64',
+                     'mesh/nx2=32',
+                     'mesh/nx3=32',
+                     'meshblock/nx1=16',
+                     'meshblock/nx2=16',
+                     'meshblock/nx3=16',
+                     'mhd/reconstruct=' + rv,
+                     'mhd/rsolver=hlld',
+                     'problem/amp=1.0e-6',
+                     'output1/dt=-1.0',
+                     'output2/dt=-1.0',
+                     'output3/dt=-1.0',
+                     'output4/dt=-1.0',
+                     'output5/dt=-1.0']
+        for wave_flag in (0, 6):
+            args = arguments + ['problem/wave_flag=' + repr(wave_flag),
+                                'problem/vflow=0.0']
+            athena.run('tests/linear_wave_mhd.athinput', args)
+
 
 # Analyze outputs
 def analyze():
@@ -98,7 +156,7 @@ def analyze():
         for ri, rv in enumerate(_recon):
             error_threshold = [0.0]*len(_wave)
             conv_threshold = [0.0]*len(_wave)
-            if (iv == 'rk3' and (rv == 'ppmx' or rv == 'wenoz')):
+            if (iv == 'rk3' and rv in ('ppmx', 'wenoz', 'teno5')):
                 error_threshold[0] = error_threshold[1] = 2.0e-8  # fast
                 error_threshold[2] = error_threshold[3] = 5.0e-8  # Alfven
                 error_threshold[4] = error_threshold[5] = 2.0e-7  # slow
@@ -128,7 +186,11 @@ def analyze():
                                               l1_rms_n32,
                                               error_threshold[wi]))
                         analyze_status = False
-                    if l1_rms_n32/l1_rms_n16 > conv_threshold[wi]:
+                    # TENO fast waves are checked over N=32->64 below.  Preserve the
+                    # historical N=16->32 threshold for every pre-existing method.
+                    check_conv = not (iv == 'rk3' and rv in _teno_recon
+                                      and wi in (0, 1))
+                    if check_conv and l1_rms_n32/l1_rms_n16 > conv_threshold[wi]:
                         logger.warning("{0} wave not converging for {1}+"
                                        "{2}+{3} configuration, "
                                        "conv: {4:g} threshold: {5:g}".
@@ -146,5 +208,48 @@ def analyze():
                                        format(iv, rv, fv,
                                               l1_rms_lf, l1_rms_rf))
                         analyze_status = False
+
+    opt_data = athena_read.error_dat('build/src/mhd_teno5_opt_lin_wave-errs.dat')
+    opt_data = opt_data.reshape([len(_flux), 2, len(_wave), opt_data.shape[-1]])
+    error_threshold = (2.0e-8, 2.0e-8, 5.0e-8, 5.0e-8,
+                       2.0e-7, 2.0e-7, 5.0e-9)
+    conv_threshold = (0.15, 0.15, 0.23, 0.23, 0.15, 0.15, 0.08)
+    for fi, fv in enumerate(_flux):
+        for wi, wv in enumerate(_wave):
+            l1_rms_n16 = opt_data[fi][0][wi][4]
+            l1_rms_n32 = opt_data[fi][1][wi][4]
+            if l1_rms_n32 > error_threshold[wi]:
+                logger.warning("%s wave error too large for rk3+teno5_opt+%s, "
+                               "error: %g threshold: %g",
+                               wv, fv, l1_rms_n32, error_threshold[wi])
+                analyze_status = False
+            if wi not in (0, 1) and l1_rms_n32/l1_rms_n16 > conv_threshold[wi]:
+                logger.warning("%s wave not converging for rk3+teno5_opt+%s, "
+                               "conv: %g threshold: %g", wv, fv,
+                               l1_rms_n32/l1_rms_n16, conv_threshold[wi])
+                analyze_status = False
+
+    teno_data = athena_read.error_dat('build/src/mhd_teno_lin_wave-errs.dat')
+    teno_data = teno_data.reshape([len(_teno_recon), 2, teno_data.shape[-1]])
+    rk3_index = _int.index('rk3')
+    hlld_index = _flux.index('hlld')
+    for ri, rv in enumerate(_teno_recon):
+        for wi, wave_index in enumerate((0, 1)):
+            if rv == 'teno5':
+                recon_index = _recon.index(rv)
+                l1_rms_n32 = data[rk3_index][recon_index][hlld_index][1][wave_index][4]
+            else:
+                l1_rms_n32 = opt_data[hlld_index][1][wave_index][4]
+            l1_rms_n64 = teno_data[ri][wi][4]
+            if l1_rms_n64 > 3.2e-9:
+                logger.warning("Fast-wave N=64 error too large for rk3+%s+hlld, "
+                               "error: %g threshold: %g",
+                               rv, l1_rms_n64, 3.2e-9)
+                analyze_status = False
+            if l1_rms_n64/l1_rms_n32 > 0.23:
+                logger.warning("Fast wave not converging over N=32->64 for "
+                               "rk3+%s+hlld, conv: %g threshold: %g",
+                               rv, l1_rms_n64/l1_rms_n32, 0.23)
+                analyze_status = False
 
     return analyze_status

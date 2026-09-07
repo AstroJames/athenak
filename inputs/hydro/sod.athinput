@@ -45,6 +45,7 @@ eos         = ideal    # EOS type
 reconstruct = plm      # spatial reconstruction method
 rsolver     = llf      # Riemann-solver to be used
 gamma       = 1.4      # gamma = C_p/C_v
+fofc        = false    # first-order flux correction
 
 <problem>
 pgen_name = shock_tube  # problem generator name

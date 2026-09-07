@@ -22,6 +22,7 @@
 #include "reconstruct/dc.hpp"
 #include "reconstruct/plm.hpp"
 #include "reconstruct/ppm.hpp"
+#include "reconstruct/teno5.hpp"
 #include "reconstruct/wenoz.hpp"
 #include "dyn_grmhd/rsolvers/llf_dyn_grmhd.hpp"
 #include "dyn_grmhd/rsolvers/hlle_dyn_grmhd.hpp"
@@ -47,6 +48,7 @@ TaskStatus DynGRMHDPS<EOSPolicy, ErrorPolicy>::CalcFluxes(Driver *pdriver, int s
   int nvars = pmy_pack->pmhd->nmhd + pmy_pack->pmhd->nscalars;
   int nmb1 = pmy_pack->nmb_thispack - 1;
   const auto recon_method_ = pmy_pack->pmhd->recon_method;
+  const Real teno_cutoff_ = pmy_pack->pmhd->teno_cutoff;
   auto size_ = pmy_pack->pmb->mb_size;
   auto coord_ = pmy_pack->pcoord->coord_data;
   auto &w0_ = pmy_pack->pmhd->w0;
@@ -115,6 +117,18 @@ TaskStatus DynGRMHDPS<EOSPolicy, ErrorPolicy>::CalcFluxes(Driver *pdriver, int s
       case ReconstructionMethod::wenoz:
         WENOZX1(member, eos_, false, m, k, j, il-1, iu, w0_, wl, wr);
         WENOZX1(member, eos_, false, m, k, j, il-1, iu, b0_, bl, br);
+        break;
+      case ReconstructionMethod::teno5:
+        TENO5X1<false>(member, eos_, teno_cutoff_, false,
+                       m, k, j, il-1, iu, w0_, wl, wr);
+        TENO5X1<false>(member, eos_, teno_cutoff_, false,
+                       m, k, j, il-1, iu, b0_, bl, br);
+        break;
+      case ReconstructionMethod::teno5_opt:
+        TENO5X1<true>(member, eos_, teno_cutoff_, false,
+                      m, k, j, il-1, iu, w0_, wl, wr);
+        TENO5X1<true>(member, eos_, teno_cutoff_, false,
+                      m, k, j, il-1, iu, b0_, bl, br);
         break;
       default:
         break;
@@ -228,6 +242,18 @@ TaskStatus DynGRMHDPS<EOSPolicy, ErrorPolicy>::CalcFluxes(Driver *pdriver, int s
             WENOZX2(member, eos_, false, m, k, j, is-1, ie+1, w0_, wl_jp1, wr);
             WENOZX2(member, eos_, false, m, k, j, is-1, ie+1, b0_, bl_jp1, br);
             break;
+          case ReconstructionMethod::teno5:
+            TENO5X2<false>(member, eos_, teno_cutoff_, false,
+                           m, k, j, is-1, ie+1, w0_, wl_jp1, wr);
+            TENO5X2<false>(member, eos_, teno_cutoff_, false,
+                           m, k, j, is-1, ie+1, b0_, bl_jp1, br);
+            break;
+          case ReconstructionMethod::teno5_opt:
+            TENO5X2<true>(member, eos_, teno_cutoff_, false,
+                          m, k, j, is-1, ie+1, w0_, wl_jp1, wr);
+            TENO5X2<true>(member, eos_, teno_cutoff_, false,
+                          m, k, j, is-1, ie+1, b0_, bl_jp1, br);
+            break;
           default:
             break;
         }
@@ -335,6 +361,18 @@ TaskStatus DynGRMHDPS<EOSPolicy, ErrorPolicy>::CalcFluxes(Driver *pdriver, int s
           case ReconstructionMethod::wenoz:
             WENOZX3(member, eos_, false, m, k, j, is-1, ie+1, w0_, wl_kp1, wr);
             WENOZX3(member, eos_, false, m, k, j, is-1, ie+1, b0_, bl_kp1, br);
+            break;
+          case ReconstructionMethod::teno5:
+            TENO5X3<false>(member, eos_, teno_cutoff_, false,
+                           m, k, j, is-1, ie+1, w0_, wl_kp1, wr);
+            TENO5X3<false>(member, eos_, teno_cutoff_, false,
+                           m, k, j, is-1, ie+1, b0_, bl_kp1, br);
+            break;
+          case ReconstructionMethod::teno5_opt:
+            TENO5X3<true>(member, eos_, teno_cutoff_, false,
+                          m, k, j, is-1, ie+1, w0_, wl_kp1, wr);
+            TENO5X3<true>(member, eos_, teno_cutoff_, false,
+                          m, k, j, is-1, ie+1, b0_, bl_kp1, br);
             break;
           default:
             break;

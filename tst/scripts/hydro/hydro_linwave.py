@@ -14,7 +14,7 @@ import athena_read  # noqa
 athena_read.check_nan_flag = True
 logger = logging.getLogger('athena' + __name__[7:])  # set logger name
 _int = ['rk2', 'rk3']
-_recon = ['plm', 'ppmx', 'wenoz']
+_recon = ['plm', 'ppmx', 'wenoz', 'teno5']
 _flux = ['llf', 'hlle', 'hllc', 'roe']
 _wave = ['L-sound', 'R-sound', 'entropy']
 
@@ -57,6 +57,37 @@ def run(**kwargs):
                                              'problem/vflow=1.0']
                     athena.run('tests/linear_wave_hydro.athinput', args_entr)
 
+    # The high-order ideal-hydro production configuration uses RK3.  Exercise
+    # TENO5-opt explicitly with RK3 instead of adding an unneeded RK2 cross-product.
+    for fv in _flux:
+        for res in (16, 32):
+            arguments = ['job/basename=hydro_teno5_opt_lin_wave',
+                         'time/tlim=1.0',
+                         'time/nlim=1000',
+                         'time/integrator=rk3',
+                         'mesh/nghost=3',
+                         'mesh/nx1=' + repr(res),
+                         'mesh/nx2=' + repr(res/2),
+                         'mesh/nx3=' + repr(res/2),
+                         'meshblock/nx1=' + repr(res/4),
+                         'meshblock/nx2=' + repr(res/4),
+                         'meshblock/nx3=' + repr(res/4),
+                         'hydro/reconstruct=teno5_opt',
+                         'hydro/rsolver=' + fv,
+                         'problem/amp=1.0e-6',
+                         'output1/dt=-1.0',
+                         'output2/dt=-1.0',
+                         'output3/dt=-1.0']
+            args_l = arguments + ['problem/wave_flag=0',
+                                  'problem/vflow=0.0']
+            athena.run('tests/linear_wave_hydro.athinput', args_l)
+            args_r = arguments + ['problem/wave_flag=4',
+                                  'problem/vflow=0.0']
+            athena.run('tests/linear_wave_hydro.athinput', args_r)
+            args_entr = arguments + ['problem/wave_flag=3',
+                                     'problem/vflow=1.0']
+            athena.run('tests/linear_wave_hydro.athinput', args_entr)
+
 
 # Analyze outputs
 def analyze():
@@ -77,7 +108,7 @@ def analyze():
         for ri, rv in enumerate(_recon):
             error_threshold = [0.0]*len(_wave)
             conv_threshold = [0.0]*len(_wave)
-            if (iv == 'rk3' and (rv == 'ppmx' or rv == 'wenoz')):
+            if (iv == 'rk3' and rv in ('ppmx', 'wenoz', 'teno5')):
                 error_threshold[0] = error_threshold[1] = 6.0e-9  # sound
                 error_threshold[2] = 4.5e-9  # entropy
                 conv_threshold[0] = conv_threshold[1] = 0.07  # sound
@@ -117,5 +148,24 @@ def analyze():
                                        format(iv, rv, fv,
                                               l1_rms_l, l1_rms_r))
                         analyze_status = False
+
+    opt_data = athena_read.error_dat('build/src/hydro_teno5_opt_lin_wave-errs.dat')
+    opt_data = opt_data.reshape([len(_flux), 2, len(_wave), opt_data.shape[-1]])
+    error_threshold = (6.0e-9, 6.0e-9, 4.5e-9)
+    conv_threshold = (0.07, 0.07, 0.08)
+    for fi, fv in enumerate(_flux):
+        for wi, wv in enumerate(_wave):
+            l1_rms_n16 = opt_data[fi][0][wi][4]
+            l1_rms_n32 = opt_data[fi][1][wi][4]
+            if l1_rms_n32 > error_threshold[wi]:
+                logger.warning("%s wave error too large for rk3+teno5_opt+%s, "
+                               "error: %g threshold: %g",
+                               wv, fv, l1_rms_n32, error_threshold[wi])
+                analyze_status = False
+            if l1_rms_n32/l1_rms_n16 > conv_threshold[wi]:
+                logger.warning("%s wave not converging for rk3+teno5_opt+%s, "
+                               "conv: %g threshold: %g", wv, fv,
+                               l1_rms_n32/l1_rms_n16, conv_threshold[wi])
+                analyze_status = False
 
     return analyze_status

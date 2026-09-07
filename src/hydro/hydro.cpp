@@ -149,7 +149,9 @@ Hydro::Hydro(MeshBlockPack *ppack, ParameterInput *pin) :
       }
     } else if (xorder.compare("ppm4") == 0 ||
                xorder.compare("ppmx") == 0 ||
-               xorder.compare("wenoz") == 0) {
+               xorder.compare("wenoz") == 0 ||
+               xorder.compare("teno5") == 0 ||
+               xorder.compare("teno5_opt") == 0) {
       // check that nghost > 2
       auto &indcs = pmy_pack->pmesh->mb_indcs;
       if (indcs.ng < 3) {
@@ -158,7 +160,7 @@ Hydro::Hydro(MeshBlockPack *ppack, ParameterInput *pin) :
           << "but <mesh>/nghost=" << indcs.ng << std::endl;
         std::exit(EXIT_FAILURE);
       }
-      // check that nghost > 3 with PPM4(or PPMX or WENOZ)+FOFC
+      // check that nghost > 3 with high-order reconstruction and FOFC
       if (use_fofc && indcs.ng < 4) {
         std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
           << std::endl << "FOFC and " << xorder << " reconstruction requires at "
@@ -171,6 +173,20 @@ Hydro::Hydro(MeshBlockPack *ppack, ParameterInput *pin) :
         recon_method = ReconstructionMethod::ppmx;
       } else if (xorder.compare("wenoz") == 0) {
         recon_method = ReconstructionMethod::wenoz;
+      } else if (xorder.compare("teno5") == 0) {
+        recon_method = ReconstructionMethod::teno5;
+      } else if (xorder.compare("teno5_opt") == 0) {
+        recon_method = ReconstructionMethod::teno5_opt;
+      }
+      if (recon_method == ReconstructionMethod::teno5 ||
+          recon_method == ReconstructionMethod::teno5_opt) {
+        teno_cutoff = pin->GetOrAddReal("hydro", "teno_cutoff", 1.0e-5);
+        if (!(teno_cutoff > 0.0) || teno_cutoff > 1.0/3.0) {
+          std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                    << std::endl << "<hydro>/teno_cutoff must be in (0, 1/3], but is "
+                    << teno_cutoff << std::endl;
+          std::exit(EXIT_FAILURE);
+        }
       }
     } else {
       std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__

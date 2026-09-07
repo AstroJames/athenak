@@ -1,0 +1,66 @@
+# AthenaK input for the Xu--Shu inviscid Rayleigh--Taylor instability.
+# This is the setup used in Fig. 19 of Fu, Hu & Adams, JCP 305 (2016).
+
+<comment>
+problem   = Xu--Shu Rayleigh--Taylor instability
+reference = Fu, Hu & Adams, J. Comput. Phys. 305, 333-359 (2016), Sec. 5.6
+
+<job>
+basename  = rt_xu_shu
+
+<mesh>
+nghost    = 3
+nx1       = 128
+x1min     = 0.0
+x1max     = 0.25
+ix1_bc    = reflect
+ox1_bc    = reflect
+
+nx2       = 512
+x2min     = 0.0
+x2max     = 1.0
+ix2_bc    = user
+ox2_bc    = user
+
+nx3       = 1
+x3min     = -0.5
+x3max     = 0.5
+ix3_bc    = periodic
+ox3_bc    = periodic
+
+<meshblock>
+nx1       = 128
+nx2       = 128
+nx3       = 1
+
+<time>
+evolution  = dynamic
+integrator = rk3
+cfl_number = 0.4
+nlim       = 500000
+tlim       = 1.95
+ndiag      = 100
+
+<hydro>
+eos             = ideal
+reconstruct     = wenoz
+rsolver         = hllc
+fofc            = false
+const_accel     = true
+const_accel_val = 1.0
+const_accel_dir = 2
+gamma           = 1.6666666666666667
+
+<problem>
+pgen_name      = rt
+xu_shu         = true
+check_symmetry = false
+
+<output1>
+file_type = hst
+dt        = 0.05
+
+<output2>
+file_type = bin
+variable  = hydro_w
+dt        = 1.95

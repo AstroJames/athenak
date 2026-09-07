@@ -12,17 +12,30 @@
 
 // C++ headers
 #include <math.h>
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
 #include <iostream>   // endl
 #include <sstream>    // stringstream
+#include <string>
+#include <vector>
 
 // Athena++ headers
 #include "athena.hpp"
+#include "globals.hpp"
 #include "parameter_input.hpp"
 #include "coordinates/cell_locations.hpp"
 #include "mesh/mesh.hpp"
 #include "eos/eos.hpp"
 #include "mhd/mhd.hpp"
 #include "pgen/pgen.hpp"
+
+namespace {
+void OrszagTangSymmetryErrors(ParameterInput *pin, Mesh *pm);
+}
 
 //----------------------------------------------------------------------------------------
 //! \fn Real A3(const Real x1,const Real x2,const Real x3)
@@ -40,6 +53,9 @@ Real A3(const Real x1, const Real x2, const Real B0) {
 //  symmetry can be enforced across x=0 and y=0.
 
 void ProblemGenerator::OrszagTang(ParameterInput *pin, const bool restart) {
+  if (pin->GetOrAddBoolean("problem", "check_symmetry", false)) {
+    pgen_final_func = OrszagTangSymmetryErrors;
+  }
   if (restart) return;
 
   MeshBlockPack *pmbp = pmy_mesh_->pmb_pack;
@@ -121,3 +137,112 @@ void ProblemGenerator::OrszagTang(ParameterInput *pin, const bool restart) {
 
   return;
 }
+
+namespace {
+
+//----------------------------------------------------------------------------------------
+//! \brief Measure exact half-turn parity of the final cell-centered MHD state.
+
+void OrszagTangSymmetryErrors(ParameterInput *pin, Mesh *pm) {
+  if (pm->multilevel) {
+    if (global_variable::my_rank == 0) {
+      std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                << std::endl << "Orszag-Tang symmetry diagnostics require a uniform mesh"
+                << std::endl;
+    }
+    std::exit(EXIT_FAILURE);
+  }
+
+  constexpr int nfields = 13;
+  const std::array<const char *, nfields> labels = {
+      "u_d", "u_m1", "u_m2", "u_m3", "u_e",
+      "w_d", "w_v1", "w_v2", "w_v3", "w_e", "b1", "b2", "b3"};
+  const std::array<int, nfields> parity = {
+      1, -1, -1, 1, 1, 1, -1, -1, 1, 1, -1, -1, 1};
+
+  auto *pmbp = pm->pmb_pack;
+  auto *pmhd = pmbp->pmhd;
+  auto u = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->u0);
+  auto w = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->w0);
+  auto bcc = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->bcc0);
+  const auto &indcs = pm->mb_indcs;
+  const int is = indcs.is, js = indcs.js, ks = indcs.ks;
+  const int nx1_mb = indcs.nx1, nx2_mb = indcs.nx2, nx3_mb = indcs.nx3;
+  const int nx1 = pm->mesh_indcs.nx1;
+  const int nx2 = pm->mesh_indcs.nx2;
+  const int nx3 = pm->mesh_indcs.nx3;
+  const int ncells = nx1*nx2*nx3;
+  std::vector<Real> state(nfields*ncells, 0.0);
+
+  for (int m = 0; m < pmbp->nmb_thispack; ++m) {
+    const int gid = pmbp->pmb->mb_gid.h_view(m);
+    const LogicalLocation &lloc = pm->lloc_eachmb[gid];
+    const int gi0 = lloc.lx1*nx1_mb;
+    const int gj0 = lloc.lx2*nx2_mb;
+    const int gk0 = lloc.lx3*nx3_mb;
+    for (int k = ks; k < ks + nx3_mb; ++k) {
+      for (int j = js; j < js + nx2_mb; ++j) {
+        for (int i = is; i < is + nx1_mb; ++i) {
+          const int gi = gi0 + i - is;
+          const int gj = gj0 + j - js;
+          const int gk = gk0 + k - ks;
+          const int idx = (gk*nx2 + gj)*nx1 + gi;
+          state[0*ncells + idx] = u(m, IDN, k, j, i);
+          state[1*ncells + idx] = u(m, IM1, k, j, i);
+          state[2*ncells + idx] = u(m, IM2, k, j, i);
+          state[3*ncells + idx] = u(m, IM3, k, j, i);
+          state[4*ncells + idx] = u(m, IEN, k, j, i);
+          state[5*ncells + idx] = w(m, IDN, k, j, i);
+          state[6*ncells + idx] = w(m, IVX, k, j, i);
+          state[7*ncells + idx] = w(m, IVY, k, j, i);
+          state[8*ncells + idx] = w(m, IVZ, k, j, i);
+          state[9*ncells + idx] = w(m, IEN, k, j, i);
+          state[10*ncells + idx] = bcc(m, IBX, k, j, i);
+          state[11*ncells + idx] = bcc(m, IBY, k, j, i);
+          state[12*ncells + idx] = bcc(m, IBZ, k, j, i);
+        }
+      }
+    }
+  }
+
+#if MPI_PARALLEL_ENABLED
+  MPI_Allreduce(MPI_IN_PLACE, state.data(), nfields*ncells, MPI_ATHENA_REAL, MPI_SUM,
+                MPI_COMM_WORLD);
+#endif
+
+  if (global_variable::my_rank == 0) {
+    std::array<std::int64_t, nfields> broken{};
+    std::array<Real, nfields> max_residual{};
+    for (int gk = 0; gk < nx3; ++gk) {
+      for (int gj = 0; gj < nx2; ++gj) {
+        for (int gi = 0; gi < nx1; ++gi) {
+          const int idx = (gk*nx2 + gj)*nx1 + gi;
+          const int opposite = (gk*nx2 + (nx2 - 1 - gj))*nx1 + (nx1 - 1 - gi);
+          for (int n = 0; n < nfields; ++n) {
+            const Real residual = state[n*ncells + idx]
+                                - parity[n]*state[n*ncells + opposite];
+            if (residual != 0.0) {
+              ++broken[n];
+              max_residual[n] = std::max(max_residual[n], std::abs(residual));
+            }
+          }
+        }
+      }
+    }
+
+    const std::string basename = pin->GetString("job", "basename");
+    std::ofstream file(basename + "-symmetry.dat");
+    file << "# nx1 nx2 nx3 ncycle time";
+    for (int n = 0; n < nfields; ++n) {
+      file << " n_" << labels[n] << " max_" << labels[n];
+    }
+    file << "\n" << std::setprecision(17) << nx1 << " " << nx2 << " " << nx3
+         << " " << pm->ncycle << " " << pm->time;
+    for (int n = 0; n < nfields; ++n) {
+      file << " " << broken[n] << " " << max_residual[n];
+    }
+    file << std::endl;
+  }
+}
+
+} // namespace

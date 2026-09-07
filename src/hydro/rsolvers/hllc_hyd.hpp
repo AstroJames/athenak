@@ -29,6 +29,11 @@ void HLLC(TeamMember_t const &member, const EOS_Data &eos,
      const RegionIndcs &indcs,const DualArray1D<RegionSize> &size,const CoordData &coord,
      const int m, const int k, const int j, const int il, const int iu, const int ivx,
      const ScrArray2D<Real> &wl, const ScrArray2D<Real> &wr, DvceArray5D<Real> flx) {
+  // Preserve the intermediate roundings in the reflection-equivalent left/right star
+  // formulas. Clang FMA contraction otherwise seeds one-bit parity errors in RK3.
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#endif
   int ivy = IVX + ((ivx-IVX)+1)%3;
   int ivz = IVX + ((ivx-IVX)+2)%3;
 

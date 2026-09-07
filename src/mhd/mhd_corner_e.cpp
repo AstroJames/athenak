@@ -197,8 +197,10 @@ TaskStatus MHD::CornerE(Driver *pdriver, int stage) {
       } else {
         e3_r1 = e3x1_(m,ks,j  ,i) - e3cc_(m,ks,j  ,i  );
       }
-      e3(m,ks,j,i) = 0.25*(e3_l1 + e3_r1 + e3_l2 + e3_r2 +
-             e3x2_(m,ks,j,i-1) + e3x2_(m,ks,j,i) + e3x1_(m,ks,j-1,i) + e3x1_(m,ks,j,i));
+      // Pair terms exchanged by point reflection before combining the four pairs.
+      e3(m,ks,j,i) = 0.25*((e3_l1 + e3_r1) + (e3_l2 + e3_r2) +
+             (e3x2_(m,ks,j,i-1) + e3x2_(m,ks,j,i)) +
+             (e3x1_(m,ks,j-1,i) + e3x1_(m,ks,j,i)));
     });
   }
 

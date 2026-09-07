@@ -16,6 +16,7 @@
 #include "reconstruct/dc.hpp"
 #include "reconstruct/plm.hpp"
 #include "reconstruct/ppm.hpp"
+#include "reconstruct/teno5.hpp"
 #include "reconstruct/wenoz.hpp"
 #include "hydro/rsolvers/advect_hyd.hpp"
 #include "hydro/rsolvers/llf_hyd.hpp"
@@ -46,6 +47,7 @@ void Hydro::CalculateFluxes(Driver *pdriver, int stage) {
   int nvars = nhydro + nscalars;
   int nmb1 = pmy_pack->nmb_thispack - 1;
   const auto recon_method_ = recon_method;
+  const Real teno_cutoff_ = teno_cutoff;
   bool extrema = false;
   if (recon_method == ReconstructionMethod::ppmx) {
     extrema = true;
@@ -67,11 +69,8 @@ void Hydro::CalculateFluxes(Driver *pdriver, int stage) {
   int il = is, iu = ie+1, jl = js, ju = je, kl = ks, ku = ke;
   if (use_fofc) {
     il = is-1, iu = ie+2;
-    if (pmy_pack->pmesh->two_d) {
-      jl = js-1, ju = je+1, kl = ks, ku = ke;
-    } else {
-      jl = js-1, ju = je+1, kl = ks-1, ku = ke+1;
-    }
+    if (pmy_pack->pmesh->multi_d) { jl = js-1, ju = je+1; }
+    if (pmy_pack->pmesh->three_d) { kl = ks-1, ku = ke+1; }
   }
 
   par_for_outer("hflux_x1",DevExeSpace(), scr_size, scr_level, 0, nmb1, kl, ku, jl, ju,
@@ -93,6 +92,14 @@ void Hydro::CalculateFluxes(Driver *pdriver, int stage) {
         break;
       case ReconstructionMethod::wenoz:
         WENOZX1(member, eos_, true, m, k, j, il-1, iu, w0_, wl, wr);
+        break;
+      case ReconstructionMethod::teno5:
+        TENO5X1<false>(member, eos_, teno_cutoff_, true,
+                       m, k, j, il-1, iu, w0_, wl, wr);
+        break;
+      case ReconstructionMethod::teno5_opt:
+        TENO5X1<true>(member, eos_, teno_cutoff_, true,
+                      m, k, j, il-1, iu, w0_, wl, wr);
         break;
       default:
         break;
@@ -193,6 +200,14 @@ void Hydro::CalculateFluxes(Driver *pdriver, int stage) {
           case ReconstructionMethod::wenoz:
             WENOZX2(member, eos_, true, m, k, j, il, iu, w0_, wl_jp1, wr);
             break;
+          case ReconstructionMethod::teno5:
+            TENO5X2<false>(member, eos_, teno_cutoff_, true,
+                           m, k, j, il, iu, w0_, wl_jp1, wr);
+            break;
+          case ReconstructionMethod::teno5_opt:
+            TENO5X2<true>(member, eos_, teno_cutoff_, true,
+                          m, k, j, il, iu, w0_, wl_jp1, wr);
+            break;
           default:
             break;
         }
@@ -287,6 +302,14 @@ void Hydro::CalculateFluxes(Driver *pdriver, int stage) {
             break;
           case ReconstructionMethod::wenoz:
             WENOZX3(member, eos_, true, m, k, j, il, iu, w0_, wl_kp1, wr);
+            break;
+          case ReconstructionMethod::teno5:
+            TENO5X3<false>(member, eos_, teno_cutoff_, true,
+                           m, k, j, il, iu, w0_, wl_kp1, wr);
+            break;
+          case ReconstructionMethod::teno5_opt:
+            TENO5X3<true>(member, eos_, teno_cutoff_, true,
+                          m, k, j, il, iu, w0_, wl_kp1, wr);
             break;
           default:
             break;
