@@ -82,6 +82,7 @@ add_executable(
         mhd/mhd_fluxes.cpp
         mhd/mhd_fofc.cpp
         mhd/fofc_boundary.cpp
+        mhd/fofc_diagnostics.cpp
         mhd/mhd_newdt.cpp
         mhd/mhd_tasks.cpp
         mhd/mhd_update.cpp

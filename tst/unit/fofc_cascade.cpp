@@ -14,6 +14,7 @@
 #include "mhd/mhd.hpp"
 #include "mhd/fofc_boundary.hpp"
 #include "driver/driver.hpp"
+#include "fofc_cfl.hpp"
 
 int main(int argc, char **argv) {
 #if MPI_PARALLEL_ENABLED
@@ -29,24 +30,26 @@ int main(int argc, char **argv) {
   {
     const std::string mode = argc > 1 ? argv[1] : "cascade";
     const bool mask_test = mode == "mask3d";
-    const bool rk3 = mode == "rk3";
+    const bool cfl_test = mode == "cfl3d_safe" || mode == "cfl3d_unsafe";
+    const bool three_dimensional = mask_test || cfl_test;
+    const bool rk3 = mode == "rk3" || cfl_test;
     const bool deep = mode == "deep" || mode == "limit";
     const bool legacy = mode == "legacy";
     const bool energy_test = mode == "energy";
     const bool soft_floor = mode == "soft_floor";
     const bool invalid = mode == "invalid";
-    const int nx = mask_test ? 32 : 128;
+    const int nx = three_dimensional ? 32 : 128;
     ParameterInput pin;
     std::ostringstream input;
     input << "<mesh>\nnghost=4\nnx1=" << nx
-          << "\nnx2=" << (mask_test ? 32 : 1)
-          << "\nnx3=" << (mask_test ? 32 : 1)
+          << "\nnx2=" << (three_dimensional ? 32 : 1)
+          << "\nnx3=" << (three_dimensional ? 32 : 1)
           << "\nx1min=0\nx1max=" << nx
           << "\nx2min=0\nx2max=32\nx3min=0\nx3max=32\n"
           << "ix1_bc=periodic\nox1_bc=periodic\nix2_bc=periodic\nox2_bc=periodic\n"
           << "ix3_bc=periodic\nox3_bc=periodic\n"
-          << "<meshblock>\nnx1=16\nnx2=" << (mask_test ? 16 : 1)
-          << "\nnx3=" << (mask_test ? 16 : 1)
+          << "<meshblock>\nnx1=16\nnx2=" << (three_dimensional ? 16 : 1)
+          << "\nnx3=" << (three_dimensional ? 16 : 1)
           << "\n<time>\nevolution=dynamic\nintegrator=" << (rk3 ? "rk3" : "rk1")
           << "\ncfl_number=0.6\ntlim=1\n"
           << "<mhd>\neos=ideal\ngamma=1.6666666666666667\n"
@@ -69,10 +72,12 @@ int main(int argc, char **argv) {
     const auto &sizes = pack->pmb->mb_size.h_view;
     Kokkos::Timer timer;
     Driver driver(&pin, &mesh, 0.0, &timer);
-    const int stage = rk3 ? 3 : 1;
+    const int stage = cfl_test ? 2 : (rk3 ? 3 : 1);
     const Real beta_dt = driver.beta[stage-1]*mesh.dt;
 
-    if (mask_test) {
+    if (cfl_test) {
+      errors += TestLLFCFL(mesh, driver, mode == "cfl3d_safe", stage);
+    } else if (mask_test) {
       auto flags = Kokkos::create_mirror_view(pmhd->fofc);
       Kokkos::deep_copy(flags, false);
       for (int m=0; m<nmb; ++m) {

@@ -19,6 +19,7 @@
 #include "eos/ideal_c2p_mhd.hpp"
 #include "mhd/fofc_boundary.hpp"
 #include "mhd/rsolvers/llf_mhd_singlestate.hpp"
+#include "mhd/fofc_diagnostics.hpp"
 #include "mhd.hpp"
 
 namespace mhd {
@@ -139,6 +140,7 @@ void MHD::FOFC(Driver *pdriver, int stage) {
     fofc_boundary = std::make_unique<FOFCBoundary>(pmy_pack, pbval_u);
   }
   int newly_flagged = iterative ? pmy_pack->pmesh->ecounter.nfofc - nfofc_before : 1;
+  int last_recheck = 0;
   int hard_bad = 0;
   const int rounds = iterative ? fofc_max_iterations : 1;
   for (int pass=0; pass<rounds; ++pass) {
@@ -596,6 +598,7 @@ void MHD::FOFC(Driver *pdriver, int stage) {
       }, Kokkos::Sum<int>(nnew), Kokkos::Sum<int>(nhard), Kokkos::Sum<int>(nfloor));
       newly_flagged = nnew;
       hard_bad = nhard;
+      last_recheck = pass+1;
       if (nnew > 0) {
         par_for("FOFC-grow-mask", DevExeSpace(), 0, nmb-1, ks, ke, js, je, is, ie,
             KOKKOS_LAMBDA(const int m, const int k, const int j, const int i) {
@@ -612,6 +615,7 @@ void MHD::FOFC(Driver *pdriver, int stage) {
   }  // correction rounds
 
   if (iterative && (newly_flagged > 0 || hard_bad > 0)) {
+    DumpFOFCFailure(this, pmy_pack, pdriver, stage, last_recheck);
     std::fprintf(stderr, "FOFC_EXHAUSTED rank=%d cycle=%d time=%.17e stage=%d "
         "rounds=%d new=%d hard=%d\n", global_variable::my_rank,
         pmy_pack->pmesh->ncycle, pmy_pack->pmesh->time, stage, rounds,

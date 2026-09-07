@@ -9,7 +9,7 @@ import subprocess
 
 logger = logging.getLogger('athena' + __name__[7:])
 _MODES = ('legacy', 'cascade', 'energy', 'nan', 'soft_floor', 'mask3d',
-          'rk3', 'deep', 'limit', 'invalid')
+          'rk3', 'deep', 'limit', 'invalid', 'cfl3d_safe', 'cfl3d_unsafe')
 _results = []
 
 
@@ -44,7 +44,7 @@ def run(**kwargs):
                                     cwd=build / 'src', universal_newlines=True,
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, timeout=120)
-            if mode in ('limit', 'invalid'):
+            if mode in ('limit', 'invalid', 'cfl3d_unsafe'):
                 passed = (result.returncode != 0 and
                           'FOFC_EXHAUSTED' in result.stdout)
             else:
