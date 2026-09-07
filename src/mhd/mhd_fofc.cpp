@@ -7,6 +7,7 @@
 //! \brief Implements functions for first-order flux correction (FOFC) algorithm.
 
 #include <cstdio>
+#include <memory>
 
 #include "athena.hpp"
 #include "mesh/mesh.hpp"

@@ -132,7 +132,7 @@ pre-optimization version passed in **2265528**. Test runtime files are in
 
 ## High-resolution comparison
 
-Job **2265607** compares single-pass and four-pass runs from the finite t=500
+Job **2265607** compared single-pass and four-pass runs from the finite t=500
 restart to t=510, using the same executable and the original 264x264x528 mesh.
 It uses 9 full CPU nodes, 192 ranks per node, account rrg-essick,
 the normal AthenaK loader, and the VAST-wrapped mpirun.
@@ -157,3 +157,121 @@ no evolution; it is not a failed numerical test.
 The t=500 restart does not reproduce the original forcing trajectory exactly:
 per-component OU forcing memory was not saved. A fresh high-resolution run
 through the original failure time is still needed after the short comparison.
+
+### Completed comparison and cap scan
+
+Job **2265607** finished with a diagnostic abort in the four-pass case.
+The baseline completed t=510 (cycle 6487). The four-pass case stopped at cycle
+6408, t=501.222301503750032, RK stage 3, rank 391:
+
+```text
+FOFC_EXHAUSTED ... rounds=4 new=1 hard=0
+```
+
+This is a newly discovered, unprocessed floor flag at the cap, not a reported
+nonfinite/nonpositive-density state on the aborting rank. Four passes are
+insufficient even for this short interval under the current floor policy.
+
+Diagnostic cap-scan job **2265889** repeated t=500 to t=510 with caps 4, 8,
+and 16, on 9 full nodes. The four-pass abort reproduced. Both 8 and 16 completed
+t=510 at cycle 6487. Their per-pass logs contained no hard-bad events; new flags
+appeared as late as pass 4, requiring at least a fifth correction pass.
+The logs do not distinguish which configured floor produced each soft flag.
+This interval therefore tests convergence of floor-triggered correction,
+not repair of the original fresh-run negative-density event.
+
+The cap has no additional hard-coded upper bound: any positive input integer is
+accepted. It counts total correction passes per RK stage, including the first.
+Larger caps still incur fixed neighbor-exchange rounds after local cell work
+stops. Eight is the smallest successful cap tested, not a proven minimum or a
+guarantee for the full evolution.
+
+### Fresh validation submitted
+
+Job **2265910** was submitted with an afterok dependency on the successful cap
+scan 2265889. It runs a fresh single-pass baseline followed by a fresh eight-pass
+case, each from t=0 to t=600, beyond the original failure at t=526.13.
+A baseline diagnostic abort does not prevent launching the iterative case.
+Both use the same staged executable and identical physics/forcing inputs.
+The binary contains the code committed as **1a7d19f**, but was staged before
+the commit was made, so embedded build metadata need not show that commit.
+
+Both retain the original Newtonian CGM setup, 264x264x528 mesh, 22x22x44 blocks,
+RK3/WENOZ/HLLD, CFL 0.6, four ghost cells, original floors, gravity, cooling,
+thermostat, magnetic initialization, and two-component forcing. No mass source
+or additional floor was introduced. Diagnostics are enabled. History cadence
+is 0.1 Myr, MHD/forcing binary cadence is 25 Myr, and restart cadence is 500 Myr
+(plus the code's initial/final outputs).
+
+Resources: account rrg-essick, compute partition, 9 nodes, 192 MPI ranks/node,
+one thread/rank, walltime 02:30:00; normal AthenaK and VAST loaders and wrapped
+mpirun. Runtime files are under the existing development scratch directory:
+
+- `cap_scan_job.sh`, `iterative{4,8,16}_t500_diagnostics/`
+- `fresh_validation_job.sh`, `fresh_validation.input`
+- `fresh_baseline_t600/`, `fresh_iterative8_t600/` (created when launched)
+
+### Fresh validation completed
+
+At the user's request, the two cases were split to run concurrently.
+The baseline's batch shell alone was sent SIGSTOP, leaving its MPI children
+integrating; this prevented the original sequential second launch.
+Independent iterative job **2265958** used nine other full nodes, the same
+staged executable/input, cap 8, and directory
+`fresh_iterative8_parallel_t600/`. Its walltime limit was 01:30:00.
+
+The fresh single-pass baseline reproduced the original failure EXACTLY:
+cycle 6661, t=526.133867756735867, dt=0.0417351350575759852, RK stage 3,
+rank/gid 391, k=11, j=13, i=6 and i=8. Both high-order and post-correction
+densities match the earlier diagnosed failure to all printed digits.
+Its MPI step ended on 2026-09-06 at 16:22:01. The paused batch allocation was
+then intentionally cancelled and released at 16:26:49. The scheduler's
+CANCELLED status records that cleanup, not the numerical failure classification.
+No duplicate iterative simulation was launched.
+
+The fresh eight-pass case **COMPLETED**, exit 0, at t=600, cycle 9575.
+Job 2265958 ran 2026-09-06 16:01:29 to 17:04:14 (01:02:45).
+Its stderr is empty. Reported simulation CPU timer: 3739.419 s; throughput:
+9.422724e7 zone-cycles/s. These are not a clean overhead comparison: the
+baseline failed earlier, the trajectories/step counts differ, and diagnostics
+were enabled. No production overhead percentage is inferred from these totals.
+
+This validates removal of the original failure for this high-resolution CGM
+case through t=600, retaining Newtonian RK3/WENOZ/HLLD and the original floors
+and source terms. It is not a stability guarantee through the original t=3000
+target or for every configuration.
+
+The 141 MB iterative log was aggregated successfully in compute-node debug
+allocation **2270848** (exit 0, 13 seconds); the login node only read the small
+summary. Analysis script: `analyze_validation.sh`; output:
+`validation_summary.out`.
+
+Aggregate results:
+
+- 9575 completed timesteps, 28725 RK stages, final time 600.
+- 3230544 newly flagged physical cell-stage events, all floor-only.
+- Zero FOFC_ITER_BAD records, zero hard-bad pass reports, zero exhaustion or
+  accepted-state abort markers.
+- New flags appeared as late as pass 5, implying a sixth correction pass was
+  required. The cap of 8 was sufficient. A separate cap-6 replay was not run.
+- Inferred minimum correction depths by RK stage: 1 pass: 190 stages;
+  2: 11434; 3: 16018; 4: 1032; 5: 46; 6: 5; 7/8: 0.
+  These count correction depth, not MPI rounds: all 8 scheduled exchanges
+  still occur in the current implementation.
+- Iterative history: 6001 data rows, t=0 through 600, zero NaN/Inf fields,
+  minimum recorded dt=0.00681843.
+- Baseline history: 5244 rows, last saved time rounded to 526.134,
+  zero NaN/Inf fields before its diagnostic abort.
+
+Interpretation: the full CGM experiment demonstrates avoidance of the original
+failure on the changed iterative trajectory. It did NOT log the same two
+negative-density states and then repair them: no hard-bad trial state occurred
+in its recheck logs. Direct repair of correction-induced nonpositive density
+remains demonstrated by the controlled regression tests, including MPI
+boundaries. Preserve this distinction when describing the evidence.
+
+All three allocations (baseline, independent iterative run, and analysis)
+have ended and been released. No further simulations were submitted.
+The current source worktree contains unrelated concurrent user changes; these
+were not touched. The validation used the already-staged executable containing
+the code committed as 1a7d19f, not a rebuild of those later edits.

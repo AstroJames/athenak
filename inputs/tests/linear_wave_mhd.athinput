@@ -41,6 +41,8 @@ tlim       = 5.0       # time limit
 ndiag      = 1         # cycles between diagostic output
 
 <mhd>
+fofc = false
+fofc_max_iterations = 1
 eos         = ideal    # EOS type
 reconstruct = plm      # spatial reconstruction method
 rsolver     = llf      # Riemann-solver to be used

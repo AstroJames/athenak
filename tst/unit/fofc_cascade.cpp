@@ -1,3 +1,5 @@
+// Copyright (C) 2026 James Beattie and the Athena code team.
+// Licensed under the 3-clause BSD License (the "LICENSE").
 // Deterministic tests of the production FOFC kernels; run only under Slurm on Trillium.
 #include <cmath>
 #include <cstdio>
@@ -24,6 +26,8 @@ int main(int argc, char **argv) {
   {
     const std::string mode = argc > 1 ? argv[1] : "cascade";
     const bool mask_test = mode == "mask3d";
+    const bool rk3 = mode == "rk3";
+    const bool deep = mode == "deep" || mode == "limit";
     const bool legacy = mode == "legacy";
     const bool energy_test = mode == "energy";
     const bool soft_floor = mode == "soft_floor";
@@ -40,11 +44,12 @@ int main(int argc, char **argv) {
           << "ix3_bc=periodic\nox3_bc=periodic\n"
           << "<meshblock>\nnx1=16\nnx2=" << (mask_test ? 16 : 1)
           << "\nnx3=" << (mask_test ? 16 : 1)
-          << "\n<time>\nevolution=dynamic\nintegrator=rk1\ncfl_number=0.6\ntlim=1\n"
+          << "\n<time>\nevolution=dynamic\nintegrator=" << (rk3 ? "rk3" : "rk1")
+          << "\ncfl_number=0.6\ntlim=1\n"
           << "<mhd>\neos=ideal\ngamma=1.6666666666666667\n"
           << "reconstruct=wenoz\nrsolver=hlld\nfofc=true\n"
           << "dfloor=1e-12\npfloor=1e-14\ntfloor=" << (soft_floor ? 10 : 0)
-          << "\nfofc_max_iterations=" << (legacy ? 1 : 4)
+          << "\nfofc_max_iterations=" << (legacy ? 1 : (mode == "limit" ? 2 : 8))
           << "\nfofc_diagnostics=false\n";
     std::istringstream stream(input.str());
     pin.LoadFromStream(stream);
@@ -59,6 +64,10 @@ int main(int argc, char **argv) {
     const auto &ind = mesh.mb_indcs;
     const int nmb = pack->nmb_thispack;
     const auto &sizes = pack->pmb->mb_size.h_view;
+    Kokkos::Timer timer;
+    Driver driver(&pin, &mesh, 0.0, &timer);
+    const int stage = rk3 ? 3 : 1;
+    const Real beta_dt = driver.beta[stage-1]*mesh.dt;
 
     if (mask_test) {
       auto flags = Kokkos::create_mirror_view(pmhd->fofc);
@@ -106,13 +115,16 @@ int main(int argc, char **argv) {
       Kokkos::deep_copy(pmhd->b1.x3f, 0.0);
       Kokkos::deep_copy(pmhd->e3x1, 0.0);
       Kokkos::deep_copy(pmhd->e2x1, 0.0);
-      auto u = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->u0);
-      auto w = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->w0);
+      auto u = Kokkos::create_mirror(pmhd->u0);
+      auto w = Kokkos::create_mirror(pmhd->w0);
+      Kokkos::deep_copy(u, pmhd->u0);
+      Kokkos::deep_copy(w, pmhd->w0);
       auto b = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->bcc0);
       auto f = Kokkos::create_mirror_view(pmhd->uflx.x1f);
       Kokkos::deep_copy(f, 0.0);
       // For >1 rank the initially flagged cell sits immediately left of a rank boundary.
       const int center = global_variable::nranks > 1 ? nx/global_variable::nranks-1 : 15;
+      const int width = deep ? 4 : 2;
       for (int m=0; m<nmb; ++m) {
         const int start = std::lround(sizes(m).x1min);
         for (int i=0; i<u.extent_int(4); ++i) {
@@ -127,9 +139,9 @@ int main(int argc, char **argv) {
           const int g = start+i-ind.is;
           f(m,IM1,0,0,i) = 0.875;
           if (!soft_floor && !invalid) {
-            const Real amplitude = energy_test ? 30.0 : 20.0;
-            Real flux = (g == center-1 || g == center) ? -amplitude : 0.0;
-            if (g == center+1 || g == center+2) flux = amplitude;
+            const Real amplitude = (energy_test ? 3.0 : 2.0)/beta_dt;
+            Real flux = g > center-width && g <= center ? -amplitude : 0.0;
+            if (g > center && g <= center+width) flux = amplitude;
             f(m,energy_test ? IEN : IDN,0,0,i) = flux;
           }
           if (mode == "nan" && g == center) {
@@ -137,26 +149,41 @@ int main(int argc, char **argv) {
           }
         }
       }
+      auto previous = Kokkos::create_mirror(pmhd->u1);
+      Kokkos::deep_copy(previous, u);
+      if (rk3) {
+        for (int m=0; m<nmb; ++m) {
+          for (int i=0; i<previous.extent_int(4); ++i) {
+            previous(m,IDN,0,0,i) = 2.0;
+            previous(m,IEN,0,0,i) = 2.0;
+          }
+        }
+      }
       Kokkos::deep_copy(pmhd->u0, u);
-      Kokkos::deep_copy(pmhd->u1, u);
+      Kokkos::deep_copy(pmhd->u1, previous);
       Kokkos::deep_copy(pmhd->w0, w);
       Kokkos::deep_copy(pmhd->bcc0, b);
       Kokkos::deep_copy(pmhd->uflx.x1f, f);
-      Kokkos::Timer timer;
-      Driver driver(&pin, &mesh, 0.0, &timer);
-      pmhd->FOFC(&driver, 1);
+      pmhd->FOFC(&driver, stage);
       Kokkos::deep_copy(f, pmhd->uflx.x1f);
+      const Real expected_rho = driver.gam0[stage-1] +
+                                driver.gam1[stage-1]*(rk3 ? 2.0 : 1.0);
+      const Real expected_energy = driver.gam0[stage-1]*1.625 +
+                                   driver.gam1[stage-1]*(rk3 ? 2.0 : 1.625);
       double mass = 0.0;
       int negative = 0;
       for (int m=0; m<nmb; ++m) {
         for (int i=ind.is; i<=ind.ie; ++i) {
-          const Real rho = u(m,IDN,0,0,i) -
-              0.1*(f(m,IDN,0,0,i+1)-f(m,IDN,0,0,i));
-          const Real energy = u(m,IEN,0,0,i) -
-              0.1*(f(m,IEN,0,0,i+1)-f(m,IEN,0,0,i));
+          const Real rho = driver.gam0[stage-1]*u(m,IDN,0,0,i) +
+              driver.gam1[stage-1]*previous(m,IDN,0,0,i) -
+              beta_dt*(f(m,IDN,0,0,i+1)-f(m,IDN,0,0,i));
+          const Real energy = driver.gam0[stage-1]*u(m,IEN,0,0,i) +
+              driver.gam1[stage-1]*previous(m,IEN,0,0,i) -
+              beta_dt*(f(m,IEN,0,0,i+1)-f(m,IEN,0,0,i));
           if (!std::isfinite(rho) || !std::isfinite(energy)) ++errors;
           if (rho < 0.0) ++negative;
-          if (!legacy && (std::abs(rho-1.0)>1e-12 || std::abs(energy-1.625)>1e-12)) {
+          if (!legacy && (std::abs(rho-expected_rho)>1e-12 ||
+                          std::abs(energy-expected_energy)>1e-12)) {
             ++errors;
           }
           mass += rho;
@@ -166,13 +193,14 @@ int main(int argc, char **argv) {
       MPI_Allreduce(MPI_IN_PLACE, &mass, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
       MPI_Allreduce(MPI_IN_PLACE, &negative, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 #endif
-      if (std::abs(mass-nx)>1e-10 || negative != (legacy ? 2 : 0)) ++errors;
+      if (std::abs(mass-nx*expected_rho)>1e-10 ||
+          negative != (legacy ? 2 : 0)) ++errors;
       // The repair must not mutate either stage's saved state or the primitives.
       auto saved = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->u0);
       auto saved1 = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->u1);
       auto prim = Kokkos::create_mirror_view_and_copy(HostMemSpace(), pmhd->w0);
       for (std::size_t q=0; q<u.size(); ++q) {
-        if (saved.data()[q] != u.data()[q] || saved1.data()[q] != u.data()[q] ||
+        if (saved.data()[q] != u.data()[q] || saved1.data()[q] != previous.data()[q] ||
             prim.data()[q] != w.data()[q]) ++errors;
       }
     }
