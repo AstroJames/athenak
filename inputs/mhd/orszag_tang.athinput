@@ -46,10 +46,11 @@ reconstruct = plm      # spatial reconstruction method
 rsolver     = llf      # Riemann-solver to be used
 gamma       = 1.666666667     # gamma = C_p/C_v
 
-# Note: OT pgen does not read any parameters from input file
 <problem>
 pgen_name   = orszag_tang     # problem generator name
 check_symmetry = false        # write exact final half-turn parity diagnostics
+three_dimensional = false     # add a point-symmetric, divergence-free 3-D perturbation
+three_d_amplitude = 0.2       # relative amplitude of the 3-D perturbation
 
 <output1>
 file_type   = hst      # History data dump
