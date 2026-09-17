@@ -1,6 +1,15 @@
 # build directories
 build/
 manual_build/
+/build_*/
+
+# Local simulation products and browser session state (preserved on disk)
+/output/
+/outputs/
+/.playwright-cli/
+
+# Locally downloaded reference paper
+/docs/1-s2.0-S0021999115007147-main.pdf
 
 # Claude Code tool directory (worktrees, session state)
 .claude/
