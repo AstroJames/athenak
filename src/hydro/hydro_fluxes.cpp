@@ -17,6 +17,7 @@
 #include "reconstruct/plm.hpp"
 #include "reconstruct/ppm.hpp"
 #include "reconstruct/teno5.hpp"
+#include "reconstruct/teno6.hpp"
 #include "reconstruct/wenoz.hpp"
 #include "hydro/rsolvers/advect_hyd.hpp"
 #include "hydro/rsolvers/llf_hyd.hpp"
@@ -100,6 +101,14 @@ void Hydro::CalculateFluxes(Driver *pdriver, int stage) {
       case ReconstructionMethod::teno5_opt:
         TENO5X1<true>(member, eos_, teno_cutoff_, true,
                       m, k, j, il-1, iu, w0_, wl, wr);
+        break;
+      case ReconstructionMethod::teno6:
+        TENO6X1<false>(member, eos_, teno_cutoff_, true,
+                       m, k, j, il, iu, w0_, wl, wr);
+        break;
+      case ReconstructionMethod::teno6_opt:
+        TENO6X1<true>(member, eos_, teno_cutoff_, true,
+                      m, k, j, il, iu, w0_, wl, wr);
         break;
       default:
         break;
@@ -208,6 +217,18 @@ void Hydro::CalculateFluxes(Driver *pdriver, int stage) {
             TENO5X2<true>(member, eos_, teno_cutoff_, true,
                           m, k, j, il, iu, w0_, wl_jp1, wr);
             break;
+          case ReconstructionMethod::teno6:
+            if (j > jl) {
+              TENO6X2<false>(member, eos_, teno_cutoff_, true,
+                             m, k, j, il, iu, w0_, wl, wr);
+            }
+            break;
+          case ReconstructionMethod::teno6_opt:
+            if (j > jl) {
+              TENO6X2<true>(member, eos_, teno_cutoff_, true,
+                            m, k, j, il, iu, w0_, wl, wr);
+            }
+            break;
           default:
             break;
         }
@@ -246,7 +267,7 @@ void Hydro::CalculateFluxes(Driver *pdriver, int stage) {
         }
 
         // calculate fluxes of scalars (if any)
-        if (nvars > nhyd_) {
+        if (nvars > nhyd_ && j > jl) {
           for (int n=nhyd_; n<nvars; ++n) {
             par_for_inner(member, is, ie, [&](const int i) {
               if (flx2_(m,IDN,k,j,i) >= 0.0) {
@@ -311,6 +332,18 @@ void Hydro::CalculateFluxes(Driver *pdriver, int stage) {
             TENO5X3<true>(member, eos_, teno_cutoff_, true,
                           m, k, j, il, iu, w0_, wl_kp1, wr);
             break;
+          case ReconstructionMethod::teno6:
+            if (k > kl) {
+              TENO6X3<false>(member, eos_, teno_cutoff_, true,
+                             m, k, j, il, iu, w0_, wl, wr);
+            }
+            break;
+          case ReconstructionMethod::teno6_opt:
+            if (k > kl) {
+              TENO6X3<true>(member, eos_, teno_cutoff_, true,
+                            m, k, j, il, iu, w0_, wl, wr);
+            }
+            break;
           default:
             break;
         }
@@ -349,7 +382,7 @@ void Hydro::CalculateFluxes(Driver *pdriver, int stage) {
         }
 
         // calculate fluxes of scalars (if any)
-        if (nvars > nhyd_) {
+        if (nvars > nhyd_ && k > kl) {
           for (int n=nhyd_; n<nvars; ++n) {
             par_for_inner(member, is, ie, [&](const int i) {
               if (flx3_(m,IDN,k,j,i) >= 0.0) {

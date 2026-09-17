@@ -225,7 +225,9 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
                xorder.compare("ppmx") == 0 ||
                xorder.compare("wenoz") == 0 ||
                xorder.compare("teno5") == 0 ||
-               xorder.compare("teno5_opt") == 0) {
+               xorder.compare("teno5_opt") == 0 ||
+               xorder.compare("teno6") == 0 ||
+               xorder.compare("teno6_opt") == 0) {
       // check that nghost > 2
       auto &indcs = pmy_pack->pmesh->mb_indcs;
       if (indcs.ng < 3) {
@@ -251,14 +253,35 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
         recon_method = ReconstructionMethod::teno5;
       } else if (xorder.compare("teno5_opt") == 0) {
         recon_method = ReconstructionMethod::teno5_opt;
+      } else if (xorder.compare("teno6") == 0) {
+        recon_method = ReconstructionMethod::teno6;
+      } else if (xorder.compare("teno6_opt") == 0) {
+        recon_method = ReconstructionMethod::teno6_opt;
+      }
+      if (recon_method == ReconstructionMethod::teno6 ||
+          recon_method == ReconstructionMethod::teno6_opt) {
+        std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
+                  << std::endl << xorder << " reconstruction is currently supported only "
+                  << "for hydrodynamics and is disabled for all MHD/RMHD calculations. "
+                  << "Three-dimensional oblique slow-wave tests expose a non-convergent "
+                  << "constrained-transport mode; use teno5 or teno5_opt for MHD/RMHD "
+                  << "until a compatible stabilization is implemented."
+                  << std::endl;
+        std::exit(EXIT_FAILURE);
       }
       if (recon_method == ReconstructionMethod::teno5 ||
-          recon_method == ReconstructionMethod::teno5_opt) {
-        teno_cutoff = pin->GetOrAddReal("mhd", "teno_cutoff", 1.0e-5);
-        if (!(teno_cutoff > 0.0) || teno_cutoff > 1.0/3.0) {
+          recon_method == ReconstructionMethod::teno5_opt ||
+          recon_method == ReconstructionMethod::teno6 ||
+          recon_method == ReconstructionMethod::teno6_opt) {
+        const bool is_teno6 = (recon_method == ReconstructionMethod::teno6 ||
+                               recon_method == ReconstructionMethod::teno6_opt);
+        const Real cutoff_default = is_teno6 ? 1.0e-7 : 1.0e-5;
+        const Real cutoff_max = is_teno6 ? 0.25 : 1.0/3.0;
+        teno_cutoff = pin->GetOrAddReal("mhd", "teno_cutoff", cutoff_default);
+        if (!(teno_cutoff > 0.0) || teno_cutoff > cutoff_max) {
           std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-                    << std::endl << "<mhd>/teno_cutoff must be in (0, 1/3], but is "
-                    << teno_cutoff << std::endl;
+                    << std::endl << "<mhd>/teno_cutoff must be in (0, "
+                    << cutoff_max << "], but is " << teno_cutoff << std::endl;
           std::exit(EXIT_FAILURE);
         }
       }
