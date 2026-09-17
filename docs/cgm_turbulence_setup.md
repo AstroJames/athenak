@@ -37,6 +37,16 @@ among the tested models: the atmospheric entropy profile stayed close to the
 initial Wibking-like profile, the disk did not catastrophically condense, and
 the global first-moment energy accounting stayed transparent.
 
+## Iterative FOFC example
+
+For an opt-in iterative Newtonian MHD correction example, use
+[`cgm_turbulence_mhd_iterative_fofc.input`](../inputs/turbulence/cgm_turbulence_mhd_iterative_fofc.input).
+It enables eight FOFC passes and CFL 0.3 with RK3/WENOZ/HLLD. It follows the
+later CGM validation setup: diode vertical boundaries and compressive
+`dedt=2.5e-4` driving, rather than this older baseline's reflecting boundaries
+and `dedt=8e-5`. See [iterative FOFC](iterative_fofc.md) for its supported scope,
+mesh, output schedule, and validation limits.
+
 ## Units
 
 The default input uses:

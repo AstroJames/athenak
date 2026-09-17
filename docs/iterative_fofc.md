@@ -46,9 +46,18 @@ also act later. This feature is therefore not a mathematical positivity
 guarantee for the final multidimensional/source-coupled update. It does not add
 a mass source, change the floors, or implement timestep rejection/retry.
 
+Use a conservative multidimensional CFL: the CGM example uses 0.3. Repeating
+an already fully corrected update cannot repair a timestep that is too large.
+The earlier CGM replay completed 600 Myr at CFL 0.3; its CFL 0.6 counterpart
+failed with already-corrected negative-density cells. This is validation of
+one configuration, not an unconditional stability guarantee.
+
 Verbose per-cell/per-pass diagnostics are opt-in. They can generate large logs
 and should be disabled in production timing measurements. Failure guards remain
-enabled independently of verbose diagnostics.
+enabled independently of verbose diagnostics. An exhausted iterative correction
+also writes a bounded failure snapshot (up to 32 hard-invalid cells per failing
+rank), including the saved stage states and corrected face fluxes. This snapshot
+is produced only on failure; it does not change the correction or timestep.
 
 ## Regression tests
 
@@ -70,3 +79,52 @@ systems with read-only source/build mounts on compute nodes.
 On Trillium, compile on a login node but run every test under Slurm, with all
 runtime output in scratch. See the dated investigation notes for the original
 CGM comparison and the integration-validation record for the merged revision.
+
+
+## CGM example
+
+[`cgm_turbulence_mhd_iterative_fofc.input`](../inputs/turbulence/cgm_turbulence_mhd_iterative_fofc.input)
+is a small 32 x 32 x 64 demonstration with eight 16 x 16 x 32 MeshBlocks.
+Build `PROBLEM=turb_cgm` with an FFT backend:
+
+```sh
+cmake -S . -B build_cgm -DPROBLEM=turb_cgm -DAthena_ENABLE_MPI=ON \
+  -DAthena_FFT_BACKEND=KOKKOS -DCMAKE_BUILD_TYPE=Release
+cmake --build build_cgm -j 8
+```
+
+Run from a writable simulation directory using one, two, four, or eight MPI
+ranks, with paths adjusted to the executable and input:
+
+```sh
+mpirun -np 8 /path/to/build_cgm/src/athena \
+  -i /path/to/inputs/turbulence/cgm_turbulence_mhd_iterative_fofc.input
+```
+
+On a cluster this command belongs inside an allocation. On Trillium, source
+`~/.env/athenak_env` and the VAST preload script there, use the wrapped `mpirun`,
+and write all runtime output under scratch; never run on a login node.
+
+The box spans 100 x 100 x 200 kpc, with periodic x/y and diode (outflow-only)
+z boundaries. It uses Newtonian ideal MHD, RK3, WENOZ/HLLD, four ghost cells,
+CFL 0.3, eight FOFC passes, and disabled verbose FOFC logging.
+
+The atmosphere starts at 10^7 K with cooling, gravity, and the plane-averaged
+thermostat. The source temperature floor is 10^6 K; the retained EOS floor is
+`tfloor=0.014494`, with `dfloor=1e-12` and `pfloor=1e-14`. A spectral field is
+normalized to `beta_z0=100`. Disk forcing is compressive with `dedt=2.5e-4`
+and a 25 Myr correlation time; the central engine is off. These are the
+parameters of the high-resolution CFL comparison. They differ from the older
+`cgm_turbulence_mhd.input`, which has reflecting z boundaries and weaker forcing.
+See [CGM setup](cgm_turbulence_setup.md) for the atmosphere and source formulas.
+
+The example runs 100 Myr, with history every 1 Myr, MHD and forcing fields every
+25 Myr, and restarts every 50 Myr, plus initial/final outputs. It is a coarse
+usage example. To reproduce the previous 600 Myr validation configuration,
+use 264 x 264 x 528 cells, 22 x 22 x 44 MeshBlocks, `tlim=600`, and CFL 0.3;
+that layout has 1728 blocks and used nine full 192-rank Trillium nodes.
+The earlier completion is recorded in the dated validation notes; it does not
+establish convergence or stability for arbitrary longer runs.
+
+The latest integration checks and measured overhead are recorded in
+[the release validation note](../notes/2026-09-16-fofc-main-release.md).
