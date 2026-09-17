@@ -241,13 +241,14 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
       } else if (xorder.compare("teno6_opt") == 0) {
         recon_method = ReconstructionMethod::teno6_opt;
       }
-      if ((recon_method == ReconstructionMethod::teno6 ||
-           recon_method == ReconstructionMethod::teno6_opt) &&
-          pmy_pack->pmesh->three_d) {
+      if (recon_method == ReconstructionMethod::teno6 ||
+          recon_method == ReconstructionMethod::teno6_opt) {
         std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
-                  << std::endl << xorder << " reconstruction is not enabled for 3D MHD. "
-                  << "Oblique slow-wave tests expose a non-convergent CT mode; use "
-                  << "teno5 or teno5_opt until a compatible stabilization is implemented."
+                  << std::endl << xorder << " reconstruction is currently supported only "
+                  << "for hydrodynamics and is disabled for all MHD/RMHD calculations. "
+                  << "Three-dimensional oblique slow-wave tests expose a non-convergent "
+                  << "constrained-transport mode; use teno5 or teno5_opt for MHD/RMHD "
+                  << "until a compatible stabilization is implemented."
                   << std::endl;
         std::exit(EXIT_FAILURE);
       }

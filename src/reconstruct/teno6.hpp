@@ -12,6 +12,10 @@
 //! background operator.  TENO6-opt uses the paper's fifth-order, slightly upwind-biased
 //! background operator to add controlled high-wavenumber dissipation.
 //!
+//! \warning TENO6 and TENO6-opt are currently supported only by the hydrodynamics
+//! module.  AthenaK rejects their use in MHD and RMHD because three-dimensional oblique
+//! slow-wave tests expose a non-convergent constrained-transport mode.
+//!
 //! REFERENCES:
 //! Fu L., Hu X.Y., Adams N.A., "A family of high-order targeted ENO schemes for
 //! compressible-fluid simulations", JCP, 305, 333-359 (2016)
