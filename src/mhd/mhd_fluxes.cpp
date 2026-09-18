@@ -51,6 +51,8 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
   int nmb1 = pmy_pack->nmb_thispack - 1;
   const auto recon_method_ = recon_method;
   const Real teno_cutoff_ = teno_cutoff;
+  const bool teno6_force_linear_ = teno6_force_linear;
+  const bool teno6_mhd_weights_ = teno6_mhd_weights;
   bool extrema = false;
   if (recon_method == ReconstructionMethod::ppmx) {
     extrema = true;
@@ -166,16 +168,16 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
                       m, k, j, il-1, iu, b0_, bl, br);
         break;
       case ReconstructionMethod::teno6:
-        TENO6X1<false>(member, eos_, teno_cutoff_, true,
-                       m, k, j, il, iu, w0_, wl, wr);
-        TENO6X1<false>(member, eos_, teno_cutoff_, false,
-                       m, k, j, il, iu, b0_, bl, br);
+        TENO6X1MHD<false>(member, eos_, teno_cutoff_, teno6_mhd_weights_,
+                          teno6_force_linear_, true, m, k, j, il, iu, w0_, wl, wr);
+        TENO6X1MHD<false>(member, eos_, teno_cutoff_, teno6_mhd_weights_,
+                          teno6_force_linear_, false, m, k, j, il, iu, b0_, bl, br);
         break;
       case ReconstructionMethod::teno6_opt:
-        TENO6X1<true>(member, eos_, teno_cutoff_, true,
-                      m, k, j, il, iu, w0_, wl, wr);
-        TENO6X1<true>(member, eos_, teno_cutoff_, false,
-                      m, k, j, il, iu, b0_, bl, br);
+        TENO6X1MHD<true>(member, eos_, teno_cutoff_, teno6_mhd_weights_,
+                         teno6_force_linear_, true, m, k, j, il, iu, w0_, wl, wr);
+        TENO6X1MHD<true>(member, eos_, teno_cutoff_, teno6_mhd_weights_,
+                         teno6_force_linear_, false, m, k, j, il, iu, b0_, bl, br);
         break;
       default:
         break;
@@ -310,18 +312,18 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
             break;
           case ReconstructionMethod::teno6:
             if (j > jl) {
-              TENO6X2<false>(member, eos_, teno_cutoff_, true,
-                             m, k, j, is-1, ie+1, w0_, wl, wr);
-              TENO6X2<false>(member, eos_, teno_cutoff_, false,
-                             m, k, j, is-1, ie+1, b0_, bl, br);
+              TENO6X2MHD<false>(member, eos_, teno_cutoff_, teno6_mhd_weights_,
+                  teno6_force_linear_, true, m, k, j, is-1, ie+1, w0_, wl, wr);
+              TENO6X2MHD<false>(member, eos_, teno_cutoff_, teno6_mhd_weights_,
+                  teno6_force_linear_, false, m, k, j, is-1, ie+1, b0_, bl, br);
             }
             break;
           case ReconstructionMethod::teno6_opt:
             if (j > jl) {
-              TENO6X2<true>(member, eos_, teno_cutoff_, true,
-                            m, k, j, is-1, ie+1, w0_, wl, wr);
-              TENO6X2<true>(member, eos_, teno_cutoff_, false,
-                            m, k, j, is-1, ie+1, b0_, bl, br);
+              TENO6X2MHD<true>(member, eos_, teno_cutoff_, teno6_mhd_weights_,
+                  teno6_force_linear_, true, m, k, j, is-1, ie+1, w0_, wl, wr);
+              TENO6X2MHD<true>(member, eos_, teno_cutoff_, teno6_mhd_weights_,
+                  teno6_force_linear_, false, m, k, j, is-1, ie+1, b0_, bl, br);
             }
             break;
           default:
@@ -463,18 +465,18 @@ void MHD::CalculateFluxes(Driver *pdriver, int stage) {
             break;
           case ReconstructionMethod::teno6:
             if (k > kl) {
-              TENO6X3<false>(member, eos_, teno_cutoff_, true,
-                             m, k, j, is-1, ie+1, w0_, wl, wr);
-              TENO6X3<false>(member, eos_, teno_cutoff_, false,
-                             m, k, j, is-1, ie+1, b0_, bl, br);
+              TENO6X3MHD<false>(member, eos_, teno_cutoff_, teno6_mhd_weights_,
+                  teno6_force_linear_, true, m, k, j, is-1, ie+1, w0_, wl, wr);
+              TENO6X3MHD<false>(member, eos_, teno_cutoff_, teno6_mhd_weights_,
+                  teno6_force_linear_, false, m, k, j, is-1, ie+1, b0_, bl, br);
             }
             break;
           case ReconstructionMethod::teno6_opt:
             if (k > kl) {
-              TENO6X3<true>(member, eos_, teno_cutoff_, true,
-                            m, k, j, is-1, ie+1, w0_, wl, wr);
-              TENO6X3<true>(member, eos_, teno_cutoff_, false,
-                            m, k, j, is-1, ie+1, b0_, bl, br);
+              TENO6X3MHD<true>(member, eos_, teno_cutoff_, teno6_mhd_weights_,
+                  teno6_force_linear_, true, m, k, j, is-1, ie+1, w0_, wl, wr);
+              TENO6X3MHD<true>(member, eos_, teno_cutoff_, teno6_mhd_weights_,
+                  teno6_force_linear_, false, m, k, j, is-1, ie+1, b0_, bl, br);
             }
             break;
           default:

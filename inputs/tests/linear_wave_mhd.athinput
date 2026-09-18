@@ -45,6 +45,10 @@ eos         = ideal    # EOS type
 reconstruct = plm      # spatial reconstruction method
 rsolver     = llf      # Riemann-solver to be used
 gamma       = 1.66666666667   # gamma = C_p/C_v
+fofc        = false    # first-order flux correction
+allow_unsupported_teno6_3d = false  # diagnostic override for the TENO6 safety guard
+teno6_force_linear = false          # diagnostic: bypass TENO stencil selection
+teno6_mhd_weights = false           # diagnostic: use Fu & Tang (2019) linear weights
 
 <problem>
 pgen_name = linear_wave # problem generator name

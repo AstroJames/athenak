@@ -243,7 +243,8 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
       }
       if ((recon_method == ReconstructionMethod::teno6 ||
            recon_method == ReconstructionMethod::teno6_opt) &&
-          pmy_pack->pmesh->three_d) {
+          pmy_pack->pmesh->three_d &&
+          !(pin->GetOrAddBoolean("mhd", "allow_unsupported_teno6_3d", false))) {
         std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__
                   << std::endl << xorder << " reconstruction is not enabled for 3D MHD. "
                   << "Oblique slow-wave tests expose a non-convergent CT mode; use "
@@ -265,6 +266,12 @@ MHD::MHD(MeshBlockPack *ppack, ParameterInput *pin) :
                     << std::endl << "<mhd>/teno_cutoff must be in (0, "
                     << cutoff_max << "], but is " << teno_cutoff << std::endl;
           std::exit(EXIT_FAILURE);
+        }
+        if (is_teno6) {
+          teno6_force_linear = pin->GetOrAddBoolean(
+              "mhd", "teno6_force_linear", false);
+          teno6_mhd_weights = pin->GetOrAddBoolean(
+              "mhd", "teno6_mhd_weights", false);
         }
       }
     } else {

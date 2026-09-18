@@ -120,14 +120,21 @@ void TENO6StencilSelection(const Real q_im2, const Real q_im1, const Real q_i,
 //! \fn TENO6ReconstructSide()
 //! \brief Assemble one face state from selected TENO6 candidate polynomials.
 
-template <bool optimized>
+template <bool optimized, bool mhd_weights = false>
 KOKKOS_INLINE_FUNCTION
 Real TENO6ReconstructSide(const Real q_im2, const Real q_im1, const Real q_i,
                           const Real q_ip1, const Real q_ip2, const Real q_ip3,
                           const Real delta0, const Real delta1, const Real delta2,
                           const Real delta3) noexcept {
   Real d0, d1, d2, d3;
-  if constexpr (optimized) {
+  if constexpr (mhd_weights) {
+    // Spectrally optimized TENO6-A weights tailored for ideal MHD by Fu & Tang
+    // (J. Sci. Comput. 80, 692-716, 2019).  The smooth operator is fourth-order.
+    d0 = 0.4568380998958898;
+    d1 = 0.2013523995835539;
+    d2 = 0.08516190010411122;
+    d3 = 0.2566476004164447;
+  } else if constexpr (optimized) {
     d0 = 0.462;
     d1 = 0.300;
     d2 = 0.054;
@@ -156,22 +163,32 @@ Real TENO6ReconstructSide(const Real q_im2, const Real q_im1, const Real q_i,
 //! \fn TENO6()
 //! \brief Reconstruct both states at one face from the same six cell averages.
 
-template <bool optimized>
+template <bool optimized, bool mhd_weights = false, bool force_linear = false>
 KOKKOS_INLINE_FUNCTION
 void TENO6(const Real q_im2, const Real q_im1, const Real q_i, const Real q_ip1,
            const Real q_ip2, const Real q_ip3, const Real cutoff,
            Real &ql, Real &qr) noexcept {
   Real dl0, dl1, dl2, dl3;
-  TENO6StencilSelection(q_im2, q_im1, q_i, q_ip1, q_ip2, q_ip3, cutoff,
-                        dl0, dl1, dl2, dl3);
   Real dr0, dr1, dr2, dr3;
-  TENO6StencilSelection(q_ip3, q_ip2, q_ip1, q_i, q_im1, q_im2, cutoff,
-                        dr0, dr1, dr2, dr3);
+  if constexpr (force_linear) {
+    dl0 = dl1 = dl2 = dl3 = 1.0;
+    dr0 = dr1 = dr2 = dr3 = 1.0;
+  } else {
+    TENO6StencilSelection(q_im2, q_im1, q_i, q_ip1, q_ip2, q_ip3, cutoff,
+                          dl0, dl1, dl2, dl3);
+    TENO6StencilSelection(q_ip3, q_ip2, q_ip1, q_i, q_im1, q_im2, cutoff,
+                          dr0, dr1, dr2, dr3);
+  }
 
   const bool left_smooth = (dl0 == 1.0 && dl1 == 1.0 && dl2 == 1.0 && dl3 == 1.0);
   const bool right_smooth = (dr0 == 1.0 && dr1 == 1.0 && dr2 == 1.0 && dr3 == 1.0);
   if (left_smooth && right_smooth) {
-    if constexpr (optimized) {
+    if constexpr (mhd_weights) {
+      ql = TENO6ReconstructSide<optimized, mhd_weights>(
+          q_im2, q_im1, q_i, q_ip1, q_ip2, q_ip3, 1.0, 1.0, 1.0, 1.0);
+      qr = TENO6ReconstructSide<optimized, mhd_weights>(
+          q_ip3, q_ip2, q_ip1, q_i, q_im1, q_im2, 1.0, 1.0, 1.0, 1.0);
+    } else if constexpr (optimized) {
       // Table 5 weights: fifth-order upwind-biased operator with eta=0.54.
       ql = (9.0/500.0)*q_im2 - (7.0/50.0)*q_im1 + (63.0/100.0)*q_i
           + (181.0/300.0)*q_ip1 - (19.0/150.0)*q_ip2 + (23.0/1500.0)*q_ip3;
@@ -193,16 +210,16 @@ void TENO6(const Real q_im2, const Real q_im1, const Real q_i, const Real q_ip1,
     return;
   }
 
-  ql = TENO6ReconstructSide<optimized>(q_im2, q_im1, q_i, q_ip1, q_ip2, q_ip3,
-                                        dl0, dl1, dl2, dl3);
-  qr = TENO6ReconstructSide<optimized>(q_ip3, q_ip2, q_ip1, q_i, q_im1, q_im2,
-                                        dr0, dr1, dr2, dr3);
+  ql = TENO6ReconstructSide<optimized, mhd_weights>(
+      q_im2, q_im1, q_i, q_ip1, q_ip2, q_ip3, dl0, dl1, dl2, dl3);
+  qr = TENO6ReconstructSide<optimized, mhd_weights>(
+      q_ip3, q_ip2, q_ip1, q_i, q_im1, q_im2, dr0, dr1, dr2, dr3);
 }
 
 //----------------------------------------------------------------------------------------
 //! \brief Face-oriented TENO6 wrapper in the x1 direction.
 
-template <bool optimized>
+template <bool optimized, bool mhd_weights = false, bool force_linear = false>
 KOKKOS_INLINE_FUNCTION
 void TENO6X1(TeamMember_t const &member, const EOS_Data &eos, const Real cutoff,
      const bool apply_floors, const int m, const int k, const int j,
@@ -214,9 +231,10 @@ void TENO6X1(TeamMember_t const &member, const EOS_Data &eos, const Real cutoff,
   const Real efloor_ = eos.pfloor/(eos.gamma - 1.0);
   for (int n=0; n<nvar; ++n) {
     par_for_inner(member, fl, fu, [&](const int f) {
-      TENO6<optimized>(q(m,n,k,j,f-3), q(m,n,k,j,f-2), q(m,n,k,j,f-1),
-                       q(m,n,k,j,f), q(m,n,k,j,f+1), q(m,n,k,j,f+2), cutoff,
-                       ql(n,f), qr(n,f));
+      TENO6<optimized, mhd_weights, force_linear>(
+          q(m,n,k,j,f-3), q(m,n,k,j,f-2), q(m,n,k,j,f-1),
+          q(m,n,k,j,f), q(m,n,k,j,f+1), q(m,n,k,j,f+2), cutoff,
+          ql(n,f), qr(n,f));
       if (apply_floors) {
         if (n == IDN) {
           ql(IDN,f) = fmax(ql(IDN,f), dfloor_);
@@ -234,7 +252,7 @@ void TENO6X1(TeamMember_t const &member, const EOS_Data &eos, const Real cutoff,
 //----------------------------------------------------------------------------------------
 //! \brief Face-oriented TENO6 wrapper in the x2 direction.
 
-template <bool optimized>
+template <bool optimized, bool mhd_weights = false, bool force_linear = false>
 KOKKOS_INLINE_FUNCTION
 void TENO6X2(TeamMember_t const &member, const EOS_Data &eos, const Real cutoff,
      const bool apply_floors, const int m, const int k, const int f,
@@ -246,9 +264,10 @@ void TENO6X2(TeamMember_t const &member, const EOS_Data &eos, const Real cutoff,
   const Real efloor_ = eos.pfloor/(eos.gamma - 1.0);
   for (int n=0; n<nvar; ++n) {
     par_for_inner(member, il, iu, [&](const int i) {
-      TENO6<optimized>(q(m,n,k,f-3,i), q(m,n,k,f-2,i), q(m,n,k,f-1,i),
-                       q(m,n,k,f,i), q(m,n,k,f+1,i), q(m,n,k,f+2,i), cutoff,
-                       ql(n,i), qr(n,i));
+      TENO6<optimized, mhd_weights, force_linear>(
+          q(m,n,k,f-3,i), q(m,n,k,f-2,i), q(m,n,k,f-1,i),
+          q(m,n,k,f,i), q(m,n,k,f+1,i), q(m,n,k,f+2,i), cutoff,
+          ql(n,i), qr(n,i));
       if (apply_floors) {
         if (n == IDN) {
           ql(IDN,i) = fmax(ql(IDN,i), dfloor_);
@@ -266,7 +285,7 @@ void TENO6X2(TeamMember_t const &member, const EOS_Data &eos, const Real cutoff,
 //----------------------------------------------------------------------------------------
 //! \brief Face-oriented TENO6 wrapper in the x3 direction.
 
-template <bool optimized>
+template <bool optimized, bool mhd_weights = false, bool force_linear = false>
 KOKKOS_INLINE_FUNCTION
 void TENO6X3(TeamMember_t const &member, const EOS_Data &eos, const Real cutoff,
      const bool apply_floors, const int m, const int f, const int j,
@@ -278,9 +297,10 @@ void TENO6X3(TeamMember_t const &member, const EOS_Data &eos, const Real cutoff,
   const Real efloor_ = eos.pfloor/(eos.gamma - 1.0);
   for (int n=0; n<nvar; ++n) {
     par_for_inner(member, il, iu, [&](const int i) {
-      TENO6<optimized>(q(m,n,f-3,j,i), q(m,n,f-2,j,i), q(m,n,f-1,j,i),
-                       q(m,n,f,j,i), q(m,n,f+1,j,i), q(m,n,f+2,j,i), cutoff,
-                       ql(n,i), qr(n,i));
+      TENO6<optimized, mhd_weights, force_linear>(
+          q(m,n,f-3,j,i), q(m,n,f-2,j,i), q(m,n,f-1,j,i),
+          q(m,n,f,j,i), q(m,n,f+1,j,i), q(m,n,f+2,j,i), cutoff,
+          ql(n,i), qr(n,i));
       if (apply_floors) {
         if (n == IDN) {
           ql(IDN,i) = fmax(ql(IDN,i), dfloor_);
@@ -292,6 +312,78 @@ void TENO6X3(TeamMember_t const &member, const EOS_Data &eos, const Real cutoff,
         }
       }
     });
+  }
+}
+
+//----------------------------------------------------------------------------------------
+//! \brief Diagnostic MHD dispatchers for the alternative linear weights/smooth path.
+
+template <bool optimized>
+KOKKOS_INLINE_FUNCTION
+void TENO6X1MHD(TeamMember_t const &member, const EOS_Data &eos, const Real cutoff,
+     const bool mhd_weights, const bool force_linear, const bool apply_floors,
+     const int m, const int k, const int j, const int fl, const int fu,
+     const DvceArray5D<Real> &q, ScrArray2D<Real> &ql, ScrArray2D<Real> &qr) {
+  if (mhd_weights) {
+    if (force_linear) {
+      TENO6X1<optimized, true, true>(member, eos, cutoff, apply_floors,
+                                    m, k, j, fl, fu, q, ql, qr);
+    } else {
+      TENO6X1<optimized, true, false>(member, eos, cutoff, apply_floors,
+                                     m, k, j, fl, fu, q, ql, qr);
+    }
+  } else if (force_linear) {
+    TENO6X1<optimized, false, true>(member, eos, cutoff, apply_floors,
+                                   m, k, j, fl, fu, q, ql, qr);
+  } else {
+    TENO6X1<optimized, false, false>(member, eos, cutoff, apply_floors,
+                                    m, k, j, fl, fu, q, ql, qr);
+  }
+}
+
+template <bool optimized>
+KOKKOS_INLINE_FUNCTION
+void TENO6X2MHD(TeamMember_t const &member, const EOS_Data &eos, const Real cutoff,
+     const bool mhd_weights, const bool force_linear, const bool apply_floors,
+     const int m, const int k, const int f, const int il, const int iu,
+     const DvceArray5D<Real> &q, ScrArray2D<Real> &ql, ScrArray2D<Real> &qr) {
+  if (mhd_weights) {
+    if (force_linear) {
+      TENO6X2<optimized, true, true>(member, eos, cutoff, apply_floors,
+                                    m, k, f, il, iu, q, ql, qr);
+    } else {
+      TENO6X2<optimized, true, false>(member, eos, cutoff, apply_floors,
+                                     m, k, f, il, iu, q, ql, qr);
+    }
+  } else if (force_linear) {
+    TENO6X2<optimized, false, true>(member, eos, cutoff, apply_floors,
+                                   m, k, f, il, iu, q, ql, qr);
+  } else {
+    TENO6X2<optimized, false, false>(member, eos, cutoff, apply_floors,
+                                    m, k, f, il, iu, q, ql, qr);
+  }
+}
+
+template <bool optimized>
+KOKKOS_INLINE_FUNCTION
+void TENO6X3MHD(TeamMember_t const &member, const EOS_Data &eos, const Real cutoff,
+     const bool mhd_weights, const bool force_linear, const bool apply_floors,
+     const int m, const int f, const int j, const int il, const int iu,
+     const DvceArray5D<Real> &q, ScrArray2D<Real> &ql, ScrArray2D<Real> &qr) {
+  if (mhd_weights) {
+    if (force_linear) {
+      TENO6X3<optimized, true, true>(member, eos, cutoff, apply_floors,
+                                    m, f, j, il, iu, q, ql, qr);
+    } else {
+      TENO6X3<optimized, true, false>(member, eos, cutoff, apply_floors,
+                                     m, f, j, il, iu, q, ql, qr);
+    }
+  } else if (force_linear) {
+    TENO6X3<optimized, false, true>(member, eos, cutoff, apply_floors,
+                                   m, f, j, il, iu, q, ql, qr);
+  } else {
+    TENO6X3<optimized, false, false>(member, eos, cutoff, apply_floors,
+                                    m, f, j, il, iu, q, ql, qr);
   }
 }
 

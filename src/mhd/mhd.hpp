@@ -94,6 +94,8 @@ class MHD {
   // data
   ReconstructionMethod recon_method;
   Real teno_cutoff = 1.0e-5;  // TENO stencil-selection cutoff C_T
+  bool teno6_force_linear = false;  // diagnostic: bypass nonlinear stencil selection
+  bool teno6_mhd_weights = false;   // diagnostic: use Fu & Tang (2019) TENO6-A weights
   MHD_RSolver rsolver_method;
   EquationOfState *peos;   // chosen EOS
 
