@@ -82,6 +82,7 @@ void BaseTypeOutput::ComputeDerivedVariable(std::string name, Mesh *pm) {
       if (multi_d) {
         dv(m,i_dv,k,j,i) -=(w0_(m,IVX,k,j+1,i) - w0_(m,IVX,k,j-1,i))/size.d_view(m).dx2;
       }
+      dv(m,i_dv,k,j,i) *= 0.5;
     });
     i_dv += 1; // increment derived variable index
   }
@@ -108,7 +109,7 @@ void BaseTypeOutput::ComputeDerivedVariable(std::string name, Mesh *pm) {
         w1 -= (w0_(m,IVY,k+1,j,i) - w0_(m,IVY,k-1,j,i))/size.d_view(m).dx3;
         w2 += (w0_(m,IVX,k+1,j,i) - w0_(m,IVX,k-1,j,i))/size.d_view(m).dx3;
       }
-      dv(m,i_dv,k,j,i) = w1*w1 + w2*w2 + w3*w3;
+      dv(m,i_dv,k,j,i) = 0.25*(w1*w1 + w2*w2 + w3*w3);
     });
     i_dv += 1; // increment derived variable index
   }
@@ -127,6 +128,7 @@ void BaseTypeOutput::ComputeDerivedVariable(std::string name, Mesh *pm) {
       if (multi_d) {
         dv(m,i_dv,k,j,i) -=(bcc(m,IBX,k,j+1,i) - bcc(m,IBX,k,j-1,i))/size.d_view(m).dx2;
       }
+      dv(m,i_dv,k,j,i) *= 0.5;
     });
     i_dv += 1; // increment derived variable index
   }
@@ -151,7 +153,7 @@ void BaseTypeOutput::ComputeDerivedVariable(std::string name, Mesh *pm) {
         j1 -= (bcc(m,IBY,k+1,j,i) - bcc(m,IBY,k-1,j,i))/size.d_view(m).dx3;
         j2 += (bcc(m,IBX,k+1,j,i) - bcc(m,IBX,k-1,j,i))/size.d_view(m).dx3;
       }
-      dv(m,i_dv,k,j,i) = j1*j1 + j2*j2 + j3*j3;
+      dv(m,i_dv,k,j,i) = 0.25*(j1*j1 + j2*j2 + j3*j3);
     });
     i_dv += 1; // increment derived variable index
   }

@@ -42,7 +42,12 @@ void PowerSpectrumOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
                         "." + number.str() + ".spec";
 
     std::ofstream ofs(fname);
-    ofs << std::scientific << std::setprecision(6);
+    ofs << std::scientific << std::setprecision(17);
+    ofs << "# time=" << pm->time << " cycle=" << pm->ncycle << '\n'
+        << "# shell_sum |FFT(field)/Ncells|^2, summed over vector components; no 1/2\n"
+        << "# integer shell s <= |n| < s+1; zero mode excluded; s=1.." << nbins_
+        << "; corners beyond the last shell omitted\n"
+        << "# Cubic box: k=2*pi*|n|/L; velocity is unweighted (not kinetic energy).\n";
     for (int s = 1; s <= nbins_; ++s) {
       ofs << s << ' ' << host(s - 1) << '\n';
     }
