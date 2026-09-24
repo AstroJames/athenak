@@ -93,6 +93,7 @@ add_executable(
         outputs/eventlog.cpp
         outputs/formatted_table.cpp
         outputs/history.cpp
+        outputs/khi_diagnostics.cpp
         outputs/restart.cpp
         outputs/coarsened_binary.cpp
         outputs/track_prtcl.cpp

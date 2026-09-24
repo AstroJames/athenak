@@ -1,0 +1,152 @@
+# KHI dynamo; SuperMUC-NG pn76gi; native MPI/heFFTe build.
+# Shear units: delta_0=Delta U=1, box L=40; tlim=1000 shear times.
+# M_Delta=0.5, Re_Delta=2048, Pm=1, Rm_Delta=2048.
+# Re_Delta=Delta U*delta_0/nu; Pm=nu/eta; vary eta at fixed nu in Pm sweep.
+# Grid 1152^3, blocks 32^3; WENO-Z, RK3, FOFC; no bulk viscosity.
+# Histories .05, profiles .1, slices .5, spectra 1, cubes/restarts 100.
+# Same divergence-free random seed realization and modes 1--3.
+# Strong seed: <B_cc^2>/2 / <rho*(u^y)^2/2>_0 = 1e-3.
+# Denominator is the initial resolved shear, excluding transverse perturbations.
+# On this 1152-cell x grid: <rho*(u^y)^2/2>_0=0.11250000000819613.
+# magnetic_rms=sqrt(2*1e-3*E_shear,0); native normalization uses B_cc.
+# Recompute magnetic_rms if changing the grid or shear profile.
+
+<job>
+basename = khi_M0p5_Re02048_Emag1e-3
+
+<mesh>
+nx1 = 1152
+nx2 = 1152
+nx3 = 1152
+nghost = 4
+x1min = -20.0
+x1max = 20.0
+x2min = -20.0
+x2max = 20.0
+x3min = -20.0
+x3max = 20.0
+ix1_bc = periodic
+ox1_bc = periodic
+ix2_bc = periodic
+ox2_bc = periodic
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 32
+nx2 = 32
+nx3 = 32
+
+<time>
+evolution = dynamic
+integrator = rk3
+cfl_number = 0.3
+dt_max = 0.05
+ndiag = 100
+nlim = -1
+tlim = 1000.0
+
+<mhd>
+eos = ideal
+gamma = 1.6666666666666667
+reconstruct = wenoz
+rsolver = hlld
+fofc = true
+viscosity = 0.00048828125
+ohmic_resistivity = 0.00048828125
+
+<problem>
+user_hist = true
+initial_field = spectral
+magnetic_rms = 0.01500000000054641
+sim_vx = 0.05
+sim_vy = 0.5
+sim_vz = 0.0
+k_max = 2
+phase_2 = 0.0
+k_z = 2
+sim_layer_thickness = 1.0
+sim_smoothing_size = 1.0
+sim_pres = 2.0141836585528954
+sim_dens = 0.5454545454545454
+sim_dens_perturb = 1.6666666666666667
+x_tilde_1 = 10.0
+x_tilde_2 = -10.0
+sim_bx = 0.0
+sim_by = 0.0
+sim_bz = 0.0
+
+<spectral_ic>
+nlow = 1
+nhigh = 3
+spectrum = parabolic
+iseed = 210989
+
+<output1>
+file_type = hst
+data_format = %24.16e
+dt = 0.05
+
+<output2>
+file_type = bin
+variable = mhd_w_bcc
+id = prim
+dt = 100.0
+
+<output3>
+file_type = bin
+variable = mhd_divb
+id = divb
+dt = 100.0
+
+<output4>
+file_type = rst
+dt = 100.0
+
+# Separate wide .hst tables for global, lower (x<0), and upper (x>=0) volumes.
+# All means are volume-weighted; the files label Reynolds and Favre decompositions.
+<output5>
+file_type = khi_hst
+dt = 0.05
+
+# Native cell-centered profiles in xy, xz, yz for the same three volumes.
+<output6>
+file_type = khi_profiles
+dt = 0.1
+
+# Total unweighted velocity and magnetic shell-summed power, including mean shear.
+# k=2*pi*n/L; no density weighting or factor 1/2. k=0 is omitted.
+<output7>
+file_type = power_spectrum
+variable = velocity
+id = velocity
+dt = 1.0
+
+<output8>
+file_type = power_spectrum
+variable = magnetic_field
+id = magnetic
+dt = 1.0
+
+# Existing binary slices select the cell containing the requested plane.
+# The binary metadata record the actual cell center (no interpolation to the plane).
+<output9>
+file_type = bin
+variable = mhd_khi
+id = khi_z0
+slice_x3 = 0.0
+dt = 0.5
+
+<output10>
+file_type = bin
+variable = mhd_khi
+id = khi_xlower
+slice_x1 = -10.0
+dt = 0.5
+
+<output11>
+file_type = bin
+variable = mhd_khi
+id = khi_xupper
+slice_x1 = 10.0
+dt = 0.5

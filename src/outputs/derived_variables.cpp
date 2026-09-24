@@ -30,6 +30,8 @@
 #include "particles/particles.hpp"
 #include "outputs.hpp"
 #include "utils/current.hpp"
+#include "khi_diagnostics.hpp"
+#include "coordinates/coordinates.hpp"
 
 //----------------------------------------------------------------------------------------
 // BaseTypeOutput::ComputeDerivedVariable()
@@ -52,6 +54,32 @@ void BaseTypeOutput::ComputeDerivedVariable(std::string name, Mesh *pm) {
   // derived variable index
   int &i_dv = out_params.i_derived;
   int &n_dv = out_params.n_derived;
+
+  if (name == "mhd_khi") {
+    auto *pack = pm->pmb_pack;
+    if (!three_d || out_params.include_gzs || pack->pmhd == nullptr ||
+        pack->pcoord->is_special_relativistic ||
+        pack->pcoord->is_general_relativistic || pack->pcoord->is_dynamical_relativistic ||
+        !pack->pmhd->peos->eos_data.is_ideal) {
+      std::cerr << "mhd_khi requires 3-D Newtonian ideal MHD without output ghost zones\n";
+      std::exit(EXIT_FAILURE);
+    }
+    if (derived_var.extent(4) <= 1)
+      Kokkos::realloc(derived_var, nmb, n_dv, n3, n2, n1);
+    auto dv = derived_var;
+    auto w = pack->pmhd->w0, u = pack->pmhd->u0, b = pack->pmhd->bcc0;
+    Real gm1 = pack->pmhd->peos->eos_data.gamma-1.0;
+    int first = i_dv;
+    par_for("khi_slice", DevExeSpace(), 0, nmb-1, ks, ke, js, je, is, ie,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      Real q[khi::nvar];
+      khi::Cell(w, u, b, m, k, j, i, size.d_view(m).dx1, size.d_view(m).dx2,
+                size.d_view(m).dx3, 0.0, 0.0, gm1, q);
+      const int index[] = {39, 40, 28, 29, 30, 31, 32, 33, 34, 35};
+      for (int n = 0; n < 10; ++n) dv(m,first+n,k,j,i) = q[index[n]];
+    });
+    i_dv += 10;
+  }
 
   // temperature = pressure / density
   if (name.compare("temperature") == 0) {

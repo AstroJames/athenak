@@ -53,6 +53,7 @@
 
 #include "outputs.hpp"
 #include "power_spectrum.hpp"
+#include "khi_diagnostics.hpp"
 
 //----------------------------------------------------------------------------------------
 // Outputs constructor
@@ -94,7 +95,8 @@ Outputs::Outputs(ParameterInput *pin, Mesh *pm) {
       if (opar.file_type.compare("hst") != 0 &&
           opar.file_type.compare("rst") != 0 &&
           opar.file_type.compare("log") != 0 &&
-          opar.file_type.compare("trk") != 0) {
+          opar.file_type.compare("trk") != 0 &&
+          opar.file_type != "khi_hst" && opar.file_type != "khi_profiles") {
         if (opar.file_type.compare("power_spectrum") == 0) {
           opar.variable = pin->GetOrAddString(opar.block_name, "variable", "velocity");
           opar.fft_backend =
@@ -191,7 +193,8 @@ Outputs::Outputs(ParameterInput *pin, Mesh *pm) {
       if (opar.file_type.compare("hst") != 0 &&
           opar.file_type.compare("rst") != 0 &&
           opar.file_type.compare("log") != 0 &&
-          opar.file_type.compare("trk") != 0) {
+          opar.file_type.compare("trk") != 0 &&
+          opar.file_type != "khi_hst" && opar.file_type != "khi_profiles") {
         if (opar.file_type.compare("power_spectrum") == 0) {
           opar.variable = pin->GetOrAddString(opar.block_name, "variable", "velocity");
           opar.fft_backend =
@@ -287,6 +290,9 @@ Outputs::Outputs(ParameterInput *pin, Mesh *pm) {
       } else if (opar.file_type.compare("bin") == 0) {
         pnode = new MeshBinaryOutput(pin,pm,opar);
         pout_list.insert(pout_list.begin(),pnode);
+      } else if (opar.file_type == "khi_hst" || opar.file_type == "khi_profiles") {
+        pnode = new KhiDiagnosticsOutput(pin, pm, opar);
+        pout_list.insert(pout_list.begin(), pnode);
       } else if (opar.file_type.compare("power_spectrum") == 0) {
         pnode = new PowerSpectrumOutput(pin, pm, opar);
         pout_list.insert(pout_list.begin(), pnode);

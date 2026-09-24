@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <cstdio> // fclose
@@ -52,6 +54,11 @@ Mesh::Mesh(ParameterInput *pin) :
   nprtcl_thisrank(0),
   nprtcl_total(0),
   dtold(0.) {
+  dt_max = pin->GetOrAddReal("time", "dt_max", std::numeric_limits<Real>::max());
+  if (!(dt_max > 0.0) || !std::isfinite(dt_max)) {
+    std::cerr << "time/dt_max must be finite and positive\n";
+    std::exit(EXIT_FAILURE);
+  }
   // Set physical size and number of cells in mesh (root level)
   mesh_size.x1min = pin->GetReal("mesh", "x1min");
   mesh_size.x1max = pin->GetReal("mesh", "x1max");
@@ -574,7 +581,7 @@ void Mesh::NewTimeStep(const Real tlim) {
   // cycle over all MeshBlocks on this rank and find minimum dt
   // Requires at least ONE of the physics modules to be defined.
   // limit increase in timestep to 2x old value
-  dt = 2.0*dt;
+  dt = std::min(2.0*dt, dt_max);
 
   // Hydro timestep
   if (pmb_pack->phydro != nullptr) {

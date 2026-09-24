@@ -18,6 +18,7 @@
 #include "parameter_input.hpp"
 #include "coordinates/cell_locations.hpp"
 #include "mesh/mesh.hpp"
+#include "coordinates/coordinates.hpp"
 #include "eos/eos.hpp"
 #include "globals.hpp"
 #include "hydro/hydro.hpp"
@@ -28,6 +29,7 @@
 #include "srcterms/srcterms.hpp"
 #include "srcterms/turb_driver.hpp"
 #include "outputs.hpp"
+#include "khi_diagnostics.hpp"
 
 #if MPI_PARALLEL_ENABLED
 #include <mpi.h>
@@ -46,7 +48,8 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
   if (out_params.file_type.compare("hst") == 0 ||
       out_params.file_type.compare("rst") == 0 ||
       out_params.file_type.compare("log") == 0 ||
-      out_params.file_type.compare("trk") == 0) {return;}
+      out_params.file_type.compare("trk") == 0 ||
+      out_params.file_type == "khi_hst" || out_params.file_type == "khi_profiles") {return;}
 
   // initialize vector containing number of output MBs per rank
   noutmbs.assign(global_variable::nranks, 0);
@@ -139,7 +142,7 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
        << std::endl << "Input file is likely missing a <hydro> block" << std::endl;
     exit(EXIT_FAILURE);
   }
-  if ((!power_spectrum_alias) && (ivar>=16) && (ivar<49) &&
+  if ((!power_spectrum_alias) && ((ivar>=16 && ivar<49) || ivar==152) &&
       (pm->pmb_pack->pmhd == nullptr)) {
     std::cout << "### FATAL ERROR in " << __FILE__ << " at line " << __LINE__ << std::endl
        << "Output of MHD variable requested in <output> block '"
@@ -527,6 +530,25 @@ BaseTypeOutput::BaseTypeOutput(ParameterInput *pin, Mesh *pm, OutputParameters o
       outvars.emplace_back("bcc3",2,&(pm->pmb_pack->pmhd->bcc0));
     }
 
+    // Reuse primitives for volumes; slices pack only the selected cells below.
+    if (variable == "mhd_khi") {
+      auto *mhd = pm->pmb_pack->pmhd;
+      outvars.emplace_back("rho", IDN, &(mhd->w0));
+      const char *velocity[] = {"ux", "uy", "uz"};
+      const char *magnetic[] = {"Bx", "By", "Bz"};
+      for (int a = 0; a < 3; ++a)
+        outvars.emplace_back(velocity[a], IVX+a, &(mhd->w0));
+      for (int a = 0; a < 3; ++a)
+        outvars.emplace_back(magnetic[a], a, &(mhd->bcc0));
+      outvars.emplace_back("eint", IEN, &(mhd->w0));
+      const char *names[] = {"stretch", "compression", "omega_x", "omega_y", "omega_z",
+                             "Jx", "Jy", "Jz", "omega2", "J2"};
+      for (int n = 0; n < 10; ++n)
+        outvars.emplace_back(names[n], out_params.n_derived+n, &(derived_var));
+      out_params.n_derived += 10;
+      out_params.contains_derived = true;
+    }
+
     // hydro/mhd z-component of vorticity (useful in 2D)
     if (variable.compare("hydro_wz") == 0 ||
         variable.compare("mhd_wz") == 0) {
@@ -866,6 +888,52 @@ void BaseTypeOutput::LoadOutputData(Mesh *pm) {
     Kokkos::realloc(outarray, nout_vars, nout_mbs, nout3, nout2, nout1);
   }
 
+  // KHI slices need derivatives only on the selected plane, using existing ghosts.
+  // Pack these cells directly instead of allocating ten full-volume derived fields.
+  if (out_params.variable == "mhd_khi" &&
+      (out_params.slice1 || out_params.slice2 || out_params.slice3)) {
+    auto *pack = pm->pmb_pack;
+    if (!pm->three_d || out_params.include_gzs || pack->pmhd == nullptr ||
+        pack->pcoord->is_special_relativistic ||
+        pack->pcoord->is_general_relativistic ||
+        pack->pcoord->is_dynamical_relativistic ||
+        !pack->pmhd->peos->eos_data.is_ideal) {
+      std::cerr << "mhd_khi requires 3-D Newtonian ideal MHD "
+                << "without output ghost zones\n";
+      std::exit(EXIT_FAILURE);
+    }
+    if (nout_mbs == 0) return;
+    int nout1 = outmbs[0].oie-outmbs[0].ois+1;
+    int nout2 = outmbs[0].oje-outmbs[0].ojs+1;
+    int nout3 = outmbs[0].oke-outmbs[0].oks+1;
+    DvceArray5D<Real> packed("khi_slice_data", nout_vars, nout_mbs, nout3, nout2, nout1);
+    auto w = pack->pmhd->w0, u = pack->pmhd->u0, b = pack->pmhd->bcc0;
+    Real gm1 = pack->pmhd->peos->eos_data.gamma-1.0;
+    for (int m = 0; m < nout_mbs; ++m) {
+      int mbi = pm->FindMeshBlockIndex(outmbs[m].mb_gid);
+      int oi = outmbs[m].ois, oj = outmbs[m].ojs, ok = outmbs[m].oks;
+      Real dx = size.h_view(mbi).dx1, dy = size.h_view(mbi).dx2;
+      Real dz = size.h_view(mbi).dx3;
+      par_for("khi_slice_pack", DevExeSpace(), 0, nout3-1, 0, nout2-1, 0, nout1-1,
+      KOKKOS_LAMBDA(int k, int j, int i) {
+        int ii = i+oi, jj = j+oj, kk = k+ok;
+        packed(0,m,k,j,i) = w(mbi,IDN,kk,jj,ii);
+        for (int a = 0; a < 3; ++a) {
+          packed(1+a,m,k,j,i) = w(mbi,IVX+a,kk,jj,ii);
+          packed(4+a,m,k,j,i) = b(mbi,a,kk,jj,ii);
+        }
+        packed(7,m,k,j,i) = w(mbi,IEN,kk,jj,ii);
+        constexpr int kNumVariables = khi::nvar;
+        Real q[kNumVariables];
+        khi::Cell(w, u, b, mbi, kk, jj, ii, dx, dy, dz, 0.0, 0.0, gm1, q);
+        const int index[] = {39, 40, 28, 29, 30, 31, 32, 33, 34, 35};
+        for (int n = 0; n < 10; ++n) packed(8+n,m,k,j,i) = q[index[n]];
+      });
+    }
+    Kokkos::deep_copy(outarray, packed);
+    return;
+  }
+
   // Calculate derived variables, if required
   if (out_params.contains_derived) {
     ComputeDerivedVariable(out_params.variable, pm);
@@ -896,5 +964,9 @@ void BaseTypeOutput::LoadOutputData(Mesh *pm) {
       auto h_slice = Kokkos::subview(outarray,n,m,Kokkos::ALL,Kokkos::ALL,Kokkos::ALL);
       Kokkos::deep_copy(h_slice,h_output_var);
     }
+  }
+  // Do not retain a full-volume derivative workspace for each separate slice.
+  if (out_params.variable == "mhd_khi") {
+    Kokkos::realloc(derived_var, 1, 1, 1, 1, 1);
   }
 }
