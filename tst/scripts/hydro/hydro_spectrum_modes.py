@@ -24,11 +24,8 @@ logger = logging.getLogger('athena' + __name__[7:])
 
 _INPUT = 'tests/spectrum_modes_hydro.athinput'
 _NMODE = 4
-# Tolerance for P(k) vs 1/(2k^2): FFTW double-precision FFT of a finite grid
-# accumulates ~O(N * eps) rounding error (N=32).  Amplitudes like 1/3 are not
-# exactly representable, adding ~1 ULP per cell.  The resulting relative error
-# on the power is empirically ~1e-7, so we allow 1e-6 with margin.
-_REL_TOL = 1.0e-6    # relative error against P(k) = 1/(2k^2)
+# Double-precision transforms and text output should preserve this accuracy.
+_REL_TOL = 1.0e-12
 _ZERO_TOL = 1.0e-20  # inactive bins must be below this
 _MATCH_TOL = 1.0e-13 # single vs multi-block relative tolerance
 
@@ -56,6 +53,13 @@ def analyze():
     files1 = sorted(glob.glob('build/src/SpecModes1.*.00000.spec'))
     if not files1:
         logger.warning('No spectrum file found for single-block run')
+        return False
+    with open(files1[0]) as stream:
+        header = [stream.readline() for _ in range(4)]
+    if not (header[0].startswith('# time=') and 'cycle=0' in header[0]
+            and 'no 1/2' in header[1] and 'zero mode excluded' in header[2]
+            and 'not kinetic energy' in header[3]):
+        logger.warning('Missing spectrum time/normalization metadata')
         return False
     data1 = np.loadtxt(files1[0])
     bins1  = data1[:, 0].astype(int)
