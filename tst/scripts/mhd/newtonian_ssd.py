@@ -6,6 +6,7 @@ seeding, including exact preservation of the saved flow and forcing data.
 import logging
 import os
 from pathlib import Path
+import re
 import subprocess
 import struct
 
@@ -83,6 +84,15 @@ def run(**kwargs):
                            'spectral_ic/rms_b=0', 'time/nlim=8',
                            'spectral_ic/nlow=2', 'spectral_ic/nhigh=2'])
     spinup = latest_restart('spinup')
+    # Match an uninterrupted trajectory after resuming the correlated forcing.
+    athena.run(input_path, ['job/basename=NewtonianSSDTest_uninterrupted',
+                           'spectral_ic/rms_b=0', 'time/nlim=12',
+                           'spectral_ic/nlow=2', 'spectral_ic/nhigh=2'])
+    restart(spinup, 'split', ['time/nlim=12'])
+    # Old checkpoints remain readable, but explicitly lack OU correlation history.
+    legacy = legacy_checkpoint(spinup)
+    restart(legacy, 'legacy', [])
+    legacy.unlink()
     for name, overrides in (
             ('injected', ['spectral_ic/seed_on_restart=true', 'spectral_ic/rms_b=0.02']),
             ('unseeded', ['spectral_ic/rms_b=0.02'])):
@@ -103,6 +113,18 @@ def run(**kwargs):
                                  *overrides, 'time/nlim=0'], cwd='build/src',
                                 capture_output=True, text=True)
         assert result.returncode != 0 and message in result.stderr, result.stderr
+    # Distinct correlated components must each survive restart, not just their sum.
+    text += '\n<turb_driving>\nnum_components = 2\n'
+    for c in range(2):
+        text += (f'\n<turb_driving/component{c}>\n'
+                 f'nlow = {c+1}\nnhigh = {c+2}\n'
+                 'driving_profile = band\n'
+                 f'dedt = {0.03*(c+1)}\ntcorr = {0.1*(c+1)}\nsol_weight = 1\n')
+    path.write_text(text)
+    for name, cycles in (('multi_full', 12), ('multi_first', 8)):
+        athena.run(input_path, [f'job/basename=NewtonianSSDTest_{name}',
+                               'spectral_ic/rms_b=0', f'time/nlim={cycles}'])
+    restart(latest_restart('multi_first'), 'multi_split', ['time/nlim=12'])
     path.unlink()
 
 
@@ -136,15 +158,36 @@ def read_checkpoint(path):
     shape = (nz+2*ng, ny+2*ng, nx+2*ng)
     nc = int(np.prod(shape))
     nf = sum((n+1)*nc//n for n in shape)
-    assert data_size == (5*nc+nf+3*nc)*8
+    count = re.search(r'^restart_num_components\s*=\s*(\d+)', header, re.MULTILINE)
+    nforce = 3*(1+int(count[1])) if count else 3
+    assert data_size == (5*nc+nf+nforce*nc)*8
     assert len(blob) == offset+nmb*data_size
     payload = np.frombuffer(blob, dtype='=f8', offset=offset).reshape(nmb, -1)
     u = payload[:, :5*nc].reshape(nmb, 5, *shape)
-    force = payload[:, 5*nc+nf:].reshape(nmb, 3, *shape)
+    force = payload[:, 5*nc+nf:].reshape(nmb, nforce, *shape)
     active = (slice(None), slice(None), slice(ng, ng+nz),
               slice(ng, ng+ny), slice(ng, ng+nx))
     return dict(header=header, time=time, cycle=cycle, rng=rng, u=u[active],
                 force=force[active], faces=payload[:, 5*nc:5*nc+nf])
+
+
+def legacy_checkpoint(path):
+    """Drop OU component arrays to exercise the pre-extension restart format."""
+    blob = path.read_bytes()
+    offset = blob.index(b'<par_end>\n')+len(b'<par_end>\n')
+    header = re.sub(rb'^restart_num_components[^\n]*\n', b'', blob[:offset],
+                    flags=re.MULTILINE)
+    nmb, = struct.unpack_from('=i', blob, offset)
+    ng, nx, ny, nz = struct.unpack_from('=4i', blob, offset+8+9*8+19*4)
+    start = offset+8+9*8+2*19*4+20+20*nmb+struct.calcsize('@35qid')
+    size, = struct.unpack_from('=Q', blob, start)
+    nc = (nx+2*ng)*(ny+2*ng)*(nz+2*ng)
+    new_size = size-3*nc*8
+    payload = b''.join(blob[start+8+m*size:start+8+m*size+new_size]
+                       for m in range(nmb))
+    legacy = path.with_name('NewtonianSSDTest_legacy_input.rst')
+    legacy.write_bytes(header+blob[offset:start]+struct.pack('=Q', new_size)+payload)
+    return legacy
 
 
 def magnetic_history(name):
@@ -295,7 +338,21 @@ def analyze():
 
         states = {name: read_checkpoint(latest_restart(name)) for name in
                   ('spinup', 'injected', 'unseeded', 'preserved', 'continued',
-                   'continued_preserved')}
+                   'continued_preserved', 'uninterrupted', 'split', 'legacy',
+                   'multi_full', 'multi_split')}
+        for full, split in (('uninterrupted', 'split'), ('multi_full', 'multi_split')):
+            for key in ('time', 'cycle'):
+                assert states[full][key] == states[split][key], key
+            # Compare the uniform generator's state; trailing Gaussian fields
+            # and struct padding are unused by this driver.
+            assert states[full]['rng'][:35*8] == states[split]['rng'][:35*8]
+            for key in ('u', 'force', 'faces'):
+                np.testing.assert_array_equal(states[full][key], states[split][key])
+        for key in ('u', 'faces'):
+            np.testing.assert_array_equal(states['legacy'][key], states['spinup'][key])
+        np.testing.assert_array_equal(states['legacy']['force'][:, :3],
+                                      states['spinup']['force'][:, :3])
+        np.testing.assert_array_equal(states['legacy']['force'][:, 3:], 0.0)
         spinup, injected = states['spinup'], states['injected']
         assert np.std(spinup['u'][:, 0]) > 1e-6
         assert np.max(abs(spinup['u'][:, 1:4])) > 1e-3
@@ -372,6 +429,8 @@ def analyze():
         metrics['spectral_peaks'] = peak_metrics
         metrics['restart'] = dict(flow_preserved_exactly=True,
                                   saved_forcing_preserved=True,
+                                  uninterrupted_matches_split_exactly=True,
+                                  multiple_components_and_legacy_checked=True,
                                   rms_b=0.02, max_div=float(max_div),
                                   outside_shell=float(outside))
         logger.info('Isothermal SSD validation: %s', metrics)

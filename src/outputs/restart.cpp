@@ -103,9 +103,20 @@ void RestartOutput::LoadOutputData(Mesh *pm) {
                       Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
   }
   if (pturb != nullptr) {
+    nforce = 3*(1 + pturb->num_components);
     Kokkos::realloc(outarray_force, nmb, nforce, nout3, nout2, nout1);
-    Kokkos::deep_copy(outarray_force, Kokkos::subview(pturb->force, std::make_pair(0,nmb),
+    Kokkos::deep_copy(Kokkos::subview(outarray_force, Kokkos::ALL, std::make_pair(0,3),
+                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
+                      Kokkos::subview(pturb->force, std::make_pair(0,nmb),
                       Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+    // The normalized total force cannot recover the per-component OU history.
+    for (int c=0; c<pturb->num_components; ++c) {
+      Kokkos::deep_copy(Kokkos::subview(outarray_force, Kokkos::ALL,
+                        std::make_pair(3*(c+1),3*(c+2)),
+                        Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
+                        Kokkos::subview(pturb->force_component, c, std::make_pair(0,nmb),
+                        Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+    }
   }
   if (pz4c != nullptr) {
     Kokkos::realloc(outarray_z4c, nmb, nz4c, nout3, nout2, nout1);
@@ -181,6 +192,10 @@ void RestartOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
   pin->SetReal(out_params.block_name, "last_time", out_params.last_time);
 
   // create string holding input parameters (copy of input file)
+  if (pturb != nullptr) {
+    nforce = 3*(1 + pturb->num_components);
+    pin->SetInteger("turb_driving", "restart_num_components", pturb->num_components);
+  }
   std::stringstream ost;
   pin->ParameterDump(ost);
   std::string sbuf = ost.str();

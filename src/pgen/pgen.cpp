@@ -164,6 +164,21 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
   radiation::Radiation* prad=pm->pmb_pack->prad;
   TurbulenceDriver* pturb=pm->pmb_pack->pturb;
   int nrad = 0, nhydro = 0, nmhd = 0, nforce = 3, nadm = 0, nz4c = 0;
+  int saved_force_components = 0;
+  if (pturb != nullptr) {
+    saved_force_components = pin->GetOrAddInteger("turb_driving",
+                                                 "restart_num_components", 0);
+    if (saved_force_components != 0 && saved_force_components != pturb->num_components) {
+      std::cout << "### FATAL ERROR: restart forcing component count does not match "
+                << "the configured turbulence driver." << std::endl;
+      exit(EXIT_FAILURE);
+    }
+    nforce = 3*(1 + saved_force_components);
+    if (saved_force_components == 0 && global_variable::my_rank == 0) {
+      std::cout << "### WARNING: legacy restart has no per-component forcing history; "
+                << "temporal forcing correlations restart from zero." << std::endl;
+    }
+  }
   if (phydro != nullptr) {
     nhydro = phydro->nhydro + phydro->nscalars;
   }
@@ -548,7 +563,16 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
       }
     }
     Kokkos::deep_copy(Kokkos::subview(pturb->force, std::make_pair(0,nmb), Kokkos::ALL,
-                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL), ccin);
+                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
+                      Kokkos::subview(ccin, Kokkos::ALL, std::make_pair(0,3),
+                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+    for (int c=0; c<saved_force_components; ++c) {
+      Kokkos::deep_copy(Kokkos::subview(pturb->force_component, c, std::make_pair(0,nmb),
+                        Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
+                        Kokkos::subview(ccin, Kokkos::ALL,
+                        std::make_pair(3*(c+1),3*(c+2)),
+                        Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+    }
     offset_myrank += nout1*nout2*nout3*nforce*sizeof(Real); // forcing
     myoffset = offset_myrank;
   }

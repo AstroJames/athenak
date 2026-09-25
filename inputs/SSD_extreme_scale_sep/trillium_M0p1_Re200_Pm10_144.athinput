@@ -11,7 +11,7 @@
 # time/tlim=60 (absolute 12*t0, a further 10*t0), and spectral_ic/rms_b set to
 # sqrt(2*Ekin/(V*1e10)), using its measured kinetic energy (V=1).
 # Nominal rms_b=1e-6 at Mach=0.1. The zero-mean k=16 seed has common helicity.
-# Correlated forcing's internal restart history must be repaired before stage 2.
+# Checkpoints preserve the per-component correlated forcing state across stages.
 
 <job>
 basename = SSD_M0p1_Re200_Pm10_144
