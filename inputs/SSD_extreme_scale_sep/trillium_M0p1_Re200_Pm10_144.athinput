@@ -1,5 +1,5 @@
 # Build: -DPROBLEM=newtonian_SSD -DAthena_ENABLE_MPI=ON -DAthena_FFT_BACKEND=KOKKOS.
-# Trillium debug: 2 nodes, 384 MPI ranks (192/node), 01:00:00; Athena -t 00:55:00.
+# Trillium debugjob: 2 nodes, 384 MPI ranks (192/node), 00:30:00; Athena -t 00:25:00.
 # The 384 MeshBlocks also divide evenly over 192 ranks on one node.
 # L=cs=rho0=1; target urms=0.1, ell_drive=L/2=0.5, t0=ell_drive/urms=5.
 # Triply periodic domain: -L/2 <= x,y,z <= L/2.
