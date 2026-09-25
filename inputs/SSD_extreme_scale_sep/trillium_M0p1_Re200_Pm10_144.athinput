@@ -1,14 +1,15 @@
 # Build: -DPROBLEM=newtonian_SSD -DAthena_ENABLE_MPI=ON -DAthena_FFT_BACKEND=KOKKOS.
 # Trillium debug: 2 nodes, 384 MPI ranks (192/node), 01:00:00; Athena -t 00:55:00.
 # The 384 MeshBlocks also divide evenly over 192 ranks on one node.
-# L=cs=rho0=1; target urms=0.1, ell_drive=L/2=0.5, t_eddy=5.
+# L=cs=rho0=1; target urms=0.1, ell_drive=L/2=0.5, t0=ell_drive/urms=5.
 # Re=urms*ell_drive/nu=200; Pm=nu/eta=10; Rm=2000 at the target Mach.
-# Stage 1: B=0, evolve for 10 target turnover times, then assess stationarity.
+# All input/output times below are code units; divide by 5 to express them in t0.
+# Stage 1: B=0, evolve to t=10 (2*t0), then check Mach and stationarity.
 # dedt is a starting calibration: measure Mach and retune before choosing the seed.
-# Stage 2: restart a stationary checkpoint with seed_on_restart=true, tlim=100,
-# and rms_b=sqrt(2*Ekin/(V*1e10)), using its measured kinetic energy (V=1).
+# Stage 2: restart that checkpoint with spectral_ic/seed_on_restart=true,
+# time/tlim=60 (absolute 12*t0, a further 10*t0), and spectral_ic/rms_b set to
+# sqrt(2*Ekin/(V*1e10)), using its measured kinetic energy (V=1).
 # Nominal rms_b=1e-6 at Mach=0.1. The zero-mean k=16 seed has common helicity.
-# Extend spin-up if needed; reaching t=50 alone does not establish stationarity.
 # Correlated forcing's internal restart history must be repaired before stage 2.
 
 <job>
@@ -41,7 +42,7 @@ nx3 = 18
 evolution = dynamic
 integrator = rk3
 cfl_number = 0.3
-tlim = 50.0
+tlim = 10.0                    # 2*t0; on seeded restart override to 60 = 12*t0
 nlim = -1
 ndiag = 100
 
@@ -62,7 +63,7 @@ nhigh = 3
 parabola_peak = 2.0
 parabola_width = 0.5
 sol_weight = 1.0
-tcorr = 5.0
+tcorr = 5.0                    # t0 at the driving scale
 dedt = 5.0e-4
 
 <spectral_ic>
@@ -78,7 +79,7 @@ seed_on_restart = false
 # Mach_rms,mass = sqrt(2*(1-KE+2-KE+3-KE)/mass)/cs for this zero-mean flow.
 <output1>
 file_type = hst
-dt = 0.1
+dt = 0.1                       # t0/50
 data_format = %24.16e
 
 <output2>
@@ -86,15 +87,30 @@ file_type = power_spectrum
 variable = velocity
 id = velocity
 fft_backend = kokkos
-dt = 0.5
+dt = 0.1                       # t0/50
 
 <output3>
 file_type = power_spectrum
 variable = magnetic_field
 id = magnetic
 fft_backend = kokkos
-dt = 0.5
+dt = 0.1                       # t0/50
 
 <output4>
 file_type = rst
-dt = 10.0
+dt = 10.0                      # 2*t0; checkpoint at the end of spin-up
+
+# Full boxes: density, all velocity components, and cell-centered magnetic field.
+<output5>
+file_type = bin
+variable = mhd_w_bcc
+id = full
+dt = 1.0                       # t0/5
+
+# Central xy slices, containing the same seven fields as the full boxes.
+<output6>
+file_type = bin
+variable = mhd_w_bcc
+id = slice_xy
+slice_x3 = 0.5
+dt = 0.1                       # t0/50
