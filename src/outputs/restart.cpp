@@ -105,17 +105,20 @@ void RestartOutput::LoadOutputData(Mesh *pm) {
   if (pturb != nullptr) {
     nforce = 3*(1 + pturb->num_components);
     Kokkos::realloc(outarray_force, nmb, nforce, nout3, nout2, nout1);
-    Kokkos::deep_copy(Kokkos::subview(outarray_force, Kokkos::ALL, std::make_pair(0,3),
-                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
-                      Kokkos::subview(pturb->force, std::make_pair(0,nmb),
-                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
-    // The normalized total force cannot recover the per-component OU history.
-    for (int c=0; c<pturb->num_components; ++c) {
-      Kokkos::deep_copy(Kokkos::subview(outarray_force, Kokkos::ALL,
-                        std::make_pair(3*(c+1),3*(c+2)),
+    // Copy each MeshBlock separately so host/device subviews remain contiguous.
+    for (int m=0; m<nmb; ++m) {
+      Kokkos::deep_copy(Kokkos::subview(outarray_force, m, std::make_pair(0,3),
                         Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
-                        Kokkos::subview(pturb->force_component, c, std::make_pair(0,nmb),
+                        Kokkos::subview(pturb->force, m,
                         Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+      // The normalized total force cannot recover the per-component OU history.
+      for (int c=0; c<pturb->num_components; ++c) {
+        Kokkos::deep_copy(Kokkos::subview(outarray_force, m,
+                          std::make_pair(3*(c+1),3*(c+2)),
+                          Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
+                          Kokkos::subview(pturb->force_component, c, m,
+                          Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+      }
     }
   }
   if (pz4c != nullptr) {
