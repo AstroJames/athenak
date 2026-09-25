@@ -10,17 +10,95 @@
 #include <iostream>
 
 #include "athena.hpp"
+#include "globals.hpp"
 #include "parameter_input.hpp"
 #include "mesh/mesh.hpp"
 #include "coordinates/coordinates.hpp"
 #include "eos/eos.hpp"
 #include "mhd/mhd.hpp"
+#include "outputs/outputs.hpp"
 #include "pgen.hpp"
+#include "utils/finite_diff.hpp"
 #include "utils/spectral_ic_gen.hpp"
 
 #if MPI_PARALLEL_ENABLED
 #include <mpi.h>
 #endif
+
+namespace {
+// Same magnetic moments and derivative stencils as turb.cpp's TurbulentHistory.
+// k^2 = integral(numerator)/integral(B^4), in inverse code-length squared.
+void MagneticScaleHistory(HistoryData *pdata, Mesh *pm) {
+  pdata->nhist = 3;
+  pdata->label[0] = "k_parallel";
+  pdata->label[1] = "k_BxJ";
+  pdata->label[2] = "k_BdotJ";
+  for (int n = 0; n < pdata->nhist; ++n) pdata->hdata[n] = 0.0;
+
+  auto bcc = pm->pmb_pack->pmhd->bcc0;
+  auto b = pm->pmb_pack->pmhd->b0;
+  auto size = pm->pmb_pack->pmb->mb_size;
+  auto &idx = pm->mb_indcs;
+  int nx = idx.nx1, ny = idx.nx2, nz = idx.nx3;
+  int is = idx.is, js = idx.js, ks = idx.ks;
+  int ndim = pm->three_d ? 3 : (pm->multi_d ? 2 : 1);
+  Real b4 = 0.0, bdb2 = 0.0, bxj2 = 0.0, bdj2 = 0.0;
+  Kokkos::parallel_reduce("ssd_magnetic_scales",
+    Kokkos::RangePolicy<>(DevExeSpace(), 0, pm->pmb_pack->nmb_thispack*nx*ny*nz),
+    KOKKOS_LAMBDA(const int q, Real &sum_b4, Real &sum_bdb2,
+                  Real &sum_bxj2, Real &sum_bdj2) {
+      int i = q%nx+is, j = (q/nx)%ny+js, k = (q/(nx*ny))%nz+ks;
+      int m = q/(nx*ny*nz);
+      Real dx = size.d_view(m).dx1, dy = size.d_view(m).dx2;
+      Real dz = size.d_view(m).dx3;
+      Real inv_dx[3] = {1.0/dx, 1.0/dy, 1.0/dz};
+      Real field[3] = {bcc(m,IBX,k,j,i), bcc(m,IBY,k,j,i), bcc(m,IBZ,k,j,i)};
+      Real grad[3][3] = {};  // grad[a][d] = d_d B^a
+      for (int a = 0; a < 3; ++a) {
+        for (int d = 0; d < ndim; ++d) {
+          grad[a][d] = Dx<2>(d, inv_dx, bcc, m, a, k, j, i);
+        }
+      }
+      // Normal derivatives use staggered faces, as in the turbulence diagnostic.
+      grad[0][0] = (b.x1f(m,k,j,i+1)-b.x1f(m,k,j,i))*inv_dx[0];
+      if (ndim > 1) grad[1][1] = (b.x2f(m,k,j+1,i)-b.x2f(m,k,j,i))*inv_dx[1];
+      if (ndim > 2) grad[2][2] = (b.x3f(m,k+1,j,i)-b.x3f(m,k,j,i))*inv_dx[2];
+      Real current[3] = {grad[2][1]-grad[1][2], grad[0][2]-grad[2][0],
+                          grad[1][0]-grad[0][1]};
+      Real bsq = 0.0, tension2 = 0.0, cross2 = 0.0, dot = 0.0;
+      for (int a = 0; a < 3; ++a) {
+        Real tension = 0.0;
+        for (int d = 0; d < 3; ++d) tension += field[d]*grad[a][d];
+        Real cross = field[(a+1)%3]*current[(a+2)%3]
+                    -field[(a+2)%3]*current[(a+1)%3];
+        bsq += SQR(field[a]);
+        tension2 += SQR(tension);
+        cross2 += SQR(cross);
+        dot += field[a]*current[a];
+      }
+      Real vol = dx*dy*dz;
+      sum_b4 += SQR(bsq)*vol;
+      sum_bdb2 += tension2*vol;
+      sum_bxj2 += cross2*vol;
+      sum_bdj2 += SQR(dot)*vol;
+    }, Kokkos::Sum<Real>(b4), Kokkos::Sum<Real>(bdb2),
+       Kokkos::Sum<Real>(bxj2), Kokkos::Sum<Real>(bdj2));
+
+  Real raw[4] = {b4, bdb2, bxj2, bdj2};
+#if MPI_PARALLEL_ENABLED
+  Real reduced[4];
+  MPI_Reduce(raw, reduced, 4, MPI_ATHENA_REAL, MPI_SUM, 0, MPI_COMM_WORLD);
+  // HistoryOutput also applies MPI_SUM: only rank zero contributes final ratios.
+  if (global_variable::my_rank != 0) return;
+  for (int n = 0; n < 4; ++n) raw[n] = reduced[n];
+#endif
+  // The scales are undefined before seeding; report zero while B is exactly zero.
+  if (raw[0] == 0.0) return;
+  for (int n = 0; n < pdata->nhist; ++n) {
+    pdata->hdata[n] = std::sqrt(raw[n+1]/raw[0]);
+  }
+}
+} // namespace
 
 void ProblemGenerator::UserProblem(ParameterInput *pin, const bool restart) {
   auto *pack = pmy_mesh_->pmb_pack;
@@ -36,6 +114,8 @@ void ProblemGenerator::UserProblem(ParameterInput *pin, const bool restart) {
     std::cerr << "newtonian_SSD requires a positive finite iso_sound_speed.\n";
     std::exit(EXIT_FAILURE);
   }
+  // Enroll before the ordinary-restart early return too.
+  user_hist_func = MagneticScaleHistory;
   bool seed_on_restart = pin->GetOrAddBoolean("spectral_ic", "seed_on_restart", false);
   // Ordinary restarts preserve the evolved field, irrespective of the seed inputs.
   if (restart && !seed_on_restart) return;

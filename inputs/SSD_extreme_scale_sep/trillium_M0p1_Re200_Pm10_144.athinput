@@ -76,6 +76,13 @@ iseed = 210989
 rms_b = 0.0
 seed_on_restart = false
 
+<problem>
+user_hist = true                # Adds k_parallel, k_BxJ, k_BdotJ to .user.hst
+# Each k is sqrt(integral(numerator)/integral(B^4)), with J=curl(B).
+# Numerators: |(B.grad)B|^2, |B x J|^2, and |B.J|^2, respectively.
+# Units: inverse code length; multiply by L/(2*pi) for spectral mode units.
+# All three columns are zero placeholders while B=0 during spin-up.
+
 # Mach_rms,mass = sqrt(2*(1-KE+2-KE+3-KE)/mass)/cs for this zero-mean flow.
 <output1>
 file_type = hst

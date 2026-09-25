@@ -28,7 +28,9 @@ def run(**kwargs):
     text += ('\n<output2>\nfile_type = bin\nvariable = mhd_w_bcc\n'
              'id = prim\ndt = 1.0\n'
              '\n<output3>\nfile_type = bin\nvariable = mhd_divb\n'
-             'id = divb\ndt = 1.0\n')
+             'id = divb\ndt = 1.0\n'
+             '\n<problem>\nuser_hist = true\n'
+             '\n<output5>\nfile_type = hst\ndt = 1.0\ndata_format = %24.16e\n')
     path.write_text(text)
     input_path = os.path.relpath(path, REPO/'inputs')
     for name, flag in (('force_free', 'true'), ('gaussian', 'false')):
@@ -37,6 +39,13 @@ def run(**kwargs):
                                'mhd/nscalars=1', 'time/nlim=0'])
     athena.run(input_path, ['job/basename=NewtonianSSDTest_evolved',
                            'mhd/nscalars=1', 'time/nlim=4'])
+    # Axial shell k=2 has zero normal magnetic derivatives. Its history can be
+    # checked independently from the assembled cell-centered binary field.
+    for name, flag in (('weak_ff', 'true'), ('weak_gaussian', 'false')):
+        athena.run(input_path, [f'job/basename=NewtonianSSDTest_{name}',
+                               f'spectral_ic/force_free={flag}',
+                               'spectral_ic/nlow=2', 'spectral_ic/nhigh=2',
+                               'spectral_ic/rms_b=1e-6', 'time/nlim=0'])
     for override in ('mhd/eos=ideal', 'mhd/iso_sound_speed=0',
                      'spectral_ic/rms_b=-1', 'spectral_ic/rms_b=nan',
                      'spectral_ic/rms_b=inf', 'spectral_ic/seed_on_restart=true'):
@@ -118,6 +127,32 @@ def read_checkpoint(path):
                 force=force[active], faces=payload[:, 5*nc:5*nc+nf])
 
 
+def magnetic_history(name):
+    path = Path(f'build/src/NewtonianSSDTest_{name}.user.hst')
+    header = path.read_text().splitlines()[1]
+    assert all(key in header for key in ('k_parallel', 'k_BxJ', 'k_BdotJ'))
+    data = np.loadtxt(path, ndmin=2)
+    assert data.shape[1] == 5 and np.all(np.isfinite(data))
+    assert np.all(data[:, 2:] >= 0.0)
+    return data[:, 2:]
+
+
+def reference_magnetic_scales(fields):
+    """Independent periodic differences for this test's axial k=2 fields."""
+    b = np.array([fields[f'bcc{a}'] for a in (1, 2, 3)])
+    grad = np.array([[(np.roll(component, -1, 2-d)-np.roll(component, 1, 2-d))
+                       * component.shape[2-d]/2 for d in range(3)] for component in b])
+    tension = np.einsum('dzyx,adzyx->azyx', b, grad)
+    current = np.array([grad[2, 1]-grad[1, 2], grad[0, 2]-grad[2, 0],
+                        grad[1, 0]-grad[0, 1]])
+    cross = np.cross(b, current, axisa=0, axisb=0, axisc=0)
+    dot = np.sum(b*current, axis=0)
+    b4 = np.mean(np.sum(b*b, axis=0)**2)
+    return np.sqrt(np.array([np.mean(np.sum(tension*tension, axis=0)),
+                              np.mean(np.sum(cross*cross, axis=0)),
+                              np.mean(dot*dot)])/b4)
+
+
 def analyze():
     root = Path('build/src')
     try:
@@ -189,6 +224,30 @@ def analyze():
         assert np.all(np.isfinite(states['continued']['u']))
         assert np.min(states['continued']['u'][:, 0]) > 0.0
         assert np.linalg.norm(states['continued']['faces']-injected['faces']) > 1e-5
+        for name in ('spinup', 'unseeded'):
+            np.testing.assert_array_equal(magnetic_history(name), 0.0)
+        for name in ('injected', 'weak_ff', 'weak_gaussian'):
+            paths = sorted((root/'bin').glob(f'NewtonianSSDTest_{name}.prim.*.bin'))
+            expected = reference_magnetic_scales(assemble(paths[-1]))
+            np.testing.assert_allclose(magnetic_history(name)[-1], expected,
+                                       rtol=2e-6, atol=2e-5)
+        # For the axial force-free shell, centered curl has this exact eigenvalue.
+        curl_eigenvalue = 32*np.sin(2*np.pi*2/32)
+        ff_scales = magnetic_history('injected')[-1]
+        assert ff_scales[0] > 0.0 and ff_scales[1] < 1e-10
+        np.testing.assert_allclose(ff_scales[2], curl_eigenvalue, rtol=2e-12)
+        np.testing.assert_allclose(magnetic_history('weak_ff')[-1], ff_scales,
+                                   rtol=2e-12, atol=1e-11)
+        assert magnetic_history('weak_gaussian')[-1, 1] > 1e-3
+        for before, after in (('injected', 'preserved'),
+                              ('continued', 'continued_preserved')):
+            np.testing.assert_allclose(magnetic_history(before)[-1],
+                                       magnetic_history(after)[-1],
+                                       rtol=2e-12, atol=1e-11)
+        metrics['magnetic_scales'] = dict(k_parallel=float(ff_scales[0]),
+                                          k_BxJ=float(ff_scales[1]),
+                                          k_BdotJ=float(ff_scales[2]),
+                                          weak_seed_amplitude_independent=True)
         metrics['restart'] = dict(flow_preserved_exactly=True,
                                   saved_forcing_preserved=True,
                                   rms_b=0.02, max_div=float(max_div),
