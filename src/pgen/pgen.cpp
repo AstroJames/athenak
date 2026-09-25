@@ -562,16 +562,18 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
         myoffset += data_size;
       }
     }
-    Kokkos::deep_copy(Kokkos::subview(pturb->force, std::make_pair(0,nmb), Kokkos::ALL,
-                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
-                      Kokkos::subview(ccin, Kokkos::ALL, std::make_pair(0,3),
-                      Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
-    for (int c=0; c<saved_force_components; ++c) {
-      Kokkos::deep_copy(Kokkos::subview(pturb->force_component, c, std::make_pair(0,nmb),
+    // Per-MeshBlock subviews are contiguous for transfers to device memory.
+    for (int m=0; m<nmb; ++m) {
+      Kokkos::deep_copy(Kokkos::subview(pturb->force, m,
                         Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
-                        Kokkos::subview(ccin, Kokkos::ALL,
-                        std::make_pair(3*(c+1),3*(c+2)),
+                        Kokkos::subview(ccin, m, std::make_pair(0,3),
                         Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+      for (int c=0; c<saved_force_components; ++c) {
+        Kokkos::deep_copy(Kokkos::subview(pturb->force_component, c, m,
+                          Kokkos::ALL, Kokkos::ALL, Kokkos::ALL, Kokkos::ALL),
+                          Kokkos::subview(ccin, m, std::make_pair(3*(c+1),3*(c+2)),
+                          Kokkos::ALL, Kokkos::ALL, Kokkos::ALL));
+      }
     }
     offset_myrank += nout1*nout2*nout3*nforce*sizeof(Real); // forcing
     myoffset = offset_myrank;
