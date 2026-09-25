@@ -13,6 +13,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #if KOKKOS_FFT_ENABLED
@@ -48,6 +49,18 @@ using PlanType =
 #endif
 
 #if FFT_ENABLED
+// |i k x f|^2, evaluated as cross products to avoid cancellation of longitudinal
+// power in k^2|f|^2 - |k.f|^2. This also works for non-solenoidal cell-centered B.
+KOKKOS_INLINE_FUNCTION
+Real SpectralCurlPower(const Real k[3], const Real re[3], const Real im[3]) {
+  Real power = 0.0;
+  for (int a = 0; a < 3; ++a) {
+    int b = (a+1)%3, c = (a+2)%3;
+    power += SQR(k[b]*re[c]-k[c]*re[b]) + SQR(k[b]*im[c]-k[c]*im[b]);
+  }
+  return power;
+}
+
 enum class SpectrumFieldType {
   kDensity,
   kVelocity,
@@ -134,7 +147,8 @@ class KokkosFftPowerSpectrumBackend final : public PowerSpectrumBackend {
   int GetNumBins() const override { return nbins_; }
 
   void Compute(Mesh *pm, const OutputParameters &out_params,
-               Kokkos::View<Real*> spectrum) override {
+               Kokkos::View<Real*> spectrum,
+               Kokkos::View<Real*> curl_spectrum) override {
     MeshBlockPack *pack = pm->pmb_pack;
     const auto &indcs = pm->mb_indcs;
     const int nmb = pack->nmb_thispack;
@@ -151,6 +165,8 @@ class KokkosFftPowerSpectrumBackend final : public PowerSpectrumBackend {
     ValidateFieldAvailability(field_type, pm);
     const bool spectrum_of_magnetic = FieldUsesMagnetic(field_type);
     const int nfields = NumFieldComponents(field_type);
+    const bool want_curl = curl_spectrum.extent(0) > 0;
+    const Real k_unit = 2.0*std::acos(-1.0)/(pm->mesh_size.x1max-pm->mesh_size.x1min);
 
     const auto &w0_ = (pm->pmb_pack->phydro != nullptr) ?
                       pm->pmb_pack->phydro->w0 :
@@ -294,7 +310,14 @@ class KokkosFftPowerSpectrumBackend final : public PowerSpectrumBackend {
 
       if (!do_fft_and_bin) continue;
 
+      if (want_curl && fft_x_.extent(0) == 0) {
+        fft_x_ = complex_view_t("fft_x", nx_, ny_, nz_/2+1);
+        fft_y_ = complex_view_t("fft_y", nx_, ny_, nz_/2+1);
+      }
       plan_->execute_impl(fft_in_, fft_out_);
+      if (want_curl && comp == 0) Kokkos::deep_copy(fft_x_, fft_out_);
+      if (want_curl && comp == 1) Kokkos::deep_copy(fft_y_, fft_out_);
+      auto fx = fft_x_, fy = fft_y_;
 
       const int64_t nmodes = int64_t(nx_) * ny_ * (nz_/2 + 1);
       Kokkos::parallel_for(
@@ -319,6 +342,18 @@ class KokkosFftPowerSpectrumBackend final : public PowerSpectrumBackend {
               Kokkos::atomic_add(&spectrum(s - 1),
                                  half_weight * (z.real()*z.real() + z.imag()*z.imag()) *
                                      inv_ntot_sq);
+              if (want_curl && comp == 2) {
+                // Odd derivatives of a real trigonometric interpolant vanish at
+                // each even-grid Nyquist frequency. Bin with the original modes.
+                Real wave[3] = {
+                  (nx_%2 == 0 && ix == nx_/2 ? 0 : kx)*k_unit,
+                  (ny_%2 == 0 && iy == ny_/2 ? 0 : ky)*k_unit,
+                  (nz_%2 == 0 && iz == nz_/2 ? 0 : kz)*k_unit};
+                Real re[3] = {fx(ix,iy,iz).real(), fy(ix,iy,iz).real(), z.real()};
+                Real im[3] = {fx(ix,iy,iz).imag(), fy(ix,iy,iz).imag(), z.imag()};
+                Kokkos::atomic_add(&curl_spectrum(s - 1),
+                    half_weight*SpectralCurlPower(wave, re, im)*inv_ntot_sq);
+              }
             }
           });
     }
@@ -331,6 +366,7 @@ class KokkosFftPowerSpectrumBackend final : public PowerSpectrumBackend {
   int nz_ = 0;
   real_view_t fft_in_;
   complex_view_t fft_out_;
+  complex_view_t fft_x_, fft_y_;
   std::unique_ptr<PlanType> plan_;
 };
 #endif  // KOKKOS_FFT_ENABLED
@@ -404,8 +440,13 @@ class HefftePowerSpectrumBackend final : public PowerSpectrumBackend {
   int GetNumBins() const override { return nbins_; }
 
   void Compute(Mesh *pm, const OutputParameters &out_params,
-               Kokkos::View<Real*> spectrum) override {
+               Kokkos::View<Real*> spectrum,
+               Kokkos::View<Real*> curl_spectrum) override {
     std::vector<Real> global_bins(nbins_, Real(0));
+    const bool want_curl = curl_spectrum.extent(0) > 0;
+    std::vector<Real> local_curl(want_curl ? nbins_ : 0, Real(0));
+    std::array<std::vector<std::complex<Real>>, 2> saved;
+    const Real k_unit = 2.0*std::acos(-1.0)/(pm->mesh_size.x1max-pm->mesh_size.x1min);
 
     const auto &indcs = pm->mb_indcs;
     const int nmb = pm->pmb_pack->nmb_thispack;
@@ -555,9 +596,20 @@ class HefftePowerSpectrumBackend final : public PowerSpectrumBackend {
               const auto &z = out_data[id];
               local_bins[sbin - 1] +=
                   half_weight * (z.real()*z.real() + z.imag()*z.imag()) * inv_ntot_sq;
+              if (want_curl && comp == 2) {
+                Real wave[3] = {
+                  (nx_%2 == 0 && gx == nx_/2 ? 0 : kx)*k_unit,
+                  (ny_%2 == 0 && gy == ny_/2 ? 0 : ky)*k_unit,
+                  (nz_%2 == 0 && gz == nz_/2 ? 0 : kz)*k_unit};
+                Real re[3] = {saved[0][id].real(), saved[1][id].real(), z.real()};
+                Real im[3] = {saved[0][id].imag(), saved[1][id].imag(), z.imag()};
+                local_curl[sbin-1] +=
+                    half_weight*SpectralCurlPower(wave, re, im)*inv_ntot_sq;
+              }
             }
           }
         }
+        if (want_curl && comp < 2) saved[comp] = std::move(out_data);
       }
 
       if (participates_fft_) {
@@ -573,6 +625,15 @@ class HefftePowerSpectrumBackend final : public PowerSpectrumBackend {
     auto host = Kokkos::create_mirror_view(spectrum);
     for (int n = 0; n < nbins_; ++n) host(n) = global_bins[n];
     Kokkos::deep_copy(spectrum, host);
+    if (want_curl) {
+      // Only world root needs the curl bins, like the Kokkos FFT backend.
+      std::vector<Real> global_curl(nbins_, Real(0));
+      MPI_Reduce(local_curl.data(), global_curl.data(), nbins_, MPI_ATHENA_REAL,
+                 MPI_SUM, 0, MPI_COMM_WORLD);
+      auto curl_host = Kokkos::create_mirror_view(curl_spectrum);
+      for (int n = 0; n < nbins_; ++n) curl_host(n) = global_curl[n];
+      Kokkos::deep_copy(curl_spectrum, curl_host);
+    }
   }
 
  private:
@@ -598,6 +659,13 @@ class HefftePowerSpectrumBackend final : public PowerSpectrumBackend {
 
 std::unique_ptr<PowerSpectrumBackend> BuildPowerSpectrumBackend(
     Mesh *pm, const OutputParameters &out_params) {
+#if FFT_ENABLED
+  if (!out_params.history_curl_peak.empty() &&
+      NumFieldComponents(ResolveSpectrumFieldType(out_params.variable)) != 3) {
+    std::cerr << "history_curl_peak requires a velocity or magnetic vector spectrum.\n";
+    std::exit(EXIT_FAILURE);
+  }
+#endif
 #if KOKKOS_FFT_ENABLED
   static_cast<void>(out_params);
   return std::make_unique<KokkosFftPowerSpectrumBackend>(pm);

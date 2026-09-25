@@ -99,6 +99,8 @@ Outputs::Outputs(ParameterInput *pin, Mesh *pm) {
           opar.variable = pin->GetOrAddString(opar.block_name, "variable", "velocity");
           opar.fft_backend =
               pin->GetOrAddString(opar.block_name, "fft_backend", FFT_BACKEND_NAME);
+          opar.history_curl_peak =
+              pin->GetOrAddString(opar.block_name, "history_curl_peak", "");
         } else {
           opar.variable = pin->GetString(opar.block_name, "variable");
         }
@@ -311,6 +313,22 @@ Outputs::Outputs(ParameterInput *pin, Mesh *pm) {
               << "More than one history, event log, or restart output block found in "
               << "input file" << std::endl;
     exit(EXIT_FAILURE);
+  }
+
+  // Link after all outputs exist; input block ordering must not affect freshness.
+  HistoryOutput *history = nullptr;
+  for (auto *out : pout_list) {
+    if (out->out_params.file_type == "hst") history = static_cast<HistoryOutput*>(out);
+  }
+  for (auto *out : pout_list) {
+    if (out->out_params.file_type != "power_spectrum" ||
+        out->out_params.history_curl_peak.empty()) continue;
+    if (history == nullptr || !pm->pgen->user_hist) {
+      std::cerr << "history_curl_peak requires an hst output "
+                   "and problem/user_hist=true.\n";
+      std::exit(EXIT_FAILURE);
+    }
+    history->curl_peak_outputs.push_back(static_cast<PowerSpectrumOutput*>(out));
   }
 }
 

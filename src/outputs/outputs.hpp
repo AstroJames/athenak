@@ -103,6 +103,7 @@ static const char *var_choice[NOUTPUT_CHOICES] = {
 // forward declarations
 class Mesh;
 class ParameterInput;
+class PowerSpectrumOutput;
 
 //----------------------------------------------------------------------------------------
 //! \struct OutputParameters
@@ -120,6 +121,7 @@ struct OutputParameters {
   std::string file_id;
   std::string variable;
   std::string fft_backend;
+  std::string history_curl_peak;
   bool include_gzs;
   int gid;
   bool slice1, slice2, slice3;
@@ -277,6 +279,9 @@ class HistoryOutput : public BaseTypeOutput {
 
   // vector of length [# of physics modules] containing hdata arrays
   std::vector<HistoryData> hist_data;
+  // Non-owning links to spectra that supply current-timestep user-history peaks.
+  std::vector<PowerSpectrumOutput*> curl_peak_outputs;
+  std::vector<Real> curl_peaks;
 
   void LoadOutputData(Mesh *pm) override;
   void LoadHydroHistoryData(HistoryData *pdata, Mesh *pm);

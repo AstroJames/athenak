@@ -82,6 +82,9 @@ user_hist = true                # Adds k_parallel, k_BxJ, k_BdotJ to .user.hst
 # Numerators: |(B.grad)B|^2, |B x J|^2, and |B.J|^2, respectively.
 # Units: inverse code length; multiply by L/(2*pi) for spectral mode units.
 # All three columns are zero placeholders while B=0 during spin-up.
+# k_eta/k_nu below are the peak current/vorticity shells, also in inverse length.
+# Peak = (2*pi/L)*argmax_s P_curl(s); no interpolation, zero if P_curl=0.
+# They represent dissipation scales only after the turbulence is established.
 
 # Mach_rms,mass = sqrt(2*(1-KE+2-KE+3-KE)/mass)/cs for this zero-mean flow.
 <output1>
@@ -93,6 +96,7 @@ data_format = %24.16e
 file_type = power_spectrum
 variable = velocity
 id = velocity
+history_curl_peak = k_nu        # Adds curl power to .spec and its peak to .user.hst
 fft_backend = kokkos
 dt = 0.1                       # t0/50
 
@@ -100,6 +104,7 @@ dt = 0.1                       # t0/50
 file_type = power_spectrum
 variable = magnetic_field
 id = magnetic
+history_curl_peak = k_eta
 fft_backend = kokkos
 dt = 0.1                       # t0/50
 

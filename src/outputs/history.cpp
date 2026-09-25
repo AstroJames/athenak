@@ -24,6 +24,7 @@
 #include "mhd/mhd.hpp"
 #include "z4c/z4c.hpp"
 #include "outputs.hpp"
+#include "power_spectrum.hpp"
 
 namespace {
 void FinalizeTurbulentStatsHistory(HistoryData *pdata) {
@@ -223,6 +224,10 @@ void HistoryOutput::LoadOutputData(Mesh *pm) {
     } else if (data.physics == PhysicsModule::UserDefined) {
       (pm->pgen->user_hist_func)(&data, pm);
     }
+  }
+  curl_peaks.clear();
+  for (auto *out : curl_peak_outputs) {
+    curl_peaks.push_back(out->CurlPeak(pm));  // collective; shared with .spec output
   }
 }
 
@@ -505,6 +510,21 @@ void HistoryOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
       } else if (data.physics == PhysicsModule::UserDefined &&
                  data.label[0] == "tcg_raw") {
         FinalizeTcgHistory(&data);
+      }
+      if (data.physics == PhysicsModule::UserDefined) {
+        // These peaks are already global. Append after reductions and any pgen
+        // finalization, which may replace the raw history moments and labels.
+        for (std::size_t p = 0; p < curl_peak_outputs.size(); ++p) {
+          const auto &label = curl_peak_outputs[p]->out_params.history_curl_peak;
+          bool duplicate = false;
+          for (int n = 0; n < data.nhist; ++n) duplicate |= (data.label[n] == label);
+          if (duplicate || data.nhist >= NHISTORY_VARIABLES) {
+            std::cerr << "Duplicate or too many user-history columns for curl peaks.\n";
+            std::exit(EXIT_FAILURE);
+          }
+          data.label[data.nhist] = label;
+          data.hdata[data.nhist++] = curl_peaks[p];
+        }
       }
 
       // create filename: "file_basename" + ".physics" + ".hst"

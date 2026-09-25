@@ -23,20 +23,28 @@ def run(**kwargs):
     # Extra field diagnostics belong only to this regression, not the setup run.
     path = Path('build/src/NewtonianSSDTest.athinput').resolve()
     text = (REPO/'inputs'/INPUT).read_text()
+    text = text.replace('fft_backend = kokkos\n', '')  # use the compiled backend
     text = text.replace('<mhd>', '<mhd>\nnscalars = 1')
     text = text.replace('eos = isothermal', 'eos = isothermal\ngamma = 1.6666666667')
+    text = text.replace('id = magnetic', 'id = magnetic\nhistory_curl_peak = k_eta')
     text += ('\n<output2>\nfile_type = bin\nvariable = mhd_w_bcc\n'
              'id = prim\ndt = 1.0\n'
              '\n<output3>\nfile_type = bin\nvariable = mhd_divb\n'
              'id = divb\ndt = 1.0\n'
              '\n<problem>\nuser_hist = true\n'
-             '\n<output5>\nfile_type = hst\ndt = 1.0\ndata_format = %24.16e\n')
+             '\n<output5>\nfile_type = hst\ndt = 1.0\ndata_format = %24.16e\n'
+             '\n<output6>\nfile_type = power_spectrum\nvariable = velocity\n'
+             'id = velocity\ndt = 1.0\nhistory_curl_peak = k_nu\n')
     path.write_text(text)
     input_path = os.path.relpath(path, REPO/'inputs')
     for name, flag in (('force_free', 'true'), ('gaussian', 'false')):
         athena.run(input_path, [f'job/basename=NewtonianSSDTest_{name}',
                                f'spectral_ic/force_free={flag}',
                                'mhd/nscalars=1', 'time/nlim=0'])
+    path.write_text(text.replace('history_curl_peak = k_eta', '')
+                   .replace('history_curl_peak = k_nu', ''))
+    athena.run(input_path, ['job/basename=NewtonianSSDTest_no_peaks', 'time/nlim=0'])
+    path.write_text(text)
     athena.run(input_path, ['job/basename=NewtonianSSDTest_evolved',
                            'mhd/nscalars=1', 'time/nlim=4'])
     # Axial shell k=2 has zero normal magnetic derivatives. Its history can be
@@ -46,6 +54,9 @@ def run(**kwargs):
                                f'spectral_ic/force_free={flag}',
                                'spectral_ic/nlow=2', 'spectral_ic/nhigh=2',
                                'spectral_ic/rms_b=1e-6', 'time/nlim=0'])
+    athena.run(input_path, ['job/basename=NewtonianSSDTest_large_box',
+                           'mesh/x1max=2', 'mesh/x2max=2', 'mesh/x3max=2',
+                           'spectral_ic/nlow=2', 'spectral_ic/nhigh=2', 'time/nlim=0'])
     for override in ('mhd/eos=ideal', 'mhd/iso_sound_speed=0',
                      'spectral_ic/rms_b=-1', 'spectral_ic/rms_b=nan',
                      'spectral_ic/rms_b=inf', 'spectral_ic/seed_on_restart=true'):
@@ -54,6 +65,13 @@ def run(**kwargs):
         assert result.returncode != 0, override
         assert ('newtonian_SSD requires' in result.stderr
                 or 'Invalid spectral seed' in result.stderr), result.stderr
+    for override, message in (('output1/variable=density', 'velocity or magnetic'),
+                               ('output5/dt=0', 'hst output'),
+                               ('output6/history_curl_peak=k_eta', 'Duplicate')):
+        result = subprocess.run(['./athena', '-i', str(path), override, 'time/nlim=0',
+                                 'job/basename=NewtonianSSDTest_invalid'],
+                                cwd='build/src', capture_output=True, text=True)
+        assert result.returncode != 0 and message in result.stderr, result.stderr
 
     # A short driven run tests the workflow, not fully developed turbulence.
     text += ('\n<turb_driving>\ndriving_geometry = isotropic\n'
@@ -76,6 +94,8 @@ def run(**kwargs):
                                   'spectral_ic/iseed=210990'])
     restart(injected, 'continued', ['time/nlim=12'])
     restart(latest_restart('continued'), 'continued_preserved', [])
+    for name in ('longitudinal', 'mixed_modes', 'nyquist'):
+        manufactured_velocity(spinup, name)
     for checkpoint, overrides, message in (
             (spinup, ['spectral_ic/seed_on_restart=true'], 'positive'),
             (injected, ['spectral_ic/seed_on_restart=true'], 'zero magnetic field')):
@@ -132,9 +152,89 @@ def magnetic_history(name):
     header = path.read_text().splitlines()[1]
     assert all(key in header for key in ('k_parallel', 'k_BxJ', 'k_BdotJ'))
     data = np.loadtxt(path, ndmin=2)
-    assert data.shape[1] == 5 and np.all(np.isfinite(data))
+    assert data.shape[1] == 7 and np.all(np.isfinite(data))
     assert np.all(data[:, 2:] >= 0.0)
-    return data[:, 2:]
+    return data[:, 2:5]
+
+
+def manufactured_velocity(checkpoint, name):
+    """Set analytic velocities in a disposable copy of the spin-up checkpoint."""
+    blob = bytearray(checkpoint.read_bytes())
+    offset = blob.index(b'<par_end>\n')+len(b'<par_end>\n')
+    nmb, = struct.unpack_from('=i', blob, offset)
+    ng, nx, ny, nz = struct.unpack_from('=4i', blob, offset+8+9*8+19*4)
+    offset += 8+9*8+2*19*4+20
+    locations = np.frombuffer(blob, dtype='=i4', count=4*nmb, offset=offset)
+    locations = locations.reshape(nmb, 4)
+    offset += 20*nmb+struct.calcsize('@35qid')+8
+    shape = (nz+2*ng, ny+2*ng, nx+2*ng)
+    nc = int(np.prod(shape))
+    payload = np.frombuffer(blob, dtype='=f8', offset=offset).reshape(nmb, -1)
+    fluid = payload[:, :5*nc].reshape(nmb, 5, *shape)
+    for m, loc in enumerate(locations):
+        x, y, z = [(loc[a]*n+np.arange(n+2*ng)-ng+0.5)/32
+                   for a, n in enumerate((nx, ny, nz))]
+        zz, yy, xx = np.meshgrid(z, y, x, indexing='ij')
+        velocity = np.zeros((3, *shape))
+        if name == 'longitudinal':
+            velocity[0] = np.sin(2*np.pi*4*xx)
+        elif name == 'nyquist':
+            velocity[1] = (-1.0)**(loc[0]*nx+np.arange(nx+2*ng)-ng)
+        else:
+            # Strong compressive shell 5; weaker transverse shell 3. All curl
+            # components are nonzero. Total velocity and curl peak differently.
+            longitudinal = np.sin(2*np.pi*(3*xx+4*yy)+0.3)
+            transverse = np.cos(2*np.pi*(xx+2*yy+2*zz)-0.7)
+            velocity[0] = 3*longitudinal+0.06*transverse
+            velocity[1] = 4*longitudinal-0.03*transverse
+        fluid[m, 0] = 1.0
+        fluid[m, 1:4] = velocity
+    path = Path(f'build/src/NewtonianSSDTest_{name}.rst')
+    path.write_bytes(blob)
+    restart(path, name, [])
+    path.unlink()
+
+
+def spectral_history(name, length=1.0):
+    """Compare the full curl spectra with independent FFTs and every hst peak."""
+    root = Path('build/src')
+    prefix = f'NewtonianSSDTest_{name}'
+    history_path = root/f'{prefix}.user.hst'
+    labels = [item.split('=')[1] for item in history_path.read_text().splitlines()[1]
+              .split() if '=' in item]
+    history = np.loadtxt(history_path, ndmin=2)
+    for variable, label, components in (('magnetic', 'k_eta', ('bcc1', 'bcc2', 'bcc3')),
+                                         ('velocity', 'k_nu', ('velx', 'vely', 'velz'))):
+        peaks = {}
+        paths = sorted(root.glob(f'{prefix}.{variable}.*.spec'))
+        for path in paths:
+            timestamp = float(path.read_text().splitlines()[0].split()[1].split('=')[1])
+            data = np.loadtxt(path)
+            assert data.shape[1] == 3 and np.all(data[:, 1:] >= 0.0)
+            peaks[timestamp] = (data[np.argmax(data[:, 2]), 0]*2*np.pi/length
+                                if np.any(data[:, 2]) else 0.0)
+        for row in history:
+            np.testing.assert_allclose(row[labels.index(label)], peaks[row[0]],
+                                       rtol=2e-14)
+        # Last spectrum and binary both contain the final state, including restarts.
+        fields = assemble(sorted((root/'bin').glob(f'{prefix}.prim.*.bin'))[-1])
+        field = np.array([fields[c] for c in components])
+        nz, ny, nx = field.shape[1:]
+        transform = np.fft.fftn(field, axes=(1, 2, 3))/(nx*ny*nz)
+        nzs, nys, nxs = [np.fft.fftfreq(n)*n for n in (nz, ny, nx)]
+        kz, ky, kx = np.meshgrid(nzs, nys, nxs, indexing='ij')
+        shells = np.floor(np.sqrt(kx*kx+ky*ky+kz*kz)).astype(int)
+        wave = np.array([kx, ky, kz])*2*np.pi/length
+        for a, n in enumerate((nx, ny, nz)):
+            wave[a][abs((kx, ky, kz)[a]) == n/2] = 0.0
+        curl = np.cross(wave, transform, axisa=0, axisb=0, axisc=0)
+        power = np.sum(abs(curl)**2, axis=0)
+        expected = np.bincount(shells.ravel(), weights=power.ravel())
+        # Binary dumps have float32 fields; negligible FFT noise is expected.
+        scale = max(float(np.sum(expected)), 1e-24)
+        np.testing.assert_allclose(data[:, 2], expected[1:len(data)+1],
+                                   rtol=3e-6, atol=3e-6*scale)
+    return dict(zip(labels, history[-1]))
 
 
 def reference_magnetic_scales(fields):
@@ -180,6 +280,10 @@ def analyze():
             metrics[name] = dict(rms_b=float(np.sqrt(b2)), max_div=float(max_div),
                                  outside_shell=float(outside))
         assert np.linalg.norm(seeds['force_free']-seeds['gaussian']) > 0.1
+        old_format = np.loadtxt(root/'NewtonianSSDTest_no_peaks.magnetic.00000.spec')
+        enabled = np.loadtxt(root/'NewtonianSSDTest_force_free.magnetic.00000.spec')
+        assert old_format.shape[1] == 2
+        np.testing.assert_allclose(old_format, enabled[:, :2], rtol=2e-14, atol=1e-30)
         paths = sorted((root/'bin').glob('NewtonianSSDTest_evolved.prim.*.bin'))
         assert len(paths) == 2
         final = assemble(paths[-1])
@@ -248,6 +352,24 @@ def analyze():
                                           k_BxJ=float(ff_scales[1]),
                                           k_BdotJ=float(ff_scales[2]),
                                           weak_seed_amplitude_independent=True)
+        peak_metrics = {}
+        for name in ('force_free', 'gaussian', 'evolved', 'weak_ff', 'weak_gaussian',
+                     'spinup', 'injected', 'preserved', 'continued',
+                     'continued_preserved', 'longitudinal', 'mixed_modes', 'nyquist'):
+            peak_metrics[name] = spectral_history(name)
+        np.testing.assert_allclose(peak_metrics['weak_ff']['k_eta'], 4*np.pi)
+        np.testing.assert_allclose(spectral_history('large_box', 2.0)['k_eta'], 2*np.pi)
+        for name in ('force_free', 'longitudinal', 'nyquist'):
+            assert peak_metrics[name]['k_nu'] == 0.0
+        assert peak_metrics['spinup']['k_eta'] == 0.0
+        np.testing.assert_allclose(peak_metrics['mixed_modes']['k_nu'], 6*np.pi)
+        mixed_path = sorted(root.glob('NewtonianSSDTest_mixed_modes.velocity.*.spec'))[-1]
+        mixed = np.loadtxt(mixed_path)
+        assert mixed[np.argmax(mixed[:, 1]), 0] == 5
+        # Analytic transverse mode amplitude squared is .06^2+.03^2, |n|=3.
+        np.testing.assert_allclose(mixed[2, 2], 0.5*(0.06**2+0.03**2)*(6*np.pi)**2,
+                                   rtol=1e-12)
+        metrics['spectral_peaks'] = peak_metrics
         metrics['restart'] = dict(flow_preserved_exactly=True,
                                   saved_forcing_preserved=True,
                                   rms_b=0.02, max_div=float(max_div),

@@ -13,7 +13,8 @@ class PowerSpectrumBackend {
   virtual ~PowerSpectrumBackend() = default;
   virtual int GetNumBins() const = 0;
   virtual void Compute(Mesh *pm, const OutputParameters &out_params,
-                       Kokkos::View<Real*> spectrum) = 0;
+                       Kokkos::View<Real*> spectrum,
+                       Kokkos::View<Real*> curl_spectrum) = 0;
 };
 
 std::unique_ptr<PowerSpectrumBackend> BuildPowerSpectrumBackend(
