@@ -50,12 +50,13 @@ class SpectralICGenerator {
   // Fill ax, ay, az arrays (allocated by caller to size [nmb, ke+2, je+2, ie+2])
   // with the vector potential evaluated at node / face-edge positions.
   // Caller is then responsible for curling A to obtain face-centered B.
+  // force_free=true fills analytic edge averages of helical A on one shell.
   void GenerateVectorPotential(DvceArray4D<Real> &ax, DvceArray4D<Real> &ay,
                                DvceArray4D<Real> &az);
 
   // FFT-based generation: heFFTe (MPI-distributed) → KokkosFFT (serial) → direct
   // synthesis fallback.  Returns the backend name used ("heffte", "kokkos_fft",
-  // or "direct").
+  // or "direct"). force_free=true selects "direct_force_free" here.
   std::string GenerateVectorPotentialFFT(DvceArray4D<Real> &ax, DvceArray4D<Real> &ay,
                                           DvceArray4D<Real> &az);
 
@@ -66,6 +67,8 @@ class SpectralICGenerator {
 
   // Wavenumber range (integer mode indices, same convention as TurbulenceDriver)
   int nlow, nhigh;
+  bool force_free;  // optional single-shell helical projection; default false
+  int helicity;    // +1 or -1 when force_free is enabled
 
   SpectrumForm spectrum_form;
   Real spectral_index;  // power-law exponent: E_B(k) ∝ k^{-spectral_index}
@@ -94,6 +97,10 @@ class SpectralICGenerator {
   // For band form: 1.  For parabolic form: smooth bump centred on (nlow+nhigh)/2.
   Real ModeAmplitude(Real n_mag) const;
 
+  void ValidateForceFree() const;
+  // Fill analytic edge averages of the projected Gaussian vector potential.
+  void GenerateForceFreeVectorPotential(DvceArray4D<Real> &ax, DvceArray4D<Real> &ay,
+                                        DvceArray4D<Real> &az);
   void CountModes();
   void GenerateModeCoefficients();
   void PrecomputeTrigTables();

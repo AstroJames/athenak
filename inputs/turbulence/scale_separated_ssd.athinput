@@ -1,0 +1,89 @@
+# Newtonian high-k Gaussian force-free seed. Build -DPROBLEM=scale_separated_ssd.
+# Single shell |n|=5, k0=2*pi*5/L; helicity may be +1 or -1.
+# Continuum force-free; finite-grid force errors are not relaxed away.
+# Low-k forcing drives subsequent evolution, which is NOT spectrally constrained.
+<job>
+basename = scale_separated_ssd
+
+<mesh>
+nx1 = 64
+nx2 = 64
+nx3 = 64
+nghost = 4
+x1min = 0.0
+x1max = 1.0
+x2min = 0.0
+x2max = 1.0
+x3min = 0.0
+x3max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+ix2_bc = periodic
+ox2_bc = periodic
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 32
+nx2 = 32
+nx3 = 32
+
+<time>
+evolution = dynamic
+integrator = rk3
+cfl_number = 0.3
+tlim = 1.0
+nlim = -1
+ndiag = 10
+
+<mhd>
+eos = ideal
+gamma = 1.6666666666666667
+reconstruct = wenoz
+rsolver = hlld
+fofc = true
+
+<problem>
+rho0 = 1.0
+p0 = 1.0
+
+<spectral_ic>
+force_free = true
+nlow = 5
+nhigh = 5
+spectrum = band
+helicity = 1
+iseed = 210989
+rms_b = 0.01
+
+<turb_driving>
+type = mhd
+tcorr = 1.0
+dedt = 0.01
+nlow = 1
+nhigh = 3
+sol_weight = 1.0
+driving_geometry = isotropic
+driving_profile = parabola
+parabola_peak = 2.0
+parabola_width = 1.0
+
+<output1>
+file_type = hst
+dt = 0.05
+
+<output2>
+file_type = bin
+variable = mhd_w_bcc
+id = prim
+dt = 0.5
+
+<output3>
+file_type = bin
+variable = mhd_divb
+id = divb
+dt = 0.5
+
+<output4>
+file_type = rst
+dt = 0.5

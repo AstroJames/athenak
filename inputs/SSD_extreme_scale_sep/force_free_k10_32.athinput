@@ -1,0 +1,64 @@
+# Build with -DPROBLEM=newtonian_SSD and run with 8 MPI ranks.
+# Unforced isothermal box; only magnetic spectra are written.
+# k=10 denotes |n|=10, i.e. physical wavenumber 2*pi*10/L.
+<job>
+basename = SSD_force_free_k10_32
+
+<mesh>
+nx1 = 32
+nx2 = 32
+nx3 = 32
+nghost = 4
+x1min = 0.0
+x1max = 1.0
+x2min = 0.0
+x2max = 1.0
+x3min = 0.0
+x3max = 1.0
+ix1_bc = periodic
+ox1_bc = periodic
+ix2_bc = periodic
+ox2_bc = periodic
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 16
+nx2 = 16
+nx3 = 16
+
+<time>
+evolution = dynamic
+integrator = rk3
+cfl_number = 0.3
+tlim = 1.0
+nlim = -1
+ndiag = 10
+
+<mhd>
+eos = isothermal
+iso_sound_speed = 1.0
+reconstruct = teno5
+rsolver = hlld
+fofc = true
+
+<spectral_ic>
+force_free = true
+nlow = 10
+nhigh = 10
+spectrum = band
+helicity = 1
+iseed = 210989
+# Use rms_b=0 for driven spin-up; add <turb_driving> and a restart output.
+rms_b = 0.01
+# On a zero-field checkpoint only: set true and choose positive rms_b to inject.
+# Resets to false after injection; ordinary restarts retain the evolved field.
+seed_on_restart = false
+
+# No <turb_driving> block: the turbulence driver is disabled entirely.
+<output1>
+file_type = power_spectrum
+variable = magnetic_field
+id = magnetic
+fft_backend = kokkos
+dt = 0.02

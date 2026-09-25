@@ -11,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -58,6 +59,17 @@ SpectralICGenerator::SpectralICGenerator(MeshBlockPack *pmbp, ParameterInput *pi
   // the parabolic spectrum.
   nlow = pin->GetOrAddInteger(block, "nlow", 1);
   nhigh = pin->GetOrAddInteger(block, "nhigh", 3);
+  force_free = pin->GetOrAddBoolean(block, "force_free", false);
+  helicity = force_free ? pin->GetOrAddInteger(block, "helicity", 1) : 1;
+  if (force_free) {
+    ValidateForceFree();
+    for (const char *key : {"b_mean_x", "b_mean_y", "b_mean_z"}) {
+      if (pin->DoesParameterExist(block, key) && pin->GetReal(block, key) != 0.0) {
+        std::cerr << "Force-free ICs require zero added mean magnetic field.\n";
+        std::exit(EXIT_FAILURE);
+      }
+    }
+  }
 
   // Spectrum form
   std::string spec_str = pin->GetOrAddString(block, "spectrum", "parabolic");
@@ -285,6 +297,129 @@ void SpectralICGenerator::GenerateModeCoefficients() {
 }
 
 //----------------------------------------------------------------------------------------
+// Project the existing Gaussian A coefficients onto a single helical eigenspace.
+// The real trig basis contains all signed Fourier modes, including their conjugates.
+void SpectralICGenerator::ValidateForceFree() const {
+  Mesh *pm = pmy_pack->pmesh;
+  Real length[3] = {pm->mesh_size.x1max-pm->mesh_size.x1min,
+                    pm->mesh_size.x2max-pm->mesh_size.x2min,
+                    pm->mesh_size.x3max-pm->mesh_size.x3min};
+  auto &grid = pm->mesh_indcs;
+  if (!pm->three_d || !pm->strictly_periodic || pm->multilevel ||
+      std::abs(length[1]/length[0]-1.0) > 1.0e-12 ||
+      std::abs(length[2]/length[0]-1.0) > 1.0e-12 ||
+      nlow != nhigh || nlow < 1 ||
+      nhigh >= 0.5*std::min({grid.nx1, grid.nx2, grid.nx3}) ||
+      (helicity != 1 && helicity != -1)) {
+    std::cerr << "Force-free ICs require uniform periodic cubic 3-D geometry, "
+              << "0 < nlow = nhigh < Nyquist, and helicity = +1 or -1.\n";
+    std::exit(EXIT_FAILURE);
+  }
+}
+
+void SpectralICGenerator::GenerateForceFreeVectorPotential(
+    DvceArray4D<Real> &ax, DvceArray4D<Real> &ay, DvceArray4D<Real> &az) {
+  Mesh *pm = pmy_pack->pmesh;
+  Real length[3] = {pm->mesh_size.x1max-pm->mesh_size.x1min,
+                    pm->mesh_size.x2max-pm->mesh_size.x2min,
+                    pm->mesh_size.x3max-pm->mesh_size.x3min};
+  auto &grid = pm->mesh_indcs;
+  // Same Gaussian draw and seed as GenerateVectorPotential; no additional RNG.
+  std::array<DualArray1D<Real>, 24> coeff = {
+    ax_ccc, ax_ccs, ax_csc, ax_css, ax_scc, ax_scs, ax_ssc, ax_sss,
+    ay_ccc, ay_ccs, ay_csc, ay_css, ay_scc, ay_scs, ay_ssc, ay_sss,
+    az_ccc, az_ccs, az_csc, az_css, az_scc, az_scs, az_ssc, az_sss};
+  using Complex = std::complex<Real>;
+  const Complex imaginary(0.0, 1.0);
+  const Real k0 = 2.0*M_PI*nlow/length[0];
+  Real dx[3] = {length[0]/grid.nx1, length[1]/grid.nx2, length[2]/grid.nx3};
+  std::vector<std::array<Real, 9>> modes;
+  for (int n = 0; n < mode_count; ++n) {
+    Real positive[3] = {kx_mode.h_view(n), ky_mode.h_view(n), kz_mode.h_view(n)};
+    for (int sx : {-1, 1}) {
+      for (int sy : {-1, 1}) {
+        for (int sz : {-1, 1}) {
+          int sign[3] = {sx, sy, sz};
+          bool duplicate = false;
+          for (int a = 0; a < 3; ++a) {
+            if (positive[a] == 0.0 && sign[a] < 0) duplicate = true;
+          }
+          Real wave[3] = {sx*positive[0], sy*positive[1], sz*positive[2]};
+          // Keep one of each +/- pair; the kernel adds its complex conjugate.
+          if (duplicate || wave[0] < 0.0 ||
+              (wave[0] == 0.0 && wave[1] < 0.0) ||
+              (wave[0] == 0.0 && wave[1] == 0.0 && wave[2] < 0.0)) continue;
+          Complex a_hat[3] = {}, b_hat[3], projected[3];
+          for (int component = 0; component < 3; ++component) {
+            for (int term = 0; term < 8; ++term) {
+              Complex weight(1.0, 0.0);
+              for (int axis = 0; axis < 3; ++axis) {
+                bool sine = (term & (1 << (2-axis))) != 0;
+                if (positive[axis] == 0.0) {
+                  weight *= sine ? 0.0 : 1.0;
+                } else {
+                  weight *= sine ? Complex(0.0, -0.5*sign[axis]) : Complex(0.5, 0.0);
+                }
+              }
+              a_hat[component] += coeff[8*component+term].h_view(n)*weight;
+            }
+          }
+          for (int a = 0; a < 3; ++a) {
+            int b = (a+1)%3, c = (a+2)%3;
+            b_hat[a] = imaginary*(wave[b]*a_hat[c]-wave[c]*a_hat[b]);
+          }
+          Complex k_dot_a = wave[0]*a_hat[0]+wave[1]*a_hat[1]+wave[2]*a_hat[2];
+          std::array<Real, 9> entry;
+          for (int a = 0; a < 3; ++a) {
+            Complex transverse = a_hat[a]-wave[a]*k_dot_a/(k0*k0);
+            projected[a] = 0.5*(transverse+static_cast<Real>(helicity)/k0*b_hat[a]);
+            // Analytic line average along an edge parallel to a. Taking the
+            // standard discrete curl then gives exact face-area averages of B.
+            Real t = 0.5*wave[a]*dx[a];
+            Real edge_factor = (t == 0.0) ? 1.0 : std::sin(t)/t;
+            entry[a] = wave[a];
+            entry[3+a] = edge_factor*projected[a].real();
+            entry[6+a] = edge_factor*projected[a].imag();
+          }
+          modes.push_back(entry);
+        }
+      }
+    }
+  }
+  int nmodes = static_cast<int>(modes.size());
+  DualArray2D<Real> data("force_free_modes", nmodes, 9);
+  for (int n = 0; n < nmodes; ++n) {
+    for (int a = 0; a < 9; ++a) data.h_view(n,a) = modes[n][a];
+  }
+  data.template modify<HostMemSpace>();
+  data.template sync<DevExeSpace>();
+  auto &idx = pm->mb_indcs;
+  int is = idx.is, js = idx.js, ks = idx.ks;
+  int nx = idx.nx1, ny = idx.nx2, nz = idx.nx3;
+  auto size = pmy_pack->pmb->mb_size;
+  for (int axis = 0; axis < 3; ++axis) {
+    auto field = (axis == 0) ? ax : ((axis == 1) ? ay : az);
+    par_for("force_free_edges", DevExeSpace(), 0, pmy_pack->nmb_thispack-1,
+            ks, idx.ke+1, js, idx.je+1, is, idx.ie+1,
+    KOKKOS_LAMBDA(int m, int k, int j, int i) {
+      Real x = LeftEdgeX(i-is, nx, size.d_view(m).x1min, size.d_view(m).x1max);
+      Real y = LeftEdgeX(j-js, ny, size.d_view(m).x2min, size.d_view(m).x2max);
+      Real z = LeftEdgeX(k-ks, nz, size.d_view(m).x3min, size.d_view(m).x3max);
+      if (axis == 0) x += 0.5*size.d_view(m).dx1;
+      if (axis == 1) y += 0.5*size.d_view(m).dx2;
+      if (axis == 2) z += 0.5*size.d_view(m).dx3;
+      Real value = 0.0;
+      for (int n = 0; n < nmodes; ++n) {
+        Real phase = data.d_view(n,0)*x+data.d_view(n,1)*y+data.d_view(n,2)*z;
+        value += 2.0*(data.d_view(n,3+axis)*cos(phase)
+                    -data.d_view(n,6+axis)*sin(phase));
+      }
+      field(m,k,j,i) = value;
+    });
+  }
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn SpectralICGenerator::PrecomputeTrigTables
 //! \brief Computes sin/cos tables at face (left-edge) positions for each mode.
 //! Face positions: x1f = LeftEdgeX(i-is, nx1, x1min, x1max) for i in [is, ie+1].
@@ -368,6 +503,10 @@ void SpectralICGenerator::PrecomputeTrigTables() {
 void SpectralICGenerator::GenerateVectorPotential(DvceArray4D<Real> &ax,
                                                    DvceArray4D<Real> &ay,
                                                    DvceArray4D<Real> &az) {
+  if (force_free) {
+    GenerateForceFreeVectorPotential(ax, ay, az);
+    return;
+  }
   int nmb = pmy_pack->nmb_thispack;
   auto &indcs = pmy_pack->pmesh->mb_indcs;
   int is = indcs.is, ie = indcs.ie;
@@ -433,6 +572,10 @@ void SpectralICGenerator::GenerateVectorPotential(DvceArray4D<Real> &ax,
 std::string SpectralICGenerator::GenerateVectorPotentialFFT(DvceArray4D<Real> &ax,
                                                              DvceArray4D<Real> &ay,
                                                              DvceArray4D<Real> &az) {
+  if (force_free) {
+    GenerateForceFreeVectorPotential(ax, ay, az);
+    return "direct_force_free";
+  }
   Mesh *pm = pmy_pack->pmesh;
   auto &gindcs = pm->mesh_indcs;
   const int nx = gindcs.nx1;
