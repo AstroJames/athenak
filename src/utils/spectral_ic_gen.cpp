@@ -317,8 +317,12 @@ void SpectralICGenerator::ValidateForceFree() const {
   }
 }
 
-void SpectralICGenerator::GenerateForceFreeVectorPotential(
-    DvceArray4D<Real> &ax, DvceArray4D<Real> &ay, DvceArray4D<Real> &az) {
+//----------------------------------------------------------------------------------------
+//! \fn SpectralICGenerator::BuildForceFreeModes
+//! \brief Host-side legacy force-free mode table (unchanged arithmetic): each entry is
+//! (k_x, k_y, k_z, Re A_x..z, Im A_x..z), edge factors applied, conjugates implicit.
+
+SpectralICGenerator::ModeTable SpectralICGenerator::BuildForceFreeModes() {
   Mesh *pm = pmy_pack->pmesh;
   Real length[3] = {pm->mesh_size.x1max-pm->mesh_size.x1min,
                     pm->mesh_size.x2max-pm->mesh_size.x2min,
@@ -333,7 +337,7 @@ void SpectralICGenerator::GenerateForceFreeVectorPotential(
   const Complex imaginary(0.0, 1.0);
   const Real k0 = 2.0*M_PI*nlow/length[0];
   Real dx[3] = {length[0]/grid.nx1, length[1]/grid.nx2, length[2]/grid.nx3};
-  std::vector<std::array<Real, 9>> modes;
+  ModeTable modes;
   for (int n = 0; n < mode_count; ++n) {
     Real positive[3] = {kx_mode.h_view(n), ky_mode.h_view(n), kz_mode.h_view(n)};
     for (int sx : {-1, 1}) {
@@ -386,6 +390,20 @@ void SpectralICGenerator::GenerateForceFreeVectorPotential(
       }
     }
   }
+  return modes;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn SpectralICGenerator::SynthesizeModeTable
+//! \brief Evaluates A = sum_n 2 Re[A_n exp(i k_n.x)] at edge midpoints, overwriting
+//! ax/ay/az on is..ie+1, js..je+1, ks..ke+1. Entries already carry the analytic edge
+//! line-average factors, so the caller's discrete curl gives exact face averages of B.
+
+void SpectralICGenerator::SynthesizeModeTable(const ModeTable &modes,
+                                              DvceArray4D<Real> &ax,
+                                              DvceArray4D<Real> &ay,
+                                              DvceArray4D<Real> &az) {
+  Mesh *pm = pmy_pack->pmesh;
   int nmodes = static_cast<int>(modes.size());
   DualArray2D<Real> data("force_free_modes", nmodes, 9);
   for (int n = 0; n < nmodes; ++n) {
@@ -504,7 +522,7 @@ void SpectralICGenerator::GenerateVectorPotential(DvceArray4D<Real> &ax,
                                                    DvceArray4D<Real> &ay,
                                                    DvceArray4D<Real> &az) {
   if (force_free) {
-    GenerateForceFreeVectorPotential(ax, ay, az);
+    SynthesizeModeTable(BuildForceFreeModes(), ax, ay, az);
     return;
   }
   int nmb = pmy_pack->nmb_thispack;
@@ -573,7 +591,7 @@ std::string SpectralICGenerator::GenerateVectorPotentialFFT(DvceArray4D<Real> &a
                                                              DvceArray4D<Real> &ay,
                                                              DvceArray4D<Real> &az) {
   if (force_free) {
-    GenerateForceFreeVectorPotential(ax, ay, az);
+    SynthesizeModeTable(BuildForceFreeModes(), ax, ay, az);
     return "direct_force_free";
   }
   Mesh *pm = pmy_pack->pmesh;

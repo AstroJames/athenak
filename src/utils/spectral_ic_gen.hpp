@@ -27,7 +27,9 @@
 //! References:
 //!   Federrath et al. (2010, A&A 512, A81)
 
+#include <array>
 #include <string>
+#include <vector>
 
 #include "athena.hpp"
 #include "mesh/mesh.hpp"
@@ -62,8 +64,17 @@ class SpectralICGenerator {
 
   int mode_count;  // number of modes (set in constructor, public for diagnostics)
 
+  // Sparse mode table: (k_x, k_y, k_z, Re A_x, Re A_y, Re A_z, Im A_x, Im A_y, Im A_z)
+  // with analytic edge-average factors applied; one of each +/-k pair (2 Re[...]).
+  using ModeTable = std::vector<std::array<Real, 9>>;
+
   // Public only because nvcc rejects device lambdas in private member functions.
   void PrecomputeTrigTables();
+  // Legacy force-free (force_free=true) mode table; arithmetic unchanged.
+  ModeTable BuildForceFreeModes();
+  // Edge-midpoint synthesis of a mode table into ax/ay/az (contains a device lambda).
+  void SynthesizeModeTable(const ModeTable &modes, DvceArray4D<Real> &ax,
+                           DvceArray4D<Real> &ay, DvceArray4D<Real> &az);
 
  private:
   MeshBlockPack *pmy_pack;
@@ -101,9 +112,6 @@ class SpectralICGenerator {
   Real ModeAmplitude(Real n_mag) const;
 
   void ValidateForceFree() const;
-  // Fill analytic edge averages of the projected Gaussian vector potential.
-  void GenerateForceFreeVectorPotential(DvceArray4D<Real> &ax, DvceArray4D<Real> &ay,
-                                        DvceArray4D<Real> &az);
   void CountModes();
   void GenerateModeCoefficients();
 };
