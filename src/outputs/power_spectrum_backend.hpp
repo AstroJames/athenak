@@ -12,12 +12,14 @@ class PowerSpectrumBackend {
  public:
   virtual ~PowerSpectrumBackend() = default;
   virtual int GetNumBins() const = 0;
+  // Empty curl/helicity views (extent 0) disable those optional shell sums.
   virtual void Compute(Mesh *pm, const OutputParameters &out_params,
                        Kokkos::View<Real*> spectrum,
-                       Kokkos::View<Real*> curl_spectrum) = 0;
+                       Kokkos::View<Real*> curl_spectrum,
+                       Kokkos::View<Real*> helicity_spectrum) = 0;
 };
 
 std::unique_ptr<PowerSpectrumBackend> BuildPowerSpectrumBackend(
-    Mesh *pm, const OutputParameters &out_params);
+    Mesh *pm, const OutputParameters &out_params, bool want_helicity = false);
 
 #endif  // OUTPUTS_POWER_SPECTRUM_BACKEND_HPP_

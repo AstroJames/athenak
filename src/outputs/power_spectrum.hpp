@@ -21,6 +21,7 @@ class PowerSpectrumOutput : public BaseTypeOutput {
  private:
   Kokkos::View<Real*> spectrum_;
   Kokkos::View<Real*> curl_spectrum_;
+  Kokkos::View<Real*> helicity_spectrum_;  // optional, key helicity_spectrum = true
   std::unique_ptr<PowerSpectrumBackend> backend_;
   int nbins_ = 0;
   int loaded_cycle_ = -1;
