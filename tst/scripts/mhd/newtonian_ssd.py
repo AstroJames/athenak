@@ -24,7 +24,7 @@ def run(**kwargs):
     # Extra field diagnostics belong only to this regression, not the setup run.
     path = Path('build/src/NewtonianSSDTest.athinput').resolve()
     text = (REPO/'inputs'/INPUT).read_text()
-    text = text.replace('fft_backend = kokkos\n', '')  # use the compiled backend
+    text = text.replace('fft_backend = heffte\n', '')  # use the compiled backend
     text = text.replace('<mhd>', '<mhd>\nnscalars = 1')
     text = text.replace('eos = isothermal', 'eos = isothermal\ngamma = 1.6666666667')
     text = text.replace('id = magnetic', 'id = magnetic\nhistory_curl_peak = k_eta')

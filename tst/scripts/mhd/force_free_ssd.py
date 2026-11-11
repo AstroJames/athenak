@@ -104,7 +104,7 @@ def check_field(root, name, nx, helicity, shell):
     div = assemble(root / f'bin/{name}.divb.00000.bin')
     max_div = np.max(abs(next(iter(div.values()))))
     assert max_div < 1e-11*rms*2*np.pi*shell
-    n = np.fft.fftfreq(nx)*nx
+    n = np.rint(np.fft.fftfreq(nx)*nx)  # exact integers for any N (e.g. 144)
     nz, ny, nx_grid = np.meshgrid(n, n, n, indexing='ij')
     wave = np.array([nx_grid, ny, nz])
     mask = np.sum(wave**2, axis=0) == shell**2

@@ -60,5 +60,5 @@ seed_on_restart = false
 file_type = power_spectrum
 variable = magnetic_field
 id = magnetic
-fft_backend = kokkos
+fft_backend = heffte
 dt = 0.02

@@ -1,0 +1,134 @@
+# TEMPLATE, NOT A PRODUCTION DECK. Copy it, assign a run ID from project/runs/registry.md,
+# set the marked keys, and record the AthenaK commit before any run.
+#
+# Isotropic narrow-shell seed in driven isothermal turbulence: M = 0.3, Re = 200, Pm = 10.
+# Build (heFFTe always):
+#   -DPROBLEM=newtonian_SSD -DAthena_ENABLE_MPI=ON -DAthena_FFT_BACKEND=HEFFTE
+#   GPU: add -DKokkos_ENABLE_CUDA=ON and -DKokkos_ARCH_HOPPER90=ON (H100), or for B200 run
+#   `git submodule update --init && scripts/apply_kokkos_blackwell_patches.sh` first and
+#   configure with -DKokkos_ARCH_BLACKWELL100=ON.
+# Units: L = cs = rho0 = 1; target u_rms = 0.3 (M = 0.3), ell_drive = L/2 = 0.5,
+#   t0 = ell_drive/u_rms = 5/3. nu = u_rms*ell_drive/Re = 7.5e-4, eta = nu/Pm = 7.5e-5,
+#   Rm = 2000. All times below are code units (divide by 5/3 for t0).
+# Stage 1 (spin-up, B = 0): run to tlim = 25/3 (5 t0); check Mach and stationarity and
+#   retune dedt (a starting guess scaled from the M = 0.1 deck: 0.25*u_rms^3/ell_drive).
+# Stage 2 (seed): restart a B = 0 checkpoint with
+#   spectral_ic/seed_on_restart=true spectral_ic/rms_b=<sqrt(2*E_kin*1e-12)> and the shell
+#   keys below; ordinary restarts afterwards keep the evolved field.
+# Seed (spectral_ic, seed_type = shell): n0 sets k0 = 2*pi*n0/L; choose it from the x0 scan
+#   (x0 = k0/k_eta, Kazantsev convention). n0 = 0 here so a seeding attempt fails until it
+#   is set. Defaults n_dirs = 512 and amplitude = equal follow
+#   models/kazantsev/seed_design.md (N_eff ~ 254). helicity = 0 is the non-helical baseline;
+#   use +1/-1 with the same iseed for a matched helical pair. Constraint: n0 + shell_width
+#   < nx/2; keep >= 9 cells per wavelength (n0 <= nx/9) to bound numerical resistivity.
+# Provenance: rank 0 logs SpectralIC(shell) lines (modes, N_eff, D2/D4, mode_table_hash).
+# Cost (estimate, not measured): 288^3 = 2.4e7 cells, ~100 doubles per cell, ~20 GB in
+#   total; the seed synthesis is ~3 x 2.4e7 x n_modes trig pairs (seconds on one GPU).
+
+<job>
+basename = ISOSEED_TEMPLATE        # replace with the run ID
+
+<mesh>
+nx1 = 288                          # template resolution; n0 <= 32 at 9 cells/wavelength
+nx2 = 288
+nx3 = 288
+nghost = 4
+x1min = -0.5
+x1max = 0.5
+x2min = -0.5
+x2max = 0.5
+x3min = -0.5
+x3max = 0.5
+ix1_bc = periodic
+ox1_bc = periodic
+ix2_bc = periodic
+ox2_bc = periodic
+ix3_bc = periodic
+ox3_bc = periodic
+
+<meshblock>
+nx1 = 72                           # 64 MeshBlocks; retune for the target ranks or GPUs
+nx2 = 72
+nx3 = 72
+
+<time>
+evolution = dynamic
+integrator = rk3
+cfl_number = 0.3
+tlim = 8.333333333333334           # 5 t0 spin-up; set the seeded-stage tlim on restart
+nlim = -1
+ndiag = 100
+
+<mhd>
+eos = isothermal
+iso_sound_speed = 1.0
+reconstruct = teno5
+rsolver = hlld
+fofc = true
+viscosity = 7.5e-4                 # nu = u_rms*ell_drive/Re
+ohmic_resistivity = 7.5e-5         # eta = nu/Pm
+
+<turb_driving>
+driving_geometry = isotropic
+driving_profile = parabola
+nlow = 1
+nhigh = 3
+parabola_peak = 2.0
+parabola_width = 0.5
+sol_weight = 1.0
+tcorr = 1.6666666666666667         # t0
+dedt = 1.35e-2                     # starting guess; retune to reach M = 0.3
+
+<spectral_ic>
+seed_type = shell
+n0 = 0                             # REQUIRED: set from the x0 scan (fails if left at 0)
+shell_width = 0.5
+n_dirs = 512
+helicity = 0                       # 0 (non-helical baseline), +1 or -1
+amplitude = equal
+iseed = 210989                     # one value per realization
+rms_b = 0.0                        # B = 0 during spin-up
+seed_on_restart = false
+
+<problem>
+user_hist = true                   # k_parallel, k_BxJ, k_BdotJ in .user.hst
+
+<output1>
+file_type = hst
+dt = 0.016666666666666666          # t0/100
+data_format = %24.16e
+
+<output2>
+file_type = power_spectrum
+variable = velocity
+id = velocity
+history_curl_peak = k_nu
+helicity_spectrum = true           # kinetic helicity column, <u.omega>
+fft_backend = heffte
+dt = 0.03333333333333333           # t0/50
+
+<output3>
+file_type = power_spectrum
+variable = magnetic_field
+id = magnetic
+history_curl_peak = k_eta
+helicity_spectrum = true           # magnetic helicity column, <A.B>
+fft_backend = heffte
+dt = 0.03333333333333333           # t0/50
+
+<output4>
+file_type = rst
+dt = 3.3333333333333335            # 2 t0; spin-up checkpoints double as realizations
+
+<output5>
+file_type = bin
+variable = mhd_w_bcc
+id = full
+dt = 0.03333333333333333           # t0/50 for the first t0 after seeding; then t0/10
+
+<output6>
+file_type = bin
+variable = mhd_w_bcc
+id = slice_xy
+slice_x3 = 0.0
+dt = 0.03333333333333333           # t0/50

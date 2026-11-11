@@ -1,4 +1,4 @@
-# Build: -DPROBLEM=newtonian_SSD -DAthena_ENABLE_MPI=ON -DAthena_FFT_BACKEND=KOKKOS.
+# Build: -DPROBLEM=newtonian_SSD -DAthena_ENABLE_MPI=ON -DAthena_FFT_BACKEND=HEFFTE (PI rule: heFFTe always).
 # Trillium debugjob: 2 nodes, 384 MPI ranks (192/node), 00:30:00; Athena -t 00:25:00.
 # The 384 MeshBlocks also divide evenly over 192 ranks on one node.
 # L=cs=rho0=1; target urms=0.1, ell_drive=L/2=0.5, t0=ell_drive/urms=5.
@@ -98,7 +98,7 @@ file_type = power_spectrum
 variable = velocity
 id = velocity
 history_curl_peak = k_nu        # Adds curl power to .spec and its peak to .user.hst
-fft_backend = kokkos
+fft_backend = heffte
 dt = 0.1                       # t0/50
 
 <output3>
@@ -106,7 +106,7 @@ file_type = power_spectrum
 variable = magnetic_field
 id = magnetic
 history_curl_peak = k_eta
-fft_backend = kokkos
+fft_backend = heffte
 dt = 0.1                       # t0/50
 
 <output4>
