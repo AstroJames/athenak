@@ -24,11 +24,13 @@ class FOFCBoundary {
   ~FOFCBoundary();
   int Exchange(const DvceArray4D<bool> &flags);
 
- private:
+  // Public only because nvcc rejects private member types used in device lambdas.
   struct Cell {
     std::size_t source, target;
     int peer;  // offset in send buffer for a same-rank neighbor; -1 for MPI
   };
+
+ private:
   struct Transfer {
     int rank, send_tag, recv_tag, offset, count;
   };
