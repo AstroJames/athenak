@@ -20,8 +20,18 @@
 #   is set. Defaults n_dirs = 512 and amplitude = equal follow
 #   models/kazantsev/seed_design.md (N_eff ~ 254). helicity = 0 is the non-helical baseline;
 #   use +1/-1 with the same iseed for a matched helical pair. Constraint: n0 + shell_width
-#   < nx/2; keep >= 9 cells per wavelength (n0 <= nx/9) to bound numerical resistivity.
+#   < nx/2; keep about 9 cells per wavelength (n0 <~ nx/9) to bound numerical resistivity.
+# Use a HALF-INTEGER n0 with shell_width = 0.49 (e.g. n0 = 32.5): every mode then has
+#   floor(|n|) = n0 - 0.5, so the seed sits in one integer .spec bin. With an integer n0
+#   and width 0.5 it splits over bins n0-1 and n0 (49-65% in floor(n0)).
+# .spec files from <output2>/<output3> have 4 columns: shell field_power curl_power
+#   helicity. field_power has no 1/2 (sum = <f^2>); per-bin relative magnetic helicity is
+#   helicity*k_eff/field_power with k_eff = sqrt(curl_power/field_power), not 2*pi*shell.
+# Resistive decay of the seed: per mode 2*eta*kappa^2, kappa^2 = sum_a k_a^2 sinc^2(k_a dx/2)
+#   (isotropic-shell mean 0.976*k^2 at 9 cells per wavelength; 0.960 only for axis modes).
 # Provenance: rank 0 logs SpectralIC(shell) lines (modes, N_eff, D2/D4, mode_table_hash).
+#   RECORD the logged mode_table_hash in project/runs/registry.md for every seeded run:
+#   the mode table depends on host floating point, so the hash is the reproducibility key.
 # Cost (estimate, not measured): 288^3 = 2.4e7 cells, ~100 doubles per cell, ~20 GB in
 #   total; the seed synthesis is ~3 x 2.4e7 x n_modes trig pairs (seconds on one GPU).
 
@@ -81,8 +91,8 @@ dedt = 1.35e-2                     # starting guess; retune to reach M = 0.3
 
 <spectral_ic>
 seed_type = shell
-n0 = 0                             # REQUIRED: set from the x0 scan (fails if left at 0)
-shell_width = 0.5
+n0 = 0                             # REQUIRED: half-integer from the x0 scan (0 fails)
+shell_width = 0.49                 # with half-integer n0: one .spec bin
 n_dirs = 512
 helicity = 0                       # 0 (non-helical baseline), +1 or -1
 amplitude = equal
