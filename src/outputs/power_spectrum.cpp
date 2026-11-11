@@ -116,9 +116,12 @@ void PowerSpectrumOutput::WriteOutputFile(Mesh *pm, ParameterInput *pin) {
           << "# helicity = shell_sum Re(conj(F).(i*k x F))"
           << (out_params.variable.compare("velocity") == 0 ?
               " (kinetic, <u.omega>)" : "/k^2 (magnetic, <A.B>, Coulomb gauge)")
-          << "; no 1/2. Maximal |helicity| = field_power"
-          << (out_params.variable.compare("velocity") == 0 ? "*k" : "/k")
-          << "; the sign of curl F = +k F is positive.\n";
+          << "; no 1/2. Per mode, |helicity| <= field_power"
+          << (out_params.variable.compare("velocity") == 0 ? "*|k|" : "/|k|")
+          << " with that mode's |k| (not the shell label); per shell use "
+          << (curl ? "k_eff=sqrt(curl_power/field_power)" :
+              "k_eff=sqrt(curl_power/field_power) (needs history_curl_peak)")
+          << ". curl F = +k F is positive.\n";
     }
     for (int s = 1; s <= nbins_; ++s) {
       ofs << s << ' ' << host(s - 1);

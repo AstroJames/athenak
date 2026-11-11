@@ -10,7 +10,7 @@ transfer function undone (exact for this analytic edge-averaged construction):
 - weighted 2nd/4th angular moments D2, D4 (max-norm, models/kazantsev/seed_design.md)
   of the mode set, with weights recovered from the equal-amplitude mode powers, and the
   in-code Voronoi weights against the exact scipy.spatial.SphericalVoronoi areas;
-- the full-lattice-shell fallback (<= n_dirs/2 pairs in the shell) and the logged N_eff;
+- the full-lattice-shell fallback (<= 1.5 n_dirs/2 pairs in the shell) and the logged N_eff;
 - the helicity_spectrum .spec column against an independent FFT of bcc;
 - MeshBlock and MPI-rank independence, same-iseed determinism, a different iseed
   giving a different (rotated) mode set;
@@ -408,7 +408,7 @@ def check_seed(name, helicity, equal=True, n0=N0, rms=0.01, ndirs=NDIRS):
     info = log_values(name)
     assert keep.sum() == info['modes']
     assert info['pairs'] == shell_pairs(n0)
-    assert info['full_shell'] == (info['pairs'] <= ndirs//2)
+    assert info['full_shell'] == (2*info['pairs'] <= 3*(ndirs//2))  # 1.5 x n_dirs/2
     if info['full_shell']:
         assert info['modes'] == info['pairs']
     np.testing.assert_allclose(info['neff'], energy.sum()**2/np.sum(energy**2), rtol=1e-4)

@@ -478,9 +478,10 @@ void SpectralICGenerator::ValidateShell() const {
 //! 2. Each d_j is snapped to the shell lattice vector (||n|-n0| <= width) closest in
 //!    angle among the (2R+1)^3 neighbours of round(n0 d_j), R = 1, 2, ... until one
 //!    qualifies. Each +/-n pair is kept once (first non-zero component positive), in
-//!    order of first occurrence; duplicates are dropped and counted. Fallback (theory
-//!    seed_design.md): if the shell holds <= n_dirs/2 lattice pairs, every pair is used
-//!    (lexicographic order), still with Voronoi weights.
+//!    order of first occurrence; duplicates are dropped and counted. Fallback: if the
+//!    shell holds <= 1.5 n_dirs/2 lattice pairs, every pair is used (lexicographic
+//!    order), still with Voronoi weights. Below that ratio snapping drops many
+//!    duplicates and D2/D4 exceed the n_dirs=512 tolerances (gate-2 review, n0 ~ 8-9).
 //! 3. Solid-angle weights: nearest-direction (spherical Voronoi) assignment of a dense
 //!    deterministic Fibonacci quadrature (kQuadPerDir points per direction of the
 //!    full +/- set) gives w_i = w(+n_i) = w(-n_i), with sum over the +/- set = 4 pi.
@@ -493,7 +494,9 @@ void SpectralICGenerator::ValidateShell() const {
 //!    A = i k x b/|k|^2 (Coulomb gauge, curl A = b). Per mode the RNG draws g1, g2,
 //!    phi1, phi2 in that order for every helicity/amplitude choice, so one iseed gives
 //!    matched +/-h and equal/gaussian realisations; r = 1 (equal) or
-//!    r^2 = (g1^2+g2^2)/2 (gaussian, Rayleigh r, <r^2> = 1).
+//!    r^2 = (g1^2+g2^2)/2 (gaussian, Rayleigh r, <r^2> = 1). g1, g2 come from a local
+//!    polar Box-Muller on the copied stream, not RanGaussianSt, whose cached deviate
+//!    lives in function-local statics shared with other callers in this file.
 //! Normalisation is irrelevant: the caller rescales B with NormalizeRmsB.
 
 SpectralICGenerator::ModeTable SpectralICGenerator::BuildShellModes() {
@@ -539,7 +542,7 @@ SpectralICGenerator::ModeTable SpectralICGenerator::BuildShellModes() {
     }
   }
   const int shell_pairs = static_cast<int>(lattice.size());
-  const bool full_shell = (shell_pairs <= nhalf);
+  const bool full_shell = (2*shell_pairs <= 3*nhalf);
   if (shell_pairs == 0) {
     std::cerr << "Shell seed: no lattice vector with ||n|-n0| <= shell_width; "
               << "increase shell_width.\n";
@@ -668,7 +671,15 @@ SpectralICGenerator::ModeTable SpectralICGenerator::BuildShellModes() {
   ModeTable modes;
   modes.reserve(nmodes);
   for (int i = 0; i < nmodes; ++i) {
-    Real g1 = RanGaussianSt(&rng), g2 = RanGaussianSt(&rng);
+    // Same pair, in the same order, that RanGaussianSt returns from an empty cache.
+    Real v1, v2, rsq;
+    do {
+      v1 = 2.0*RanSt(&rng)-1.0;
+      v2 = 2.0*RanSt(&rng)-1.0;
+      rsq = v1*v1+v2*v2;
+    } while (rsq >= 1.0 || rsq == 0.0);
+    Real fac = std::sqrt(-2.0*std::log(rsq)/rsq);
+    Real g1 = v2*fac, g2 = v1*fac;
     Real phi1 = 2.0*pi*RanSt(&rng), phi2 = 2.0*pi*RanSt(&rng);
     Real r = shell_equal_amp ? 1.0 : std::sqrt(0.5*(g1*g1+g2*g2));
     const Real *kh = unit[i].data();
@@ -796,7 +807,8 @@ SpectralICGenerator::ModeTable SpectralICGenerator::BuildShellModes() {
               << std::scientific << std::setprecision(3)
               << "SpectralIC(shell): weighted moment errors D2=" << e2 << " D4=" << e4
               << "\n" << std::hex << "SpectralIC(shell): mode_table_hash=0x" << hash
-              << std::dec << std::endl;
+              << std::dec << "   <-- record with the run (host-FP dependent)"
+              << std::endl;
     std::cout.flags(flags);
     std::cout.precision(precision);
   }
