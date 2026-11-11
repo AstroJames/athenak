@@ -11,7 +11,9 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -54,6 +56,52 @@ SpectralICGenerator::SpectralICGenerator(MeshBlockPack *pmbp, ParameterInput *pi
   xcos_f("xcos_f",1,1,1), xsin_f("xsin_f",1,1,1),
   ycos_f("ycos_f",1,1,1), ysin_f("ysin_f",1,1,1),
   zcos_f("zcos_f",1,1,1), zsin_f("zsin_f",1,1,1) {
+  // Isotropic narrow-shell seed. Keys are read only when seed_type=shell, so the
+  // legacy path (and its parameter dump in restart files) is unchanged.
+  std::string seed_type = pin->DoesParameterExist(block, "seed_type") ?
+                          pin->GetString(block, "seed_type") : "legacy";
+  if (seed_type.compare("shell") == 0) {
+    shell_seed = true;
+    force_free = false;
+    nlow = nhigh = 0;
+    spectrum_form = SpectrumForm::kBand;
+    spectral_index = 0.0;
+    mode_count = 0;  // set by BuildShellModes
+    if (pin->DoesParameterExist(block, "force_free") &&
+        pin->GetBoolean(block, "force_free")) {
+      std::cerr << "Shell seed: seed_type=shell and force_free=true are exclusive.\n";
+      std::exit(EXIT_FAILURE);
+    }
+    // No defaults for physics choices: n0, n_dirs, helicity and amplitude are required.
+    shell_n0 = pin->GetReal(block, "n0");
+    shell_width = pin->GetOrAddReal(block, "shell_width", 0.5);
+    shell_ndirs = pin->GetInteger(block, "n_dirs");
+    helicity = pin->GetInteger(block, "helicity");
+    std::string amp = pin->GetString(block, "amplitude");
+    if (amp.compare("equal") != 0 && amp.compare("gaussian") != 0) {
+      std::cerr << "Shell seed: amplitude must be 'equal' or 'gaussian'.\n";
+      std::exit(EXIT_FAILURE);
+    }
+    shell_equal_amp = (amp.compare("equal") == 0);
+    for (const char *key : {"b_mean_x", "b_mean_y", "b_mean_z"}) {
+      if (pin->DoesParameterExist(block, key) && pin->GetReal(block, key) != 0.0) {
+        std::cerr << "Shell seed: requires zero added mean magnetic field.\n";
+        std::exit(EXIT_FAILURE);
+      }
+    }
+    ValidateShell();
+    int64_t iseed = pin->GetOrAddInteger(block, "iseed", 210989);
+    rstate.idum = (iseed <= 0) ? iseed : -iseed;
+    // Skip CountModes, the 24 coefficient arrays and the [nmb, modes, ncells] trig
+    // tables: they are unused by the sparse shell path and too large at high n0.
+    return;
+  }
+  if (seed_type.compare("legacy") != 0) {
+    std::cerr << "Unknown spectral_ic/seed_type '" << seed_type
+              << "' (use legacy or shell).\n";
+    std::exit(EXIT_FAILURE);
+  }
+
   // Read wavenumber range (integer mode indices, same convention as TurbulenceDriver).
   // k_phys = n * 2π / L.  The default band [1,3] peaks at n=2 when using
   // the parabolic spectrum.
@@ -394,6 +442,368 @@ SpectralICGenerator::ModeTable SpectralICGenerator::BuildForceFreeModes() {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn SpectralICGenerator::ValidateShell
+//! \brief Checks geometry and seed_type=shell keys. All accepted lattice vectors satisfy
+//! |n| <= n0+shell_width < N/2, so every component is strictly below Nyquist.
+
+void SpectralICGenerator::ValidateShell() const {
+  Mesh *pm = pmy_pack->pmesh;
+  Real length[3] = {pm->mesh_size.x1max-pm->mesh_size.x1min,
+                    pm->mesh_size.x2max-pm->mesh_size.x2min,
+                    pm->mesh_size.x3max-pm->mesh_size.x3min};
+  auto &grid = pm->mesh_indcs;
+  int nmin = std::min({grid.nx1, grid.nx2, grid.nx3});
+  if (!pm->three_d || !pm->strictly_periodic || pm->multilevel ||
+      std::abs(length[1]/length[0]-1.0) > 1.0e-12 ||
+      std::abs(length[2]/length[0]-1.0) > 1.0e-12 ||
+      grid.nx1 != grid.nx2 || grid.nx1 != grid.nx3 ||
+      !(shell_n0 >= 1.0) || !(shell_width > 0.0) || !(shell_width < shell_n0) ||
+      !(shell_n0+shell_width < 0.5*nmin) ||
+      shell_ndirs < 2 || shell_ndirs % 2 != 0 ||
+      (helicity != 1 && helicity != -1 && helicity != 0)) {
+    std::cerr << "Shell seed requires uniform periodic cubic 3-D geometry, n0 >= 1, "
+              << "0 < shell_width < n0, n0+shell_width < Nyquist (N/2), even "
+              << "n_dirs >= 2, and helicity = +1, -1 or 0.\n";
+    std::exit(EXIT_FAILURE);
+  }
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn SpectralICGenerator::BuildShellModes
+//! \brief Host-side isotropic narrow-shell mode table (seed_type = shell).
+//!
+//! 1. Fibonacci directions d_j, j < n_dirs/2, with z_j = 1-(2j+1)/n_dirs > 0 (their
+//!    antipodes complete an antipodally symmetric Fibonacci set), rotated by a uniform
+//!    random SO(3) matrix (Shoemake quaternion; 3 uniforms from iseed).
+//! 2. Each d_j is snapped to the shell lattice vector (||n|-n0| <= width) closest in
+//!    angle among the (2R+1)^3 neighbours of round(n0 d_j), R = 1, 2, ... until one
+//!    qualifies. Each +/-n pair is kept once (first non-zero component positive), in
+//!    order of first occurrence; duplicates are dropped and counted. Fallback (theory
+//!    seed_design.md): if the shell holds <= n_dirs/2 lattice pairs, every pair is used
+//!    (lexicographic order), still with Voronoi weights.
+//! 3. Solid-angle weights: nearest-direction (spherical Voronoi) assignment of a dense
+//!    deterministic Fibonacci quadrature (kQuadPerDir points per direction of the
+//!    full +/- set) gives w_i = w(+n_i) = w(-n_i), with sum over the +/- set = 4 pi.
+//!    Collinear modes (same n/gcd) split their shared cell equally.
+//! 4. Per mode, with k = 2 pi n/L and k_hat = n/|n| (per-mode |k|):
+//!    e1 = unit(x_a - (x_a.k_hat) k_hat) for the axis a least aligned with k_hat,
+//!    e2 = k_hat x e1, e_h = (e1 + i h e2)/sqrt(2), so i k_hat x e_h = h e_h and
+//!    e_+^* . e_- = 0. b = r sqrt(w) e_h exp(i phi1) (h = +/-1) or
+//!    b = r sqrt(w/2) (e_+ exp(i phi1) + e_- exp(i phi2)) (h = 0), and the stored
+//!    A = i k x b/|k|^2 (Coulomb gauge, curl A = b). Per mode the RNG draws g1, g2,
+//!    phi1, phi2 in that order for every helicity/amplitude choice, so one iseed gives
+//!    matched +/-h and equal/gaussian realisations; r = 1 (equal) or
+//!    r^2 = (g1^2+g2^2)/2 (gaussian, Rayleigh r, <r^2> = 1).
+//! Normalisation is irrelevant: the caller rescales B with NormalizeRmsB.
+
+SpectralICGenerator::ModeTable SpectralICGenerator::BuildShellModes() {
+  using Complex = std::complex<Real>;
+  const Real pi = M_PI;
+  Mesh *pm = pmy_pack->pmesh;
+  const Real length = pm->mesh_size.x1max-pm->mesh_size.x1min;
+  auto &grid = pm->mesh_indcs;
+  const Real dx[3] = {length/grid.nx1, length/grid.nx2, length/grid.nx3};
+  const Real dk = 2.0*pi/length;
+  const Real golden = pi*(3.0-std::sqrt(5.0));
+  // Seeded stream: identical on every rank, so the table is rank-independent.
+  RNG_State rng = rstate;
+
+  // 1. Random rotation (uniform on SO(3)), applied to the half-sphere Fibonacci set.
+  Real u1 = RanSt(&rng), u2 = RanSt(&rng), u3 = RanSt(&rng);
+  Real qx = std::sqrt(1.0-u1)*std::sin(2.0*pi*u2);
+  Real qy = std::sqrt(1.0-u1)*std::cos(2.0*pi*u2);
+  Real qz = std::sqrt(u1)*std::sin(2.0*pi*u3);
+  Real qw = std::sqrt(u1)*std::cos(2.0*pi*u3);
+  Real rot[3][3] = {
+    {1.0-2.0*(qy*qy+qz*qz), 2.0*(qx*qy-qz*qw), 2.0*(qx*qz+qy*qw)},
+    {2.0*(qx*qy+qz*qw), 1.0-2.0*(qx*qx+qz*qz), 2.0*(qy*qz-qx*qw)},
+    {2.0*(qx*qz-qy*qw), 2.0*(qy*qz+qx*qw), 1.0-2.0*(qx*qx+qy*qy)}};
+
+  // 2. Snap to the shell and deduplicate +/- pairs.
+  const int nhalf = shell_ndirs/2;
+  const Real nmax = shell_n0+shell_width;
+  const int rmax = static_cast<int>(std::ceil(nmax))+1;
+  std::vector<std::array<int, 3>> lattice;
+  std::vector<Real> snap_angle;
+  int duplicates = 0;
+  const int nbox = static_cast<int>(std::floor(nmax));
+  for (int a = 0; a <= nbox; ++a) {
+    for (int b = -nbox; b <= nbox; ++b) {
+      for (int e = -nbox; e <= nbox; ++e) {
+        int lead = (a != 0) ? a : ((b != 0) ? b : e);
+        Real nm = std::sqrt(static_cast<Real>(a*a+b*b+e*e));
+        if (lead <= 0 || std::abs(nm-shell_n0) > shell_width) continue;
+        lattice.push_back({a, b, e});
+        snap_angle.push_back(0.0);
+      }
+    }
+  }
+  const int shell_pairs = static_cast<int>(lattice.size());
+  const bool full_shell = (shell_pairs <= nhalf);
+  if (shell_pairs == 0) {
+    std::cerr << "Shell seed: no lattice vector with ||n|-n0| <= shell_width; "
+              << "increase shell_width.\n";
+    std::exit(EXIT_FAILURE);
+  }
+  if (!full_shell) {
+    lattice.clear();
+    snap_angle.clear();
+  }
+  for (int j = 0; j < nhalf && !full_shell; ++j) {
+    Real z = 1.0-(2.0*j+1.0)/shell_ndirs;
+    Real rho = std::sqrt(std::max(0.0, 1.0-z*z));
+    Real f[3] = {rho*std::cos(j*golden), rho*std::sin(j*golden), z};
+    Real d[3];
+    for (int a = 0; a < 3; ++a) d[a] = rot[a][0]*f[0]+rot[a][1]*f[1]+rot[a][2]*f[2];
+    int c[3];
+    for (int a = 0; a < 3; ++a) c[a] = static_cast<int>(std::lround(shell_n0*d[a]));
+    Real best = -2.0;
+    std::array<int, 3> pick = {0, 0, 0};
+    for (int r = 1; r <= rmax && best < -1.0; ++r) {
+      for (int a = c[0]-r; a <= c[0]+r; ++a) {
+        for (int b = c[1]-r; b <= c[1]+r; ++b) {
+          for (int e = c[2]-r; e <= c[2]+r; ++e) {
+            Real nm = std::sqrt(static_cast<Real>(a*a+b*b+e*e));
+            if (nm == 0.0 || std::abs(nm-shell_n0) > shell_width) continue;
+            Real cosine = (a*d[0]+b*d[1]+e*d[2])/nm;
+            if (cosine > best) {
+              best = cosine;
+              pick = {a, b, e};
+            }
+          }
+        }
+      }
+    }
+    if (best < -1.0) {
+      std::cerr << "Shell seed: no lattice vector with ||n|-n0| <= shell_width; "
+                << "increase shell_width.\n";
+      std::exit(EXIT_FAILURE);
+    }
+    // Canonical representative of +/-n: first non-zero component positive.
+    int lead = (pick[0] != 0) ? pick[0] : ((pick[1] != 0) ? pick[1] : pick[2]);
+    if (lead < 0) pick = {-pick[0], -pick[1], -pick[2]};
+    if (std::find(lattice.begin(), lattice.end(), pick) != lattice.end()) {
+      ++duplicates;
+      continue;
+    }
+    lattice.push_back(pick);
+    snap_angle.push_back(std::acos(std::min(1.0, best)));
+  }
+  const int nmodes = static_cast<int>(lattice.size());
+
+  // 3. Spherical-Voronoi solid angles by nearest-direction quadrature. The full set is
+  // {+u_i, -u_i}; candidates are scanned outward in z and pruned by |dz| <= chord.
+  constexpr int kQuadPerDir = 4000;
+  const int nfull = 2*nmodes;
+  std::vector<std::array<Real, 3>> unit(nfull);
+  for (int i = 0; i < nmodes; ++i) {
+    Real nm = std::sqrt(static_cast<Real>(lattice[i][0]*lattice[i][0]
+                        +lattice[i][1]*lattice[i][1]+lattice[i][2]*lattice[i][2]));
+    for (int a = 0; a < 3; ++a) {
+      unit[i][a] = lattice[i][a]/nm;
+      unit[i+nmodes][a] = -unit[i][a];
+    }
+  }
+  std::vector<int> order(nfull);
+  for (int i = 0; i < nfull; ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(),
+                   [&unit](int p, int q) { return unit[p][2] < unit[q][2]; });
+  std::vector<Real> zsorted(nfull);
+  for (int i = 0; i < nfull; ++i) zsorted[i] = unit[order[i]][2];
+  const int64_t nquad = static_cast<int64_t>(kQuadPerDir)*nfull;
+  std::vector<int64_t> count(nfull, 0);
+  for (int64_t q = 0; q < nquad; ++q) {
+    Real z = 1.0-(2.0*q+1.0)/nquad;
+    Real rho = std::sqrt(std::max(0.0, 1.0-z*z));
+    Real phi = std::fmod(q*golden, 2.0*pi);
+    Real p[3] = {rho*std::cos(phi), rho*std::sin(phi), z};
+    int start = static_cast<int>(std::lower_bound(zsorted.begin(), zsorted.end(), z)
+                                 -zsorted.begin());
+    Real best = 5.0;
+    int owner = -1;
+    auto visit = [&](int s) {
+      int id = order[s];
+      Real chord2 = SQR(p[0]-unit[id][0])+SQR(p[1]-unit[id][1])+SQR(p[2]-unit[id][2]);
+      if (chord2 < best || (chord2 == best && id < owner)) {
+        best = chord2;
+        owner = id;
+      }
+    };
+    for (int s = start; s < nfull && SQR(zsorted[s]-z) <= best; ++s) visit(s);
+    for (int s = start-1; s >= 0 && SQR(zsorted[s]-z) <= best; --s) visit(s);
+    ++count[owner];
+  }
+  // Collinear modes (same primitive direction n/gcd, e.g. (3,0,0) and (4,0,0)) share
+  // one Voronoi cell; the nearest-direction tie rule gives it to the first of them, so
+  // split the cell's solid angle equally among the group.
+  std::vector<std::array<int, 3>> primitive(nmodes);
+  for (int i = 0; i < nmodes; ++i) {
+    int g = std::abs(lattice[i][0]);
+    for (int a = 1; a < 3; ++a) {
+      int x = std::abs(lattice[i][a]);
+      while (x != 0) {
+        int r = g % x;
+        g = x;
+        x = r;
+      }
+    }
+    for (int a = 0; a < 3; ++a) primitive[i][a] = lattice[i][a]/g;
+  }
+  std::vector<Real> weight(nmodes);
+  int collinear = 0;
+  for (int i = 0; i < nmodes; ++i) {
+    int64_t cell = 0;
+    int members = 0;
+    for (int j = 0; j < nmodes; ++j) {
+      if (primitive[j] != primitive[i]) continue;
+      cell += count[j]+count[j+nmodes];
+      ++members;
+    }
+    if (members > 1) ++collinear;
+    weight[i] = 4.0*pi*0.5*static_cast<Real>(cell)/(members*static_cast<Real>(nquad));
+  }
+
+  // 4. Helical amplitudes and Coulomb-gauge vector potential.
+  const Complex imaginary(0.0, 1.0);
+  ModeTable modes;
+  modes.reserve(nmodes);
+  for (int i = 0; i < nmodes; ++i) {
+    Real g1 = RanGaussianSt(&rng), g2 = RanGaussianSt(&rng);
+    Real phi1 = 2.0*pi*RanSt(&rng), phi2 = 2.0*pi*RanSt(&rng);
+    Real r = shell_equal_amp ? 1.0 : std::sqrt(0.5*(g1*g1+g2*g2));
+    const Real *kh = unit[i].data();
+    int axis = 0;
+    for (int a = 1; a < 3; ++a) {
+      if (std::abs(kh[a]) < std::abs(kh[axis])) axis = a;
+    }
+    Real e1[3] = {0.0, 0.0, 0.0};
+    e1[axis] = 1.0;
+    for (int a = 0; a < 3; ++a) e1[a] -= kh[axis]*kh[a];
+    Real e1n = std::sqrt(e1[0]*e1[0]+e1[1]*e1[1]+e1[2]*e1[2]);
+    for (int a = 0; a < 3; ++a) e1[a] /= e1n;
+    Real e2[3] = {kh[1]*e1[2]-kh[2]*e1[1], kh[2]*e1[0]-kh[0]*e1[2],
+                  kh[0]*e1[1]-kh[1]*e1[0]};
+    Complex b[3];
+    for (int a = 0; a < 3; ++a) {
+      Complex eplus = (e1[a]+imaginary*e2[a])/std::sqrt(2.0);
+      Complex eminus = (e1[a]-imaginary*e2[a])/std::sqrt(2.0);
+      if (helicity == 0) {
+        b[a] = r*std::sqrt(0.5*weight[i])*(eplus*std::polar(1.0, phi1)
+                                           +eminus*std::polar(1.0, phi2));
+      } else {
+        b[a] = r*std::sqrt(weight[i])*((helicity > 0) ? eplus : eminus)
+               *std::polar(1.0, phi1);
+      }
+    }
+    Real wave[3] = {dk*lattice[i][0], dk*lattice[i][1], dk*lattice[i][2]};
+    Real k2 = wave[0]*wave[0]+wave[1]*wave[1]+wave[2]*wave[2];
+    std::array<Real, 9> entry;
+    for (int a = 0; a < 3; ++a) {
+      int bb = (a+1)%3, cc = (a+2)%3;
+      Complex a_hat = imaginary*(wave[bb]*b[cc]-wave[cc]*b[bb])/k2;
+      // Analytic line average along an edge parallel to a (as in the legacy path).
+      Real t = 0.5*wave[a]*dx[a];
+      Real edge_factor = (t == 0.0) ? 1.0 : std::sin(t)/t;
+      entry[a] = wave[a];
+      entry[3+a] = edge_factor*a_hat.real();
+      entry[6+a] = edge_factor*a_hat.imag();
+    }
+    modes.push_back(entry);
+  }
+  mode_count = nmodes;
+
+  // Provenance: counts, weights, weighted angular moments and a hash of the table.
+  if (global_variable::my_rank == 0) {
+    Real wmin = weight[0], wmax = weight[0], wsum = 0.0, amax = 0.0, amean = 0.0;
+    Real esum = 0.0, esq = 0.0;  // per-mode energies |b|^2, for N_eff
+    Real nmin = 1.0e30, nmaxs = 0.0;
+    Real m2[3][3] = {}, m4[3][3][3][3] = {};
+    for (int i = 0; i < nmodes; ++i) {
+      wmin = std::min(wmin, weight[i]);
+      wmax = std::max(wmax, weight[i]);
+      wsum += 2.0*weight[i];
+      amax = std::max(amax, snap_angle[i]);
+      amean += snap_angle[i]/nmodes;
+      Real energy = 0.0;
+      for (int a = 0; a < 3; ++a) {
+        // |b|^2 = k^2 |A|^2 for a transverse mode; undo the edge factors.
+        Real t = 0.5*modes[i][a]*dx[a];
+        Real edge = (t == 0.0) ? 1.0 : std::sin(t)/t;
+        energy += (SQR(modes[i][3+a])+SQR(modes[i][6+a]))/SQR(edge);
+      }
+      energy *= SQR(modes[i][0])+SQR(modes[i][1])+SQR(modes[i][2]);
+      esum += energy;
+      esq += energy*energy;
+      Real nm = std::sqrt(static_cast<Real>(lattice[i][0]*lattice[i][0]
+                          +lattice[i][1]*lattice[i][1]+lattice[i][2]*lattice[i][2]));
+      nmin = std::min(nmin, nm);
+      nmaxs = std::max(nmaxs, nm);
+      const Real *u = unit[i].data();
+      for (int a = 0; a < 3; ++a) {
+        for (int b = 0; b < 3; ++b) {
+          m2[a][b] += 2.0*weight[i]*u[a]*u[b];
+          for (int c = 0; c < 3; ++c) {
+            for (int e = 0; e < 3; ++e) {
+              m4[a][b][c][e] += 2.0*weight[i]*u[a]*u[b]*u[c]*u[e];
+            }
+          }
+        }
+      }
+    }
+    // Max-norm errors (theory seed_design.md): D2 = max|M2-(4pi/3)delta|/(4pi/3),
+    // D4 = max|M4-(4pi/15)(dd+dd+dd)|/(4pi/15).
+    Real e2 = 0.0, e4 = 0.0;
+    for (int a = 0; a < 3; ++a) {
+      for (int b = 0; b < 3; ++b) {
+        e2 = std::max(e2, std::abs(m2[a][b]-((a == b) ? 4.0*pi/3.0 : 0.0)));
+        for (int c = 0; c < 3; ++c) {
+          for (int e = 0; e < 3; ++e) {
+            Real iso = 4.0*pi/15.0*((a == b && c == e)+(a == c && b == e)
+                                    +(a == e && b == c));
+            e4 = std::max(e4, std::abs(m4[a][b][c][e]-iso));
+          }
+        }
+      }
+    }
+    e2 /= 4.0*pi/3.0;
+    e4 /= 4.0*pi/15.0;
+    // FNV-1a over the bytes of the mode table (k, edge-averaged Re/Im A).
+    uint64_t hash = 1469598103934665603ULL;
+    for (const auto &entry : modes) {
+      const unsigned char *bytes = reinterpret_cast<const unsigned char *>(entry.data());
+      for (size_t q = 0; q < sizeof(Real)*entry.size(); ++q) {
+        hash = (hash ^ bytes[q])*1099511628211ULL;
+      }
+    }
+    std::ios_base::fmtflags flags = std::cout.flags();
+    std::streamsize precision = std::cout.precision();
+    std::cout << std::setprecision(6)
+              << "SpectralIC(shell): n0=" << shell_n0 << " shell_width=" << shell_width
+              << " n_dirs=" << shell_ndirs << " helicity=" << helicity
+              << " amplitude=" << (shell_equal_amp ? "equal" : "gaussian")
+              << " iseed=" << std::abs(rstate.idum) << "\n"
+              << "SpectralIC(shell): modes=" << nmodes << " (+/- pairs; "
+              << (full_shell ? "full lattice shell, " : "")
+              << shell_pairs << " pairs in shell; " << duplicates
+              << " duplicate snaps dropped; " << collinear << " collinear modes "
+              << "share cells), N_eff=" << esum*esum/esq
+              << ", |n| in [" << nmin << ", "
+              << nmaxs << "], snap angle mean/max [deg]=" << amean*180.0/pi << "/"
+              << amax*180.0/pi << "\n"
+              << "SpectralIC(shell): Voronoi weights (Q=" << nquad
+              << "): sum=" << wsum << " (4pi=" << 4.0*pi << "), min/max relative to "
+              << "mean=" << wmin*nmodes/(2.0*pi) << "/" << wmax*nmodes/(2.0*pi) << "\n"
+              << std::scientific << std::setprecision(3)
+              << "SpectralIC(shell): weighted moment errors D2=" << e2 << " D4=" << e4
+              << "\n" << std::hex << "SpectralIC(shell): mode_table_hash=0x" << hash
+              << std::dec << std::endl;
+    std::cout.flags(flags);
+    std::cout.precision(precision);
+  }
+  return modes;
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn SpectralICGenerator::SynthesizeModeTable
 //! \brief Evaluates A = sum_n 2 Re[A_n exp(i k_n.x)] at edge midpoints, overwriting
 //! ax/ay/az on is..ie+1, js..je+1, ks..ke+1. Entries already carry the analytic edge
@@ -521,6 +931,10 @@ void SpectralICGenerator::PrecomputeTrigTables() {
 void SpectralICGenerator::GenerateVectorPotential(DvceArray4D<Real> &ax,
                                                    DvceArray4D<Real> &ay,
                                                    DvceArray4D<Real> &az) {
+  if (shell_seed) {
+    SynthesizeModeTable(BuildShellModes(), ax, ay, az);
+    return;
+  }
   if (force_free) {
     SynthesizeModeTable(BuildForceFreeModes(), ax, ay, az);
     return;
@@ -590,6 +1004,10 @@ void SpectralICGenerator::GenerateVectorPotential(DvceArray4D<Real> &ax,
 std::string SpectralICGenerator::GenerateVectorPotentialFFT(DvceArray4D<Real> &ax,
                                                              DvceArray4D<Real> &ay,
                                                              DvceArray4D<Real> &az) {
+  if (shell_seed) {
+    SynthesizeModeTable(BuildShellModes(), ax, ay, az);
+    return "direct_shell";
+  }
   if (force_free) {
     SynthesizeModeTable(BuildForceFreeModes(), ax, ay, az);
     return "direct_force_free";

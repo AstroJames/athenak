@@ -24,6 +24,19 @@
 //! k^{-(spectral_index+4)/2} so that after the curl |B_k|^2 ∝ k^{-spectral_index-2}
 //! and the shell-integrated spectrum k^2|B_k|^2 ∝ k^{-spectral_index}.
 //!
+//! Isotropic narrow-shell seed (seed_type = shell; default seed_type = legacy keeps the
+//! behaviour above bit-for-bit). n_dirs Fibonacci directions on the sphere (n_dirs/2 on
+//! a half-sphere, conjugates implicit) are randomly rotated (iseed), snapped to lattice
+//! vectors with ||n|-n0| <= shell_width, and weighted by their spherical-Voronoi solid
+//! angles w_i (sum 4*pi over the antipodally symmetric set). Each mode has
+//! |b_k|^2 proportional to w_i and a helical polarisation, with per-mode k_hat:
+//!   helicity=+1/-1: b_k = r sqrt(w) e_h exp(i phi1), with i k_hat x e_h = h e_h,
+//!   helicity=0:     b_k = r sqrt(w/2) (e_+ exp(i phi1) + e_- exp(i phi2)),
+//! so h=+1 gives curl B = +|k| B (same sign as legacy force_free helicity=+1) and h=0
+//! has exactly zero helicity per mode. r=1 (amplitude=equal) or Rayleigh with <r^2>=1
+//! (amplitude=gaussian). A_k = i k x b_k/|k|^2 (Coulomb gauge) is synthesised at edge
+//! midpoints with analytic edge averages, so the CT curl gives div B = 0 to round-off.
+//!
 //! References:
 //!   Federrath et al. (2010, A&A 512, A81)
 
@@ -72,6 +85,8 @@ class SpectralICGenerator {
   void PrecomputeTrigTables();
   // Legacy force-free (force_free=true) mode table; arithmetic unchanged.
   ModeTable BuildForceFreeModes();
+  // Isotropic narrow-shell (seed_type=shell) mode table; host-only, O(n_dirs*Q).
+  ModeTable BuildShellModes();
   // Edge-midpoint synthesis of a mode table into ax/ay/az (contains a device lambda).
   void SynthesizeModeTable(const ModeTable &modes, DvceArray4D<Real> &ax,
                            DvceArray4D<Real> &ay, DvceArray4D<Real> &az);
@@ -82,7 +97,14 @@ class SpectralICGenerator {
   // Wavenumber range (integer mode indices, same convention as TurbulenceDriver)
   int nlow, nhigh;
   bool force_free;  // optional single-shell helical projection; default false
-  int helicity;    // +1 or -1 when force_free is enabled
+  int helicity;    // +1 or -1 when force_free is enabled; +1, -1 or 0 for shell seeds
+
+  // seed_type = shell (isotropic narrow-shell seed); see file header.
+  bool shell_seed = false;
+  Real shell_n0 = 0.0;       // shell radius in mode units
+  Real shell_width = 0.5;    // accept lattice vectors with ||n|-n0| <= shell_width
+  int shell_ndirs = 0;       // directions on the full sphere (even)
+  bool shell_equal_amp = true;  // amplitude = equal (true) or gaussian (false)
 
   SpectrumForm spectrum_form;
   Real spectral_index;  // power-law exponent: E_B(k) ∝ k^{-spectral_index}
@@ -112,6 +134,7 @@ class SpectralICGenerator {
   Real ModeAmplitude(Real n_mag) const;
 
   void ValidateForceFree() const;
+  void ValidateShell() const;
   void CountModes();
   void GenerateModeCoefficients();
 };
