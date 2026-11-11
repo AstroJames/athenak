@@ -62,6 +62,9 @@ class SpectralICGenerator {
 
   int mode_count;  // number of modes (set in constructor, public for diagnostics)
 
+  // Public only because nvcc rejects device lambdas in private member functions.
+  void PrecomputeTrigTables();
+
  private:
   MeshBlockPack *pmy_pack;
 
@@ -103,7 +106,6 @@ class SpectralICGenerator {
                                         DvceArray4D<Real> &az);
   void CountModes();
   void GenerateModeCoefficients();
-  void PrecomputeTrigTables();
 };
 
 //----------------------------------------------------------------------------------------

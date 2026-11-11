@@ -1,0 +1,12 @@
+--- a/kokkos/core/src/Cuda/Kokkos_Cuda_BlockSize_Deduction.hpp
++++ b/kokkos/core/src/Cuda/Kokkos_Cuda_BlockSize_Deduction.hpp
+@@ -33,7 +33,8 @@
+     case 5:
+     case 7:
+     case 8:
+-    case 9: return 4;
++    case 9:
++    case 10: return 4;
+     case 6: return (properties.minor == 0 ? 2 : 4);
+     default:
+       throw_runtime_exception(
