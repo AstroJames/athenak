@@ -73,7 +73,7 @@ class SpectralICGenerator {
   SpectrumForm spectrum_form;
   Real spectral_index;  // power-law exponent: E_B(k) ∝ k^{-spectral_index}
 
-  RNG_State rstate;     // random state for mode coefficient generation
+  RNG_State rstate{};   // random state for mode coefficient generation
 
   // Wavenumber arrays
   DualArray1D<Real> kx_mode, ky_mode, kz_mode;

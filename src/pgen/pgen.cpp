@@ -8,6 +8,7 @@
 //! Default constructor calls problem generator function, while  constructor for restarts
 //! reads data from restart file, as well as re-initializing problem-specific data.
 
+#include <cmath>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -245,6 +246,14 @@ ProblemGenerator::ProblemGenerator(ParameterInput *pin, Mesh *pm, IOWrapper resf
     MPI_Bcast(rng_data, sizeof(RNG_State), MPI_CHAR, 0, MPI_COMM_WORLD);
 #endif
     std::memcpy(&(pturb->rstate), &(rng_data[0]), sizeof(RNG_State));
+    // Keep a valid saved Gaussian cache (bitwise continuity across restarts).
+    // Checkpoints written before RanGaussianSt used the state's cache hold
+    // uninitialised iset/gset: reset anything that is not a valid cache.
+    if ((pturb->rstate.iset != 0 && pturb->rstate.iset != 1) ||
+        !std::isfinite(pturb->rstate.gset)) {
+      pturb->rstate.iset = 0;
+      pturb->rstate.gset = 0.0;
+    }
   }
 
   // root process reads size of CC and FC data arrays from restart file

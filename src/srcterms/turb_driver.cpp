@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -508,6 +509,8 @@ void TurbulenceDriver::Initialize() {
     force_norm_component_(c,m,n,k,j,i) = 0.0;
   });
 
+  // Zero every byte, including struct padding: restart files store the raw state.
+  std::memset(&rstate, 0, sizeof(RNG_State));
   rstate.idum = -1;
 
   auto kx_mode_ = kx_mode;
