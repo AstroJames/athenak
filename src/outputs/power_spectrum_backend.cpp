@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <complex>
 #include <cstdint>
 #include <cmath>
@@ -23,9 +24,34 @@
 
 #include "hydro/hydro.hpp"
 #include "mhd/mhd.hpp"
+#include "globals.hpp"
 
 #if HEFFTE_ENABLED
 #include <heffte.h>
+// Device FFT library for the spectra in GPU builds, if heFFTe was built for the same GPU
+// API (Heffte_ENABLE_* from heffte_config.h). Otherwise only the host (stock) path
+// exists.
+#if defined(KOKKOS_ENABLE_CUDA) && defined(Heffte_ENABLE_CUDA)
+#define ATHENA_HEFFTE_DEVICE 1
+#define ATHENA_HEFFTE_DEVICE_TAG heffte::backend::cufft
+#define ATHENA_HEFFTE_DEVICE_NAME "cufft"
+#elif defined(KOKKOS_ENABLE_HIP) && defined(Heffte_ENABLE_ROCM)
+#define ATHENA_HEFFTE_DEVICE 1
+#define ATHENA_HEFFTE_DEVICE_TAG heffte::backend::rocfft
+#define ATHENA_HEFFTE_DEVICE_NAME "rocfft"
+#elif defined(KOKKOS_ENABLE_SYCL) && defined(Heffte_ENABLE_ONEAPI)
+#define ATHENA_HEFFTE_DEVICE 1
+#define ATHENA_HEFFTE_DEVICE_TAG heffte::backend::onemkl
+#define ATHENA_HEFFTE_DEVICE_NAME "onemkl"
+#elif defined(ATHENA_TEST_HEFFTE_DEVICE_PATH)
+// Test only (-DATHENA_TEST_HEFFTE_DEVICE_PATH with host Kokkos): runs the device-path
+// code (packing, reshape, binning, reductions) with heFFTe's stock CPU FFT.
+#define ATHENA_HEFFTE_DEVICE 1
+#define ATHENA_HEFFTE_DEVICE_TAG heffte::backend::stock
+#define ATHENA_HEFFTE_DEVICE_NAME "stock (device-path test)"
+#else
+#define ATHENA_HEFFTE_DEVICE 0
+#endif
 #endif
 
 #if MPI_PARALLEL_ENABLED
@@ -695,10 +721,238 @@ class HefftePowerSpectrumBackend final : public PowerSpectrumBackend {
 };
 #endif  // HEFFTE_ENABLED
 
+#if HEFFTE_ENABLED && ATHENA_HEFFTE_DEVICE
+// heFFTe on device memory (GPU builds). Each rank packs its MeshBlocks from the Kokkos
+// device views into one device buffer (its MeshBlock box, x fastest); heFFTe reshapes to
+// the same x-slabs and r2c direction as HefftePowerSpectrumBackend and transforms with
+// the device library; shells are binned on the device. Shell definition, Hermitian
+// weights, Nyquist handling, curl and helicity formulas and the |FFT/N|^2 normalisation
+// are those of HefftePowerSpectrumBackend; only the summation order differs (atomics).
+// Used only when every rank's MeshBlocks form one box and nranks <= nx (Supported()).
+using HeffteDeviceTag = ATHENA_HEFFTE_DEVICE_TAG;
+constexpr const char *kHeffteDeviceName = ATHENA_HEFFTE_DEVICE_NAME;
+
+class HeffteDevicePowerSpectrumBackend final : public PowerSpectrumBackend {
+ public:
+  using Plan = heffte::fft3d_r2c<HeffteDeviceTag>;
+  using ComplexView = Kokkos::View<Kokkos::complex<Real>*, DevMemSpace>;
+
+  // Collective: true on every rank iff all ranks satisfy the layout conditions.
+  static bool Supported(Mesh *pm) {
+    const auto &g = pm->mesh_indcs;
+    int nranks = 1;
+    MPI_Comm_size(MPI_COMM_WORLD, &nranks);
+    int ok = (!pm->multilevel && nranks <= g.nx1) ? 1 : 0;
+    std::array<int, 6> b = RankBox(pm);
+    int64_t cells = static_cast<int64_t>(b[3]-b[0]+1)*(b[4]-b[1]+1)*(b[5]-b[2]+1);
+    const auto &indcs = pm->mb_indcs;
+    int64_t local = static_cast<int64_t>(pm->pmb_pack->nmb_thispack)*indcs.nx1*indcs.nx2
+                    *indcs.nx3;
+    if (cells != local) ok = 0;  // MeshBlocks are distinct, so equal volume = one box
+    MPI_Allreduce(MPI_IN_PLACE, &ok, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    return ok == 1;
+  }
+
+  explicit HeffteDevicePowerSpectrumBackend(Mesh *pm) {
+    const auto &g = pm->mesh_indcs;
+    nx_ = g.nx1;
+    ny_ = g.nx2;
+    nz_ = g.nx3;
+    nbins_ = std::min({nx_/2, ny_/2, nz_/2});
+    int rank = 0, nranks = 1;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &nranks);
+    box_ = RankBox(pm);
+    slab_x0_ = (rank*nx_)/nranks;
+    local_nx_ = ((rank+1)*nx_)/nranks-slab_x0_;
+    using box3d = heffte::box3d<int>;
+    const box3d in_box({box_[0], box_[1], box_[2]}, {box_[3], box_[4], box_[5]},
+                       std::array<int, 3>{0, 1, 2});
+    const box3d out_box({slab_x0_, 0, 0}, {slab_x0_+local_nx_-1, ny_-1, nz_/2},
+                        std::array<int, 3>{2, 1, 0});
+    heffte::plan_options options = heffte::default_options<HeffteDeviceTag>();
+    options.use_gpu_aware = false;  // heFFTe build does not advertise GPU-aware MPI
+    plan_ = std::make_unique<Plan>(in_box, out_box, 2, MPI_COMM_WORLD, options);
+    in_ = Kokkos::View<Real*, DevMemSpace>("heffte_dev_in", plan_->size_inbox());
+    work_ = ComplexView("heffte_dev_work", plan_->size_workspace());
+    if (rank == 0) {
+      std::cout << "PowerSpectrum(heffte device, " << kHeffteDeviceName << "): " << nranks
+                << " rank(s), device buffers, use_gpu_aware=false.\n";
+    }
+  }
+
+  int GetNumBins() const override { return nbins_; }
+
+  void Compute(Mesh *pm, const OutputParameters &out_params,
+               Kokkos::View<Real*> spectrum,
+               Kokkos::View<Real*> curl_spectrum,
+               Kokkos::View<Real*> helicity_spectrum) override {
+    const bool want_curl = curl_spectrum.extent(0) > 0;
+    const bool want_hel = helicity_spectrum.extent(0) > 0;
+    const bool want_vec = want_curl || want_hel;
+    const Real k_unit = 2.0*std::acos(-1.0)/(pm->mesh_size.x1max-pm->mesh_size.x1min);
+    const SpectrumFieldType field_type = ResolveSpectrumFieldType(out_params.variable);
+    ValidateFieldAvailability(field_type, pm);
+    const bool spectrum_of_magnetic = FieldUsesMagnetic(field_type);
+    const int nfields = NumFieldComponents(field_type);
+    const Real inv_ntot = 1.0/static_cast<Real>(static_cast<int64_t>(nx_)*ny_*nz_);
+    const Real inv_ntot_sq = inv_ntot*inv_ntot;
+
+    const auto &indcs = pm->mb_indcs;
+    const int nmb = pm->pmb_pack->nmb_thispack;
+    const int nxB = indcs.nx1, nyB = indcs.nx2, nzB = indcs.nx3;
+    const int is = indcs.is, js = indcs.js, ks = indcs.ks;
+    if (RankBox(pm) != box_) {
+      std::cout << "### FATAL ERROR in HeffteDevicePowerSpectrumBackend\n"
+                << "MeshBlock layout changed since the FFT plan was built.\n";
+      std::exit(EXIT_FAILURE);
+    }
+    // Offsets of each local MeshBlock inside this rank's box.
+    Kokkos::View<int*[3], DevMemSpace> offset("heffte_dev_offset", nmb);
+    auto offset_h = Kokkos::create_mirror_view(offset);
+    for (int m = 0; m < nmb; ++m) {
+      const auto &lloc = pm->lloc_eachmb[pm->pmb_pack->pmb->mb_gid.h_view(m)];
+      offset_h(m, 0) = static_cast<int>(lloc.lx1)*nxB-box_[0];
+      offset_h(m, 1) = static_cast<int>(lloc.lx2)*nyB-box_[1];
+      offset_h(m, 2) = static_cast<int>(lloc.lx3)*nzB-box_[2];
+    }
+    Kokkos::deep_copy(offset, offset_h);
+    const int bx = box_[3]-box_[0]+1, by = box_[4]-box_[1]+1;
+
+    const auto &w0_ = (pm->pmb_pack->phydro != nullptr) ? pm->pmb_pack->phydro->w0 :
+                                                           pm->pmb_pack->pmhd->w0;
+    DvceArray5D<Real> bcc0_;
+    if (spectrum_of_magnetic) bcc0_ = pm->pmb_pack->pmhd->bcc0;
+    const int64_t nout = plan_->size_outbox();
+    for (int c = 0; c < (want_vec ? 3 : 1); ++c) {
+      if (out_[c].extent(0) != static_cast<size_t>(nout)) {
+        out_[c] = ComplexView("heffte_dev_out", nout);
+      }
+    }
+    auto in = in_;
+    Kokkos::View<Real*, DevMemSpace> bins("heffte_dev_bins", nbins_);
+    Kokkos::View<Real*, DevMemSpace> curl_bins("heffte_dev_curl", want_curl ? nbins_ : 0);
+    Kokkos::View<Real*, DevMemSpace> hel_bins("heffte_dev_hel", want_hel ? nbins_ : 0);
+    std::vector<Real> global_bins(nbins_, Real(0)), local_bins(nbins_);
+    const int nx = nx_, ny = ny_, nz = nz_, nbins = nbins_, nz_out = nz_/2+1;
+    const int slab_x0 = slab_x0_, local_nx = local_nx_;
+
+    for (int comp = 0; comp < nfields; ++comp) {
+      const int iv = (field_type == SpectrumFieldType::kVelocity) ?
+                     VelocityComponentIndex(comp) : IDN;
+      const int64_t ncell_mb = static_cast<int64_t>(nxB)*nyB*nzB;
+      Kokkos::parallel_for("pack_heffte_device",
+          Kokkos::RangePolicy<DevExeSpace>(0, static_cast<int64_t>(nmb)*ncell_mb),
+          KOKKOS_LAMBDA(const int64_t idx) {
+            const int m = idx/ncell_mb;
+            const int64_t rem0 = idx-static_cast<int64_t>(m)*ncell_mb;
+            const int kB = rem0/(static_cast<int64_t>(nyB)*nxB);
+            const int64_t rem1 = rem0-static_cast<int64_t>(kB)*nyB*nxB;
+            const int jB = rem1/nxB;
+            const int iB = rem1-static_cast<int64_t>(jB)*nxB;
+            const int64_t dst = (static_cast<int64_t>(offset(m, 2)+kB)*by
+                                 + offset(m, 1)+jB)*bx + offset(m, 0)+iB;
+            in(dst) = spectrum_of_magnetic ? bcc0_(m, comp, kB+ks, jB+js, iB+is) :
+                                             w0_(m, iv, kB+ks, jB+js, iB+is);
+          });
+      ComplexView out = out_[want_vec ? comp : 0];
+      Kokkos::fence();  // heFFTe runs on its own stream
+      plan_->forward(in.data(), reinterpret_cast<std::complex<Real>*>(out.data()),
+                     reinterpret_cast<std::complex<Real>*>(work_.data()),
+                     heffte::scale::none);
+      Kokkos::fence();
+      Kokkos::deep_copy(bins, Real(0));
+      ComplexView fx = out_[0], fy = out_[want_vec ? 1 : 0];
+      const bool vec_now = want_vec && comp == 2;
+      Kokkos::parallel_for("bin_heffte_device",
+          Kokkos::RangePolicy<DevExeSpace>(0, nout), KOKKOS_LAMBDA(const int64_t id) {
+            const int ix = id/(static_cast<int64_t>(ny)*nz_out);
+            const int64_t rem = id-static_cast<int64_t>(ix)*ny*nz_out;
+            const int gy = rem/nz_out;
+            const int gz = rem-static_cast<int64_t>(gy)*nz_out;
+            const int gx = slab_x0+ix;
+            if (ix >= local_nx) return;
+            const int kx = (gx <= nx/2 ? gx : gx-nx);
+            const int ky = (gy <= ny/2 ? gy : gy-ny);
+            const int kz = gz;
+            const Real km = sqrt(static_cast<Real>(kx*kx+ky*ky+kz*kz));
+            const int sbin = static_cast<int>(floor(km));
+            if (sbin < 1 || sbin > nbins) return;
+            Real half_weight = 2.0;
+            if (gz == 0 || ((nz%2 == 0) && (gz == nz/2))) half_weight = 1.0;
+            const auto z = out(id);
+            Kokkos::atomic_add(&bins(sbin-1), half_weight*
+                (z.real()*z.real()+z.imag()*z.imag())*inv_ntot_sq);
+            if (vec_now) {
+              Real wave[3] = {(nx%2 == 0 && gx == nx/2 ? 0 : kx)*k_unit,
+                              (ny%2 == 0 && gy == ny/2 ? 0 : ky)*k_unit,
+                              (nz%2 == 0 && gz == nz/2 ? 0 : kz)*k_unit};
+              Real re[3] = {fx(id).real(), fy(id).real(), z.real()};
+              Real im[3] = {fx(id).imag(), fy(id).imag(), z.imag()};
+              if (want_curl) {
+                Kokkos::atomic_add(&curl_bins(sbin-1),
+                    half_weight*SpectralCurlPower(wave, re, im)*inv_ntot_sq);
+              }
+              if (want_hel) {
+                Kokkos::atomic_add(&hel_bins(sbin-1), half_weight*inv_ntot_sq*
+                    SpectralHelicity(wave, re, im, spectrum_of_magnetic));
+              }
+            }
+          });
+      auto bins_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), bins);
+      for (int n = 0; n < nbins_; ++n) local_bins[n] = bins_h(n);
+      MPI_Allreduce(MPI_IN_PLACE, local_bins.data(), nbins_, MPI_ATHENA_REAL, MPI_SUM,
+                    MPI_COMM_WORLD);
+      for (int n = 0; n < nbins_; ++n) global_bins[n] += local_bins[n];
+    }
+    auto host = Kokkos::create_mirror_view(spectrum);
+    for (int n = 0; n < nbins_; ++n) host(n) = global_bins[n];
+    Kokkos::deep_copy(spectrum, host);
+    // Only world root needs the curl and helicity bins, as in the host backend.
+    for (auto pair : {std::make_pair(curl_bins, curl_spectrum),
+                      std::make_pair(hel_bins, helicity_spectrum)}) {
+      if (pair.second.extent(0) == 0) continue;
+      auto local_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), pair.first);
+      std::vector<Real> local(local_h.data(), local_h.data()+nbins_), global(nbins_, 0.0);
+      MPI_Reduce(local.data(), global.data(), nbins_, MPI_ATHENA_REAL, MPI_SUM, 0,
+                 MPI_COMM_WORLD);
+      auto out_h = Kokkos::create_mirror_view(pair.second);
+      for (int n = 0; n < nbins_; ++n) out_h(n) = global[n];
+      Kokkos::deep_copy(pair.second, out_h);
+    }
+  }
+
+ private:
+  // Bounding box (cells, inclusive) of this rank's MeshBlocks: x0 y0 z0 x1 y1 z1.
+  static std::array<int, 6> RankBox(Mesh *pm) {
+    const auto &indcs = pm->mb_indcs;
+    std::array<int, 6> b = {INT_MAX, INT_MAX, INT_MAX, -1, -1, -1};
+    const int n[3] = {indcs.nx1, indcs.nx2, indcs.nx3};
+    for (int m = 0; m < pm->pmb_pack->nmb_thispack; ++m) {
+      const auto &lloc = pm->lloc_eachmb[pm->pmb_pack->pmb->mb_gid.h_view(m)];
+      const int64_t l[3] = {lloc.lx1, lloc.lx2, lloc.lx3};
+      for (int a = 0; a < 3; ++a) {
+        b[a] = std::min(b[a], static_cast<int>(l[a])*n[a]);
+        b[3+a] = std::max(b[3+a], static_cast<int>(l[a]+1)*n[a]-1);
+      }
+    }
+    return b;
+  }
+
+  int nx_ = 0, ny_ = 0, nz_ = 0, nbins_ = 0;
+  int slab_x0_ = 0, local_nx_ = 0;
+  std::array<int, 6> box_{};
+  std::unique_ptr<Plan> plan_;
+  Kokkos::View<Real*, DevMemSpace> in_;
+  ComplexView out_[3], work_;
+};
+#endif  // HEFFTE_ENABLED && ATHENA_HEFFTE_DEVICE
+
+
 }  // namespace
 
 std::unique_ptr<PowerSpectrumBackend> BuildPowerSpectrumBackend(
-    Mesh *pm, const OutputParameters &out_params, bool want_helicity) {
+    Mesh *pm, const OutputParameters &out_params, bool want_helicity, bool allow_device) {
 #if FFT_ENABLED
   if (!out_params.history_curl_peak.empty() &&
       NumFieldComponents(ResolveSpectrumFieldType(out_params.variable)) != 3) {
@@ -715,13 +969,25 @@ std::unique_ptr<PowerSpectrumBackend> BuildPowerSpectrumBackend(
 #endif
 #if KOKKOS_FFT_ENABLED
   static_cast<void>(out_params);
+  static_cast<void>(allow_device);
   return std::make_unique<KokkosFftPowerSpectrumBackend>(pm);
 #elif HEFFTE_ENABLED
   static_cast<void>(out_params);
+#if ATHENA_HEFFTE_DEVICE
+  if (allow_device && HeffteDevicePowerSpectrumBackend::Supported(pm)) {
+    return std::make_unique<HeffteDevicePowerSpectrumBackend>(pm);
+  }
+  if (allow_device && global_variable::my_rank == 0) {
+    std::cout << "PowerSpectrum(heffte): device path needs one MeshBlock box per rank "
+                 "and nranks <= nx; using the host (stock) path.\n";
+  }
+#endif
+  static_cast<void>(allow_device);
   return std::make_unique<HefftePowerSpectrumBackend>(pm);
 #else
   static_cast<void>(pm);
   static_cast<void>(out_params);
+  static_cast<void>(allow_device);
   std::cout << "### FATAL ERROR in BuildPowerSpectrumBackend\n"
             << "power_spectrum output requested, but this binary was compiled with "
             << "Athena_FFT_BACKEND=NONE.\n";

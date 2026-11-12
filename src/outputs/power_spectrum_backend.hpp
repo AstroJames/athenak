@@ -20,6 +20,7 @@ class PowerSpectrumBackend {
 };
 
 std::unique_ptr<PowerSpectrumBackend> BuildPowerSpectrumBackend(
-    Mesh *pm, const OutputParameters &out_params, bool want_helicity = false);
+    Mesh *pm, const OutputParameters &out_params, bool want_helicity = false,
+    bool allow_device = true);
 
 #endif  // OUTPUTS_POWER_SPECTRUM_BACKEND_HPP_

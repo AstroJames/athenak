@@ -33,7 +33,10 @@ PowerSpectrumOutput::PowerSpectrumOutput(ParameterInput *pin,
       std::exit(EXIT_FAILURE);
     }
   }
-  backend_ = BuildPowerSpectrumBackend(pm, out_params, want_helicity);
+  // heffte_device = false keeps the host (stock) FFT in GPU builds, e.g. as a reference.
+  bool allow_device = !pin->DoesParameterExist(op.block_name, "heffte_device") ||
+                      pin->GetBoolean(op.block_name, "heffte_device");
+  backend_ = BuildPowerSpectrumBackend(pm, out_params, want_helicity, allow_device);
   nbins_ = backend_->GetNumBins();
   spectrum_ = Kokkos::View<Real*>("spectrum", nbins_);
   if (want_helicity) {

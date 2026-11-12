@@ -32,6 +32,8 @@
 # Curl-peak history (k_nu, k_eta in .user.hst) is evaluated only when its power_spectrum
 #   output is written (dt of output2/output3); hst rows in between repeat the latest peak.
 #   Set the spectrum dt to the cadence needed for the peaks, not the hst dt.
+# GPU builds with a CUDA heFFTe (Heffte_ENABLE_CUDA) compute the spectra on the device
+#   (cuFFT); add heffte_device = false to an output block to force the host path.
 # Provenance: rank 0 logs SpectralIC(shell) lines (modes, N_eff, D2/D4, mode_table_hash).
 #   RECORD the logged mode_table_hash in project/runs/registry.md for every seeded run:
 #   the mode table depends on host floating point, so the hash is the reproducibility key.
