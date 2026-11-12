@@ -224,6 +224,14 @@ def run(**kwargs):
     run_case('spinup', ['spectral_ic/rms_b=0', 'time/nlim=4'])
     run_case('injected', ['spectral_ic/seed_on_restart=true', 'spectral_ic/rms_b=0.01',
                           'time/nlim=4'], restart=latest_restart('spinup').resolve())
+    # Curl-peak cadence: hst every cycle, velocity spectrum with k_nu every 3 cycles.
+    cadence = (BASE+DRIVING).replace('<output4>\nfile_type = hst\ndt = 0.01',
+                                     '<output4>\nfile_type = hst\ndcycle = 1')
+    cadence = cadence.replace('id = velocity\nhelicity_spectrum = true\ndt = 1.0',
+                              'id = velocity\nhelicity_spectrum = true\n'
+                              'history_curl_peak = k_nu\ndcycle = 3')
+    write_deck(cadence+'<problem>\nuser_hist = true\n')
+    run_case('cadence', ['spectral_ic/rms_b=0', 'time/nlim=7', 'output1/dt=100'])
     Path(DECK).unlink()
 
 
@@ -517,9 +525,35 @@ def check_decay(name):
                                                                     - 1))))
 
 
+def check_cadence():
+    """hst k_nu rows equal the peak of the latest velocity spectrum at or before them."""
+    root = Path('build/src')
+    spectra = []
+    for path in sorted(root.glob('ShellSeedTest_cadence.velocity.*.spec')):
+        head = path.read_text().splitlines()[0]
+        time = float(re.search(r'time=(\S+)', head)[1])
+        cycle = int(re.search(r'cycle=(\d+)', head)[1])
+        data = np.loadtxt(path)
+        peak = data[np.argmax(data[:, 2]), 0]*2*np.pi if np.any(data[:, 2]) else 0.0
+        spectra.append((time, cycle, peak))
+    assert [c for _, c, _ in spectra] == [0, 3, 6, 7], spectra
+    hist_path = root/'ShellSeedTest_cadence.user.hst'
+    labels = [x.split('=')[1] for x in hist_path.read_text().splitlines()[1].split()
+              if '=' in x]
+    rows = np.loadtxt(hist_path, ndmin=2)
+    assert len(rows) >= 8
+    for row in rows:
+        latest = [peak for time, _, peak in spectra if time <= row[0]][-1]
+        assert row[labels.index('k_nu')] == latest, (row, spectra)
+    assert any(peak > 0 for _, _, peak in spectra[1:])
+    metrics['curl_peak_cadence'] = dict(spectra=[c for _, c, _ in spectra],
+                                        hst_rows=len(rows))
+
+
 def analyze():
     root = Path('build/src')
     try:
+        check_cadence()
         seeds = {}
         for name, helicity, equal in (('plus', 1, True), ('minus', -1, True),
                                       ('zero', 0, True), ('gauss', 1, False),

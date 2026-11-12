@@ -39,6 +39,7 @@
 //! comment text: 'NEW_OUTPUT_TYPES'.
 //========================================================================================
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>    // strcmp
@@ -329,6 +330,19 @@ Outputs::Outputs(ParameterInput *pin, Mesh *pm) {
       std::exit(EXIT_FAILURE);
     }
     history->curl_peak_outputs.push_back(static_cast<PowerSpectrumOutput*>(out));
+  }
+  // Curl peaks are computed at the spectrum cadence only (PowerSpectrumOutput::CurlPeak).
+  // Write hst after the curl-peak spectra so a row shares a spectrum written in the same
+  // cycle, including the initial and final outputs; other output order is unchanged.
+  if (history != nullptr && !history->curl_peak_outputs.empty()) {
+    pout_list.erase(std::find(pout_list.begin(), pout_list.end(), history));
+    auto last = pout_list.begin();
+    for (auto it = pout_list.begin(); it != pout_list.end(); ++it) {
+      for (auto *peak : history->curl_peak_outputs) {
+        if (*it == peak) last = it+1;
+      }
+    }
+    pout_list.insert(last, history);
   }
 }
 

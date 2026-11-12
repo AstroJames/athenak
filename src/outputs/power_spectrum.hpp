@@ -16,6 +16,11 @@ class PowerSpectrumOutput : public BaseTypeOutput {
 
   void LoadOutputData(Mesh *pm) override;
   void WriteOutputFile(Mesh *pm, ParameterInput *pin) override;
+  // Peak curl shell for history_curl_peak, in inverse code length. Evaluated at this
+  // output's own cadence: hst rows between spectrum outputs repeat the latest value
+  // (piecewise constant); the hst output is ordered after curl-peak spectra so rows
+  // in a spectrum cycle use that cycle's spectrum. Computes a spectrum only if none
+  // exists yet.
   Real CurlPeak(Mesh *pm);
 
  private:

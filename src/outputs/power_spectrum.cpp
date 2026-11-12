@@ -63,8 +63,13 @@ void PowerSpectrumOutput::LoadOutputData(Mesh *pm) {
   loaded_time_ = pm->time;
 }
 
+// History curl peaks are evaluated at the spectrum cadence: the hst output is ordered
+// after the curl-peak spectrum outputs (Outputs constructor), so whenever this output is
+// written in the same cycle its fresh spectrum is used. Otherwise the peak of the most
+// recently computed spectrum is returned. A spectrum is computed here only if none has
+// been computed in this process yet (e.g. the first hst row after a restart).
 Real PowerSpectrumOutput::CurlPeak(Mesh *pm) {
-  LoadOutputData(pm);
+  if (loaded_cycle_ < 0) LoadOutputData(pm);
   auto host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), curl_spectrum_);
   Real maximum = 0.0;
   int peak = 0;  // zero placeholder when all curl power vanishes
