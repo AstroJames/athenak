@@ -147,8 +147,10 @@ static Real Ran2(int64_t *idum) {
 
 KOKKOS_INLINE_FUNCTION
 static Real RanGaussianSt(RNG_State *state) {
-  static int iset = 0;
-  static double gset;
+  // The cached second deviate lives in the state (iset/gset), not in function-local
+  // statics, so it is per stream and is saved with the state in restart files.
+  int &iset = state->iset;
+  double &gset = state->gset;
   double fac, rsq, v1, v2;
   if (state->idum < 0) iset = 0;
   if (iset == 0) {
